@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#4f2170"/>
+  <path d="M12 18h40v28H12z" fill="none" stroke="#ffb81c" stroke-width="4"/>
+  <text x="32" y="38" text-anchor="middle" font-size="17" font-family="Arial, sans-serif" font-weight="700" fill="#fff4cf">WOF</text>
+</svg>

@@ -1,0 +1,30 @@
+{
+  "name": "sports-sim-game",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:local": "vite --host 127.0.0.1 --port 5173",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test && npm run build",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:serial": "vitest run --pool=threads --maxWorkers=1",
+    "verify:serial": "npm run typecheck && npm run test:serial && npm run build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "vite": "^7.2.6",
+    "typescript": "^5.9.3",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "vitest": "^4.0.14",
+    "jsdom": "^27.3.0"
+  }
+}

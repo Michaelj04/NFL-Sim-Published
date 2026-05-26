@@ -1,0 +1,263 @@
+School,Subdivision,Tier,Weight
+Alabama,FBS,S+,5.00
+Georgia,FBS,S+,5.00
+Ohio State,FBS,S+,5.00
+Clemson,FBS,S,4.25
+Florida,FBS,S,4.25
+LSU,FBS,S,4.25
+Miami,FBS,S,4.25
+Michigan,FBS,S,4.25
+Notre Dame,FBS,S,4.25
+Oklahoma,FBS,S,4.25
+Oregon,FBS,S,4.25
+Penn State,FBS,S,4.25
+Texas,FBS,S,4.25
+Texas A&M,FBS,S,4.25
+USC,FBS,S,4.25
+Washington,FBS,S,4.25
+Arizona,FBS,A,3.25
+Arizona State,FBS,A,3.25
+Auburn,FBS,A,3.25
+Florida State,FBS,A,3.25
+Iowa,FBS,A,3.25
+Kentucky,FBS,A,3.25
+Missouri,FBS,A,3.25
+North Carolina,FBS,A,3.25
+Ole Miss,FBS,A,3.25
+South Carolina,FBS,A,3.25
+Stanford,FBS,A,3.25
+Tennessee,FBS,A,3.25
+Texas Tech,FBS,A,3.25
+Utah,FBS,A,3.25
+Wisconsin,FBS,A,3.25
+Arkansas,FBS,B,2.25
+Baylor,FBS,B,2.25
+Boston College,FBS,B,2.25
+BYU,FBS,B,2.25
+California,FBS,B,2.25
+Cincinnati,FBS,B,2.25
+Colorado,FBS,B,2.25
+Duke,FBS,B,2.25
+Georgia Tech,FBS,B,2.25
+Illinois,FBS,B,2.25
+Indiana,FBS,B,2.25
+Iowa State,FBS,B,2.25
+Kansas State,FBS,B,2.25
+Louisville,FBS,B,2.25
+Maryland,FBS,B,2.25
+Michigan State,FBS,B,2.25
+Minnesota,FBS,B,2.25
+Mississippi State,FBS,B,2.25
+NC State,FBS,B,2.25
+Nebraska,FBS,B,2.25
+Northwestern,FBS,B,2.25
+Oklahoma State,FBS,B,2.25
+Pittsburgh,FBS,B,2.25
+Purdue,FBS,B,2.25
+Rutgers,FBS,B,2.25
+SMU,FBS,B,2.25
+Syracuse,FBS,B,2.25
+TCU,FBS,B,2.25
+UCF,FBS,B,2.25
+UCLA,FBS,B,2.25
+Vanderbilt,FBS,B,2.25
+Virginia,FBS,B,2.25
+Virginia Tech,FBS,B,2.25
+Wake Forest,FBS,B,2.25
+West Virginia,FBS,B,2.25
+Air Force,FBS,C,1.25
+Appalachian State,FBS,C,1.25
+Army,FBS,C,1.25
+Boise State,FBS,C,1.25
+Colorado State,FBS,C,1.25
+East Carolina,FBS,C,1.25
+Fresno State,FBS,C,1.25
+Houston,FBS,C,1.25
+James Madison,FBS,C,1.25
+Kansas,FBS,C,1.25
+Liberty,FBS,C,1.25
+Memphis,FBS,C,1.25
+Navy,FBS,C,1.25
+Oregon State,FBS,C,1.25
+Rice,FBS,C,1.25
+San Diego State,FBS,C,1.25
+South Florida,FBS,C,1.25
+Texas State,FBS,C,1.25
+Toledo,FBS,C,1.25
+Tulane,FBS,C,1.25
+UConn,FBS,C,1.25
+UNLV,FBS,C,1.25
+UTSA,FBS,C,1.25
+Washington State,FBS,C,1.25
+Western Kentucky,FBS,C,1.25
+Wyoming,FBS,C,1.25
+Akron,FBS,D,0.70
+Arkansas State,FBS,D,0.70
+Ball State,FBS,D,0.70
+Bowling Green,FBS,D,0.70
+Buffalo,FBS,D,0.70
+Central Michigan,FBS,D,0.70
+Charlotte,FBS,D,0.70
+Coastal Carolina,FBS,D,0.70
+Delaware,FBS,D,0.70
+Eastern Michigan,FBS,D,0.70
+FIU,FBS,D,0.70
+Florida Atlantic,FBS,D,0.70
+Georgia Southern,FBS,D,0.70
+Georgia State,FBS,D,0.70
+Hawaiʻi,FBS,D,0.70
+Jacksonville State,FBS,D,0.70
+Kennesaw State,FBS,D,0.70
+Kent State,FBS,D,0.70
+Louisiana,FBS,D,0.70
+Louisiana Tech,FBS,D,0.70
+Marshall,FBS,D,0.70
+Miami (OH),FBS,D,0.70
+Middle Tennessee,FBS,D,0.70
+Missouri State,FBS,D,0.70
+Nevada,FBS,D,0.70
+New Mexico,FBS,D,0.70
+New Mexico State,FBS,D,0.70
+North Texas,FBS,D,0.70
+Northern Illinois,FBS,D,0.70
+Ohio,FBS,D,0.70
+Old Dominion,FBS,D,0.70
+Sacramento State,FBS,D,0.70
+Sam Houston,FBS,D,0.70
+San Jose State,FBS,D,0.70
+South Alabama,FBS,D,0.70
+Southern Miss,FBS,D,0.70
+Temple,FBS,D,0.70
+Troy,FBS,D,0.70
+Tulsa,FBS,D,0.70
+UAB,FBS,D,0.70
+ULM,FBS,D,0.70
+UMass,FBS,D,0.70
+UTEP,FBS,D,0.70
+Utah State,FBS,D,0.70
+Western Michigan,FBS,D,0.70
+Eastern Washington,FCS,FCS+,0.60
+Harvard,FCS,FCS+,0.60
+Holy Cross,FCS,FCS+,0.60
+Idaho,FCS,FCS+,0.60
+Illinois State,FCS,FCS+,0.60
+Incarnate Word,FCS,FCS+,0.60
+Jackson State,FCS,FCS+,0.60
+Montana,FCS,FCS+,0.60
+Montana State,FCS,FCS+,0.60
+North Dakota,FCS,FCS+,0.60
+North Dakota State,FCS,FCS+,0.60
+Northern Iowa,FCS,FCS+,0.60
+Princeton,FCS,FCS+,0.60
+Richmond,FCS,FCS+,0.60
+Samford,FCS,FCS+,0.60
+South Dakota,FCS,FCS+,0.60
+South Dakota State,FCS,FCS+,0.60
+Southern Illinois,FCS,FCS+,0.60
+Tarleton State,FCS,FCS+,0.60
+UC Davis,FCS,FCS+,0.60
+Villanova,FCS,FCS+,0.60
+Weber State,FCS,FCS+,0.60
+William & Mary,FCS,FCS+,0.60
+Yale,FCS,FCS+,0.60
+Youngstown State,FCS,FCS+,0.60
+Abilene Christian,FCS,FCS,0.30
+Albany,FCS,FCS,0.30
+Alcorn State,FCS,FCS,0.30
+Austin Peay,FCS,FCS,0.30
+Brown,FCS,FCS,0.30
+Bryant,FCS,FCS,0.30
+Bucknell,FCS,FCS,0.30
+Cal Poly,FCS,FCS,0.30
+Campbell,FCS,FCS,0.30
+Central Arkansas,FCS,FCS,0.30
+Chattanooga,FCS,FCS,0.30
+The Citadel,FCS,FCS,0.30
+Colgate,FCS,FCS,0.30
+Columbia,FCS,FCS,0.30
+Cornell,FCS,FCS,0.30
+Dartmouth,FCS,FCS,0.30
+Delaware State,FCS,FCS,0.30
+Drake,FCS,FCS,0.30
+Duquesne,FCS,FCS,0.30
+East Tennessee State,FCS,FCS,0.30
+Eastern Illinois,FCS,FCS,0.30
+Eastern Kentucky,FCS,FCS,0.30
+Elon,FCS,FCS,0.30
+Florida A&M,FCS,FCS,0.30
+Fordham,FCS,FCS,0.30
+Furman,FCS,FCS,0.30
+Grambling State,FCS,FCS,0.30
+Hampton,FCS,FCS,0.30
+Howard,FCS,FCS,0.30
+Idaho State,FCS,FCS,0.30
+Lafayette,FCS,FCS,0.30
+Lamar,FCS,FCS,0.30
+Lehigh,FCS,FCS,0.30
+Maine,FCS,FCS,0.30
+McNeese,FCS,FCS,0.30
+Mercer,FCS,FCS,0.30
+Monmouth,FCS,FCS,0.30
+Morgan State,FCS,FCS,0.30
+New Hampshire,FCS,FCS,0.30
+Nicholls,FCS,FCS,0.30
+North Carolina A&T,FCS,FCS,0.30
+North Carolina Central,FCS,FCS,0.30
+Northern Arizona,FCS,FCS,0.30
+Penn,FCS,FCS,0.30
+Rhode Island,FCS,FCS,0.30
+Sacred Heart,FCS,FCS,0.30
+South Carolina State,FCS,FCS,0.30
+Southeast Missouri State,FCS,FCS,0.30
+Southeastern Louisiana,FCS,FCS,0.30
+Southern,FCS,FCS,0.30
+Southern Utah,FCS,FCS,0.30
+Stephen F. Austin,FCS,FCS,0.30
+Stony Brook,FCS,FCS,0.30
+Tennessee State,FCS,FCS,0.30
+Towson,FCS,FCS,0.30
+UT Martin,FCS,FCS,0.30
+VMI,FCS,FCS,0.30
+Western Carolina,FCS,FCS,0.30
+Wofford,FCS,FCS,0.30
+Alabama A&M,FCS,FCS-,0.15
+Alabama State,FCS,FCS-,0.15
+Arkansas-Pine Bluff,FCS,FCS-,0.15
+Bethune-Cookman,FCS,FCS-,0.15
+Butler,FCS,FCS-,0.15
+Central Connecticut,FCS,FCS-,0.15
+Charleston Southern,FCS,FCS-,0.15
+Davidson,FCS,FCS-,0.15
+Dayton,FCS,FCS-,0.15
+East Texas A&M,FCS,FCS-,0.15
+Gardner-Webb,FCS,FCS-,0.15
+Georgetown,FCS,FCS-,0.15
+Houston Christian,FCS,FCS-,0.15
+Indiana State,FCS,FCS-,0.15
+LIU,FCS,FCS-,0.15
+Lindenwood,FCS,FCS-,0.15
+Marist,FCS,FCS-,0.15
+Merrimack,FCS,FCS-,0.15
+Mississippi Valley State,FCS,FCS-,0.15
+Morehead State,FCS,FCS-,0.15
+Murray State,FCS,FCS-,0.15
+Norfolk State,FCS,FCS-,0.15
+North Alabama,FCS,FCS-,0.15
+Northern Colorado,FCS,FCS-,0.15
+Northwestern State,FCS,FCS-,0.15
+Portland State,FCS,FCS-,0.15
+Prairie View A&M,FCS,FCS-,0.15
+Presbyterian,FCS,FCS-,0.15
+Robert Morris,FCS,FCS-,0.15
+Saint Francis (PA),FCS,FCS-,0.15
+St. Thomas,FCS,FCS-,0.15
+San Diego,FCS,FCS-,0.15
+Stetson,FCS,FCS-,0.15
+Stonehill,FCS,FCS-,0.15
+Tennessee Tech,FCS,FCS-,0.15
+Texas Southern,FCS,FCS-,0.15
+Utah Tech,FCS,FCS-,0.15
+UTRGV,FCS,FCS-,0.15
+Valparaiso,FCS,FCS-,0.15
+Wagner,FCS,FCS-,0.15
+Western Illinois,FCS,FCS-,0.15

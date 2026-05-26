@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#592c82"/>
+  <path d="M10 16h44v32H10z" fill="none" stroke="#f7d34b" stroke-width="4"/>
+  <text x="32" y="39" text-anchor="middle" font-size="17" font-family="Arial, sans-serif" font-weight="700" fill="#fff2af">WCU</text>
+</svg>
