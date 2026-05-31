@@ -1,0 +1,9 @@
+checkpoint_id,name,must_compile_files,final_phase_tests,test_policy
+1,CSV loader and validator,loadPipelineData.ts|validatePipelineData.ts|seededRng.ts|types.ts,validatePipelineData.test.ts,defer executable tests until final phase; compile/type/smoke checks allowed
+2,Year Zero bundle loading and bootstrap,yearZeroBundleLoader.ts|yearZeroPlayerBaseEngine.ts|collegeToNflTranslationEngine.ts|yearZeroHistoryEngine.ts|types.ts,yearZeroBootstrap.test.ts|yearZeroBundleValidation.test.ts,defer executable tests until final phase; tiny deterministic smoke check allowed
+3,School profiles and geography,buildSchoolProfiles.ts|distance.ts|dataAdapters.ts,newUniverseInitialization.test.ts,defer executable tests until final phase
+4,Recruit generation and conversion,recruitGenerator.ts|signingEngine.ts,recruitGeneration.test.ts,defer executable tests until final phase
+5,Recruiting and roster import,recruitingEngine.ts|collegeRosterEngine.ts,recruitingEngine.test.ts|collegeRosterEngine.test.ts,defer executable tests until final phase
+6,Development and season systems,depthChartEngine.ts|snapShareEngine.ts|trainingEngine.ts|developmentEngine.ts|injuryEngine.ts|productionEngine.ts|awardsEngine.ts,depthChartAndSnaps.test.ts|trainingDevelopment.test.ts|injuryEngine.test.ts|productionEngine.test.ts,defer executable tests until final phase
+7,Portal and draft bridge,transferPortalEngine.ts|draftEligibilityEngine.ts|allStarEngine.ts|combineProDayEngine.ts|draftScoutingEngine.ts|draftBoardEngine.ts|nflImportEngine.ts,transferPortal.test.ts|draftPipeline.test.ts,defer executable tests until final phase
+8,"Calibration, debug UI, and final tests",balanceMetrics.ts|pipelineScheduler.ts|PipelineDebugDashboard.tsx,goldenScenarios.test.ts|longRunBalance.test.ts|seededSnapshotExpectations.test.ts,this is the final formal test phase

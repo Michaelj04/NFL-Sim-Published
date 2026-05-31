@@ -1,0 +1,14 @@
+position_group,overall,position_fit,experience,coach_trust,scheme_fit,recent_form,promise_pressure,injury_readiness,notes
+QB,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+RB,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+WR,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+TE,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+OT,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+IOL,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+EDGE,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+IDL,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+LB,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+CB,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+S,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+K,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.
+P,0.42,0.12,0.1,0.1,0.08,0.08,0.05,0.05,Weights normalize after filtering.

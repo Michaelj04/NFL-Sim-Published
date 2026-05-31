@@ -1,0 +1,8 @@
+source_group,stage,allowed_final_repo_positions,default_weights_json,hard_rule,notes
+OT,signing,LT|RT,"{""LT"":0.5,""RT"":0.5}",must_convert,OT is generation-only broad group.
+IOL,signing,LG|C|RG,"{""LG"":0.35,""C"":0.30,""RG"":0.35}",must_convert,IOL is generation-only broad group.
+IDL,signing,DL,"{""DL"":1.0}",must_convert,IDL maps to repo DL unless repo has DT/NT.
+ST,signing,K|P,"{""K"":0.55,""P"":0.45}",must_convert,ST never appears on rosters.
+ATH,signing,RB|WR|TE|CB|S|LB,"{""RB"":0.18,""WR"":0.24,""TE"":0.08,""CB"":0.18,""S"":0.18,""LB"":0.14}",must_convert,ATH conversion can be overridden by ath_conversion_rules.
+EDGE,signing,EDGE,"{""EDGE"":1.0}",identity,Valid final repo position.
+QB,signing,QB,"{""QB"":1.0}",identity,Valid final repo position.

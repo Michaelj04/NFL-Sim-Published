@@ -1,0 +1,4 @@
+pipeline_type,same_state_bonus,border_state_bonus,regional_bonus,national_penalty
+primary,0.16,0.1,0.06,-0.04
+secondary,0.1,0.07,0.04,-0.03
+national,0.04,0.03,0.02,0.0

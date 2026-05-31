@@ -1,0 +1,5 @@
+metric_id,metric_name,sim_horizon_years,target_min,target_max,severity,calculation_notes,source_basis
+career_length,Average NFL career length,10,2.5,5.5,warning,Synthetic tuning target.,synthetic_gameplay_tuning
+second_contract_rate,Second contract rate,10,0.2,0.45,warning,Synthetic tuning target.,synthetic_gameplay_tuning
+udfa_survival,UDFA roster survival,10,0.04,0.18,warning,Synthetic tuning target.,synthetic_gameplay_tuning
+day3_contributors,Day 3 contributor share,10,0.12,0.35,warning,Synthetic tuning target.,synthetic_gameplay_tuning

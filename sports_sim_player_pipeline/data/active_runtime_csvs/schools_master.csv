@@ -1,0 +1,4 @@
+school_id,school_name,mascot,subdivision,subdivision_level,conference,city,state,active,ipeds_id,notes
+repo_school_001,Repo Example State,Bears,FBS,FBS_POWER,Repo Conference,Example City,NC,1,,Starter row. Replace or extend from existing repo school data. Do not research missing schools.
+repo_school_002,Repo Example Tech,Owls,FCS,FCS_TOP,Repo Conference,Sample Town,SC,1,,Starter row for tests and validator shape.
+repo_school_003,Repo Example College,Wolves,FBS,FBS_G5,Repo Conference,Metro,GA,1,,Synthetic package row.

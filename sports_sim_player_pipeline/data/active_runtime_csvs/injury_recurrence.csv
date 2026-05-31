@@ -1,0 +1,6 @@
+injury_family,recurrence_mult,permanent_athletic_loss_chance,potential_loss_min,potential_loss_max,position_sensitivity,recovery_bank_mult,draft_medical_penalty_min,draft_medical_penalty_max,notes
+ACL,1.25,0.35,1,5,RB|WR|CB|S,0.65,8,18,Major knee injuries affect athletic traits.
+Achilles,1.3,0.45,2,7,RB|EDGE|LB,0.55,10,22,Career-threatening potential.
+hamstring,1.45,0.1,0,2,WR|CB|RB,0.8,1,6,"High recurrence, usually low permanence."
+concussion,1.35,0.08,0,3,ALL,0.75,2,10,Stacked concussions matter.
+generic_major,1.2,0.2,1,4,ALL,0.7,4,12,Fallback major injury family.

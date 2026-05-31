@@ -1,0 +1,4 @@
+school_id,recruiting_power,blue_chip_access,regional_pull,national_pull,relationship_floor,source_basis
+repo_school_001,86,82,84,78,65,synthetic_gameplay_tuning
+repo_school_002,43,20,49,24,42,synthetic_gameplay_tuning
+repo_school_003,61,44,64,45,52,synthetic_gameplay_tuning

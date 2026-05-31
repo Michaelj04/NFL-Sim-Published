@@ -1,0 +1,12 @@
+state,state_name,talent_weight,nfhs_participants,region,notes
+CA,California,13.0,,West,Synthetic distribution tuning.
+TX,Texas,14.0,,Southwest,Synthetic distribution tuning.
+FL,Florida,10.5,,Southeast,Synthetic distribution tuning.
+GA,Georgia,6.0,,Southeast,Synthetic distribution tuning.
+NC,North Carolina,4.3,,Southeast,Synthetic distribution tuning.
+SC,South Carolina,2.3,,Southeast,Synthetic distribution tuning.
+OH,Ohio,4.8,,Midwest,Synthetic distribution tuning.
+PA,Pennsylvania,3.8,,Northeast,Synthetic distribution tuning.
+AL,Alabama,3.5,,Southeast,Synthetic distribution tuning.
+LA,Louisiana,3.3,,Southeast,Synthetic distribution tuning.
+OTHER,Other States,34.5,,National,Remainder bucket to avoid exhaustive research.

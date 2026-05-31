@@ -1,0 +1,9 @@
+injury_family,base_recurrence_pct,games_missed_mean,perm_speed_penalty,perm_strength_penalty,perm_awareness_penalty,durability_penalty,draft_medical_penalty,position_sensitivity
+ACL,0.12,9,2.0,1.0,0.0,6,10,RB|WR|CB|S
+Achilles,0.16,12,3.0,2.0,0.0,8,14,RB|EDGE|LB
+hamstring,0.22,3,0.5,0.0,0.0,2,3,WR|CB|RB
+concussion,0.18,2,0.0,0.0,0.5,3,6,ALL
+shoulder,0.14,4,0.0,1.2,0.0,3,5,QB|LB|DL
+ankle,0.2,3,0.4,0.2,0.0,2,3,ALL
+generic_minor,0.08,1,0.0,0.0,0.0,0,1,ALL
+generic_major,0.1,6,1.0,1.0,0.0,5,7,ALL

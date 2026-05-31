@@ -1,0 +1,7 @@
+staff_component,affected_system,effect_weight,min_effect,max_effect,notes
+headCoachPrestige,recruiting,0.2,-0.1,0.12,Brand and relationships.
+recruitingCoordinator,recruiting,0.28,-0.12,0.15,Offer efficiency and relationship gain.
+strengthCoach,development,0.22,-0.1,0.14,Athletic and recovery banks.
+medicalStaff,injury_recovery,0.2,-0.1,0.16,Recovery and recurrence mitigation.
+positionDevelopment,development,0.25,-0.12,0.18,Position-specific development.
+coordinatorSchemeFit,production,0.18,-0.1,0.12,Scheme use and production.

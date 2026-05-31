@@ -1,0 +1,6 @@
+param,value,unit,notes
+production_score_min,0,rating,Clamp minimum.
+production_score_max,100,rating,Clamp maximum.
+freshman_penalty,-4,rating_delta,Applied before experience adjustment.
+senior_experience_bonus,3,rating_delta,Applied to upperclass starters.
+randomness_sigma,6,rating_sigma,Seeded gaussian noise.

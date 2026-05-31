@@ -1,0 +1,16 @@
+step,checkpoint,task,required_output,blocks_runtime
+1,setup,Read CODEX_START_HERE.md and active_file_manifest.json. Remove/ignore R and research folders.,confirmed package load plan,1
+2,loader_validator,"Implement active manifest loader, CSV parser, schema registry, and runtime validator. Do not build the full test suite yet.",validatePipelineData runtime function passes package CSVs,1
+3,year_zero_bootstrap,"Implement one-time Year Zero player-base engine from consolidated Year Zero bundles. Include loading/progress UI hooks, full college rosters, transfer extraction/repair, draft class from college players, NFL rosters, practice squads, reserve statuses, free agents, contracts, histories, and scouting views.",deterministic fresh-save universe bootstrap with debug export,1
+4,school_profiles,Build school profile adapter from active CSVs and existing repo schools.,all repo FBS/FCS schools get profiles,1
+5,recruit_generation,Generate national recruit class with hidden true values and visible scouting ranges.,seeded national class,1
+6,position_conversion,Convert ATH/ST/OT/IOL/IDL before signing or roster import.,no invalid final roster positions,1
+7,recruiting_signing,"Implement boards, offers, visits, commitments, decommitments, signing.",school recruiting classes,1
+8,rosters_depth_chart,"Initialize college rosters, redshirts, cuts, depth chart, snap share.",valid playable rosters,1
+9,development,"Implement training, dev banks, yearly gains, gates, and regression pressure.",development tick and yearly apply,1
+10,injury_production,"Implement injuries, recovery, production, stats, and awards.",weekly season outputs,1
+11,morale_transfer,"Implement promise ledger, morale, and transfer portal.",portal entries and destinations,1
+12,draft_bridge,"Implement eligibility, all-star, combine, pro day, scouting, draft board, NFL import.",draft class and NFL rookies,1
+13,debug_ui,Build minimal functional debug UI and debug exports behind developer toggle before formal tests.,debug screens inspect data,0
+14,final_tests,"Final phase only: add golden, seeded snapshot, validator failure, long-run balance, and performance tests.",test suite results or explicit deferred status,0
+15,self_audit,"Print required self-audit table and note partials honestly, including whether final tests were completed.",audit table,0

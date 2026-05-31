@@ -1,0 +1,8 @@
+field,type,required,notes
+domain,string,yes,Subsystem bundle identifier.
+source_file,string,yes,Original V3 CSV filename.
+source_table,string,yes,Original V3 CSV filename without extension.
+record_category,enum,yes,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target
+source_row,integer,yes,Original row number excluding header.
+row_key,string,yes,Best available key for debugging and stable references.
+payload_json,json,yes,Original row object.

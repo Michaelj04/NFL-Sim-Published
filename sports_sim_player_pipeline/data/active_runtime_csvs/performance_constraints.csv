@@ -1,0 +1,5 @@
+constraint_id,hard_rule,threshold_or_target,implementation_requirement,failure_mode_to_prevent
+no_main_thread_mass_daily_updates,Do not update 25000 plus full player objects daily on the main thread.,batch sparse deltas,Use scheduler chunks and derived caches.,UI lockup
+validation_before_runtime,No pipeline runtime before CSV validation passes.,validation.ok true,Gate universe initialization.,silent bad data
+deterministic_rng,Same seed must produce same output.,stable snapshot,Named RNG streams.,non-reproducible bugs
+debug_explanations,Major decisions log explain objects.,decision events emitted,PipelineDebugEvent from every engine.,uninspectable systems

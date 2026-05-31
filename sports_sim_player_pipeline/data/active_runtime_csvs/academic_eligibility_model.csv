@@ -1,0 +1,6 @@
+component,required_value,weight,description
+gpa_proxy,40,0.35,Minimum academic profile proxy.
+test_score_proxy,35,0.25,Test-score proxy when present.
+school_strictness,0,0.15,School academic strictness adjustment.
+character_discipline,35,0.15,Discipline trait helps eligibility.
+support_staff,0,0.1,School support staff mitigation.

@@ -1,0 +1,8 @@
+component,weight,min_effect,max_effect,description,affects,source_basis
+playing_time,0.24,-18,14,Role and snap share satisfaction.,morale|portal,synthetic_gameplay_tuning
+promises,0.18,-22,10,Promise ledger status.,morale|portal|trust,synthetic_gameplay_tuning
+team_success,0.12,-8,10,Winning and postseason.,morale|retention,synthetic_gameplay_tuning
+nil,0.14,-12,12,NIL satisfaction.,morale|portal,synthetic_gameplay_tuning
+development,0.12,-10,10,Personal growth satisfaction.,morale|work_ethic,synthetic_gameplay_tuning
+homesickness,0.08,-8,4,Distance and player personality.,morale|portal,synthetic_gameplay_tuning
+coach_trust,0.12,-10,12,Relationship with staff.,morale|depth_chart,synthetic_gameplay_tuning

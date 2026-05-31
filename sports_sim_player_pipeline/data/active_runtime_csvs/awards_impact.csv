@@ -1,0 +1,7 @@
+award,award_group,draft_board_bonus,nil_bonus_pct,media_bonus
+national_player_of_year,national,7,0.25,10
+all_american,national,5,0.18,7
+conference_player_of_year,conference,4,0.12,5
+all_conference_first,conference,3,0.09,4
+freshman_all_american,freshman,2,0.08,3
+academic_all_conference,academic,0.5,0.02,1

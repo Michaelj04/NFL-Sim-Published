@@ -1,0 +1,6 @@
+player_id,position,class_year,true_overall,true_potential,star_level,school_id,expected_final_position
+gt_qb_001,QB,FR,62,88,4,repo_school_001,QB
+gt_ath_001,ATH,HS_SR,58,84,4,,WR|CB|S|RB
+gt_st_001,ST,HS_SR,52,70,2,,K|P
+gt_ot_001,OT,HS_SR,61,82,4,,LT|RT
+gt_iol_001,IOL,HS_SR,55,76,3,,LG|C|RG

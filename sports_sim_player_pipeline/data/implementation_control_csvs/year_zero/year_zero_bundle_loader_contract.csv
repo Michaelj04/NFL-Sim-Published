@@ -1,0 +1,10 @@
+contract_id,requirement,severity,notes
+load_manifest_first,Load data/active_file_manifest.json before loading Year Zero bundles.,error,Only files listed as active Year Zero bundles may be used.
+validate_bundle_shape,Validate bundle columns against consolidated_bundle_schema.csv and csv_schema_registry.csv before parsing payload_json.,error,"Reject missing columns, invalid category enums, malformed JSON, and duplicate bundle_file+source_table+source_row composite keys."
+parse_payload_json,Parse payload_json into typed domain records only after bundle-level validation passes.,error,Do not let gameplay systems read raw payload_json ad hoc.
+filter_record_category,Filter by record_category before any runtime use.,error,Never feed algorithm/example/research_basis/debug_schema rows into generation logic.
+group_by_source_table,Expose selectors by domain and source_table.,error,Avoid hardcoding source filenames throughout gameplay systems.
+separate_year_zero_from_annual,Year Zero bundles are fresh-save bootstrap data only. Annual systems use normal active_runtime_csvs after bootstrap.,error,Do not mix annual star_distribution or development curves into Year Zero unless an explicit bridge rule calls for it.
+deterministic_streams,Use deterministic RNG streams for every Year Zero subsystem.,error,Same seed must create same universe.
+debug_explanations,"Emit debug records explaining selected source_table, category, seed stream, and outcome.",warning,Debug outputs should make bootstrap choices auditable.
+reject_duplicate_composite_key,Reject duplicate composite keys using bundle_file + source_table + source_row. Do not reject repeated bare row_key values across source tables.,error,row_key values are not globally unique inside a consolidated bundle; they are source-table scoped.

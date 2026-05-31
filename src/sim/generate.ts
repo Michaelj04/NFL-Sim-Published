@@ -8,6 +8,11 @@ import {
   type Attributes,
   type CareerScenario,
   type CollegeProgram,
+  type CollegeAwardResult,
+  type CollegeInjuryResult,
+  type CollegeRosterPlayer,
+  type CollegeRosterState,
+  type CollegeSeasonResultsState,
   type DraftPick,
   type DraftState,
   type FranchiseGoals,
@@ -28,7 +33,9 @@ import {
   type StaffCandidate,
   type StaffMarketState,
   type StaffMember,
-  type TeamRecord
+  type TeamRecord,
+  type YearZeroDraftProspect,
+  type YearZeroNflPlayer
 } from "../types";
 import {
   calculateOverallFromRatings,
@@ -51,6 +58,16 @@ import { leagueYearStartDate, refreshCalendar } from "./calendar";
 import { divisionRanksFromPlayers, generateLeagueSchedule, generateSchedule } from "./schedule";
 import { applyScoutingProjection, ensureProspectConcerns, positionDraftValue, rankProspectBoard } from "./scouting";
 import { collegeConferences, createStaffMemberForSlot, staffDepartmentFor, staffOverall, staffSlotDefinitions, staffValueScore } from "./staffModel";
+import { annualProspectPositionWeights, annualRuntimeDebug } from "./annualRuntime";
+import { generateAnnualRecruitClass } from "./annualRecruitClass";
+import { generateAnnualRecruitingState } from "./annualRecruiting";
+import { generateAnnualRosterImportPlan } from "./annualRosterImport";
+import { createInitialCollegeRosterState } from "./collegeRoster";
+import { generateCollegeSeasonResults } from "./collegeSeasonResults";
+import { generateCollegeMoraleState } from "./collegeMorale";
+import { applyDraftEvaluationToProspects, generateDraftEvaluationState } from "./draftEvaluation";
+import { buildSchoolProfileState } from "./schoolProfiles";
+import { createYearZeroBootstrapState } from "./yearZero/yearZeroBootstrap";
 
 export { generateLeagueSchedule, generateSchedule } from "./schedule";
 
@@ -496,7 +513,7 @@ function scoutingNote(prospect: Pick<Prospect, "traits" | "production">, school:
 }
 
 const regionCycle: ScoutingRegion[] = ["East", "South", "Midwest", "West"];
-const prospectPositionWeights: Array<[Position, number]> = [
+const fallbackProspectPositionWeights: Array<[Position, number]> = [
   ["QB", 20],
   ["RB", 30],
   ["WR", 56],
@@ -566,6 +583,7 @@ function generateProspects(schools: CollegeProgram[], rng: Rng, scoutingQuality:
   const usedNames = new Set<string>();
   const schoolPositionCounts = new Map<string, number>();
   const positionCounts = new Map<Position, number>();
+  const annualPositionWeights = annualProspectPositionWeights();
   const prospects: Prospect[] = [];
   let guard = 0;
   while (prospects.length < 460 && guard < 12000) {
@@ -579,7 +597,7 @@ function generateProspects(schools: CollegeProgram[], rng: Rng, scoutingQuality:
       return Math.max(0.05, tierWeight + conferenceBump + rng.float(-0.08, 0.18));
     });
     const position = weightedPick(
-      prospectPositionWeights.filter(([candidate]) => (positionCounts.get(candidate) ?? 0) < positionCap(candidate)),
+      (annualPositionWeights.length > 0 ? annualPositionWeights : fallbackProspectPositionWeights).filter(([candidate]) => (positionCounts.get(candidate) ?? 0) < positionCap(candidate)),
       rng,
       ([, weight]) => weight
     )[0];
@@ -936,20 +954,43 @@ export function generateSeasonDraftAssets(
   staff: StaffMember[],
   selectedTeamId: string,
   seed: string,
-  draftYear: number
-): Pick<GameSave, "prospects" | "draftPicks" | "draftState" | "scoutingPlan"> {
+  draftYear: number,
+  collegeRoster?: CollegeRosterState,
+  collegeSeasonResults?: CollegeSeasonResultsState,
+  schoolProfiles?: GameSave["schoolProfiles"]
+): Pick<GameSave, "prospects" | "draftPicks" | "draftState" | "scoutingPlan" | "annualPipeline" | "annualRecruiting" | "annualRecruitClass" | "draftEvaluation"> {
   const rng = createRng(`${seed}:season-draft-assets:${draftYear}`);
+  const annualDebug = annualRuntimeDebug();
   const selectedScouting =
     staff
       .filter((member) => member.teamId === selectedTeamId && member.department === "Scouting")
       .reduce((sum, member) => sum + member.ratings.scouting, 0) / 7 || 50;
-  const prospects = generateProspects(schools, rng.fork("prospects"), selectedScouting, `${seed}:${draftYear}`);
+  const declaredProspects = draftProspectsFromCollegeRoster(collegeRoster, collegeSeasonResults, schools, selectedScouting, `${seed}:${draftYear}`, draftYear);
+  const generatedProspects = generateProspects(schools, rng.fork("prospects"), selectedScouting, `${seed}:${draftYear}`);
+  const declaredIds = new Set(declaredProspects.map((prospect) => prospect.id));
+  const initialProspects = rankProspectBoard([
+    ...declaredProspects,
+    ...generatedProspects.filter((prospect) => !declaredIds.has(prospect.id)).slice(0, Math.max(0, 460 - declaredProspects.length))
+  ], schools, `${seed}:${draftYear}`);
+  const draftEvaluation = generateDraftEvaluationState(seed, draftYear, initialProspects, 1);
+  const prospects = applyDraftEvaluationToProspects(initialProspects, draftEvaluation, schools, `${seed}:${draftYear}:evaluated`);
+  const annualRecruitClass = generateAnnualRecruitClass(seed, draftYear - 1);
   const draftPicks = createDraftPicks(teams, selectedTeamId, neutralScenarioProfile, rng.fork("draft-picks"), draftYear, { includeSeededCompPicks: false });
   return {
     prospects,
     draftPicks,
     draftState: createDraftState(draftPicks),
-    scoutingPlan: createScoutingPlan(staff, selectedTeamId, prospects)
+    scoutingPlan: createScoutingPlan(staff, selectedTeamId, prospects),
+    draftEvaluation,
+    annualPipeline: {
+      version: "v11_6_4",
+      lastGeneratedDraftYear: draftYear,
+      runtimeCsvs: annualDebug.loadedRuntimeCsvs,
+      rngStreams: annualDebug.rngStreams,
+      usesYearZeroBundles: annualDebug.usesYearZeroBundles
+    },
+    annualRecruitClass,
+    annualRecruiting: generateAnnualRecruitingState(seed, draftYear - 1, schools, annualRecruitClass.recruits, 1, schoolProfiles, collegeRoster)
   };
 }
 
@@ -986,6 +1027,285 @@ function initialInbox(selectedTeam: NFLTeam, staff: StaffMember[], prospects: Pr
       read: false
     }
   ];
+}
+
+function yearZeroDraftClassToLiveProspects(
+  draftClass: YearZeroDraftProspect[],
+  schools: CollegeProgram[],
+  selectedScouting: number,
+  seed: string
+): Prospect[] {
+  const schoolById = new Map(schools.map((school) => [school.id, school]));
+  const prospects = draftClass.map((source, index) => {
+    const rng = createRng(`${seed}:year-zero:live-prospect:${source.id}`);
+    const school = schoolById.get(source.schoolId) ?? schools[index % schools.length];
+    const ratings = generateRatings(source.position, source.nflOverall, rng.fork("ratings"));
+    const trueOverall = calculateOverallFromRatings(source.position, ratings);
+    const development = generateDevelopmentProfile(source.classYear === "SR" ? 22 : 21, 70, rng.fork("development"));
+    const traitsForProspect = rng.shuffle(traits).slice(0, rng.int(1, 3));
+    const positionFits = generatePositionFits({ position: source.position, ratings, traits: traitsForProspect });
+    const progress = Math.round(clamp(selectedScouting * 0.42 + rng.int(6, 24), 12, 72));
+    const medical = Math.round(clamp(rng.normal(72, 13), 30, 99));
+    const character = Math.round(clamp(rng.normal(70, 14), 25, 99));
+    const workEthic = Math.round(clamp(rng.normal(71, 14), 25, 99));
+    const region = geographicRegionForSchool(school);
+    const baseProspect = {
+      id: source.id,
+      firstName: source.firstName,
+      lastName: source.lastName,
+      position: source.position,
+      positionFits,
+      schoolId: source.schoolId,
+      classYear: source.classYear,
+      age: source.classYear === "SR" ? rng.int(22, 24) : rng.int(20, 22),
+      trueOverall,
+      potential: source.nflPotential,
+      ratings,
+      production: Math.round(clamp(source.collegeOverall + rng.normal(0, 8), 35, 99)),
+      combine: {
+        speed: ratingValue(ratings, "speed"),
+        strength: ratingValue(ratings, "strength"),
+        agility: ratingValue(ratings, "agility"),
+        explosion: ratingValue(ratings, "explosiveness")
+      },
+      traits: traitsForProspect,
+      development,
+      projectedRound: source.projectedRound,
+      region,
+      stock: Math.round(clamp((trueOverall - 58) * 1.4 + rng.normal(0, 8), -35, 35)),
+      riskFlags: riskFlagsFor(source.collegeOverall, source.nflPotential, trueOverall, rng, { medical, character, workEthic }),
+      medical,
+      character,
+      workEthic,
+      concernProfileVersion: CONCERN_PROFILE_VERSION,
+      consensusRank: 999,
+      consensusGrade: 0,
+      consensusProgress: Math.round(clamp(progress + rng.int(4, 18), 10, 88)),
+      teamRank: 999,
+      teamGrade: 0,
+      valuePickScore: 0,
+      valuePickLabel: "Fair",
+      concernVisibility: { medical: true, character: true, workEthic: true },
+      concernDetails: {
+        medical: medical < 45 ? "Medical red flag; teams may shade availability and recovery." : "Medical range looks stable.",
+        character: character < 45 ? "Character red flag; teams may shade off-field availability." : "Character range looks stable.",
+        workEthic: workEthic < 45 ? "Work ethic red flag; teams may shade development projection." : "Work ethic range looks stable."
+      },
+      schemeFit: school.scheme,
+      productionTrend: Math.round(clamp(rng.normal((source.collegeOverall - 60) * 0.25, 8), -25, 25)),
+      favorite: false,
+      hidden: false,
+      scoutReports: [`Year Zero board: ${region} scout translated ${source.collegeOverall} college scale to ${trueOverall} NFL scale.`],
+      scouted: {
+        low: trueOverall,
+        high: trueOverall,
+        potentialLow: source.nflPotential,
+        potentialHigh: source.nflPotential,
+        confidence: progress,
+        progress,
+        concerns: { medical: [medical, medical], character: [character, character], workEthic: [workEthic, workEthic] },
+        watchedTape: progress > 45,
+        ratingRanges: ratingRangesFor(ratings, progress, rng.fork("rating-ranges")),
+        note: scoutingNote({ traits: traitsForProspect, production: source.collegeOverall }, school, rng)
+      }
+    } as Prospect;
+    return applyScoutingProjection(normalizeProspectModel({ ...baseProspect, ...ensureProspectConcerns(baseProspect) }, `${seed}:year-zero`), progress, seed, school, selectedScouting);
+  });
+  return rankProspectBoard(prospects, schools, seed);
+}
+
+function collegePlayerToDraftProspect(
+  player: CollegeRosterPlayer,
+  schools: CollegeProgram[],
+  scoutingQuality: number,
+  seed: string,
+  seasonContext?: {
+    productionScore?: number;
+    awardCount: number;
+    injury?: CollegeInjuryResult;
+  }
+): Prospect {
+  const rng = createRng(`${seed}:college-roster-draft:${player.id}`);
+  const school = schools.find((candidate) => candidate.id === player.schoolId) ?? schools[0];
+  const productionSignal = seasonContext?.productionScore ?? player.collegeOverall;
+  const awardBump = Math.min(4, seasonContext?.awardCount ?? 0);
+  const injuryDrag = seasonContext?.injury ? seasonContext.injury.severity === "catastrophic" ? 5 : seasonContext.injury.severity === "major" ? 3 : seasonContext.injury.severity === "moderate" ? 1 : 0 : 0;
+  const nflOverall = Math.round(clamp(player.collegeOverall - 6 + (productionSignal - 65) * 0.04 + awardBump - injuryDrag + rng.normal(0, 2), 35, 88));
+  const nflPotential = calibratePotential(nflOverall, Math.round(clamp(player.collegePotential - 4 + awardBump * 0.5 - injuryDrag * 0.75 + rng.normal(0, 3), nflOverall, 95)));
+  const ratings = generateRatings(player.position, nflOverall, rng.fork("ratings"));
+  const trueOverall = calculateOverallFromRatings(player.position, ratings);
+  const classYear = player.classYear === "RS-SO" ? "RS-SO" : player.classYear === "JR" ? "JR" : "SR";
+  const concernProfile = generateConcernProfile(seed, `college-declaration-${player.id}`);
+  const development = generateDevelopmentProfile(player.age, concernProfile.workEthic, rng.fork("development"));
+  const production = Math.round(clamp(productionSignal + rng.normal(0, 4), 25, 99));
+  const prospectTraits = rng.shuffle(traits).slice(0, rng.int(1, 3));
+  const positionFits = generatePositionFits({ position: player.position, ratings, traits: prospectTraits });
+  const projectedRound = projectedRoundFor(trueOverall, nflPotential, player.position);
+  const region = geographicRegionForSchool(school);
+  const productionTrend = Math.round(clamp(rng.normal((production - 60) * 0.28 + awardBump * 2 - injuryDrag * 2, 8), -25, 25));
+  const progress = initialTeamProgress(projectedRound, school, rng.fork("team-progress"));
+  const ratingRanges = ratingRangesFor(ratings, progress, rng.fork("rating-ranges"));
+  const baseProspect = {
+    id: `college-declare-${player.draftDeclaredSeason ?? "eligible"}-${player.id}`,
+    firstName: player.firstName,
+    lastName: player.lastName,
+    position: player.position,
+    positionFits,
+    schoolId: player.schoolId,
+    classYear,
+    age: player.age,
+    trueOverall,
+    potential: nflPotential,
+    ratings,
+    production,
+    combine: {
+      speed: ratingValue(ratings, "speed"),
+      strength: ratingValue(ratings, "strength"),
+      agility: ratingValue(ratings, "agility"),
+      explosion: ratingValue(ratings, "explosiveness")
+    },
+    traits: prospectTraits,
+    development,
+    projectedRound,
+    region,
+    stock: Math.round(clamp((trueOverall - 56) * 1.3 + productionTrend * 0.45 + rng.normal(0, 7), -35, 35)),
+    riskFlags: seasonContext?.injury ? [...riskFlagsFor(production, nflPotential, trueOverall, rng, concernProfile), "Medical"] : riskFlagsFor(production, nflPotential, trueOverall, rng, concernProfile),
+    medical: Math.round(clamp(concernProfile.medical - injuryDrag * 7, 20, 99)),
+    character: concernProfile.character,
+    workEthic: concernProfile.workEthic,
+    concernProfileVersion: CONCERN_PROFILE_VERSION,
+    consensusRank: 999,
+    consensusGrade: 0,
+    consensusProgress: consensusProgress(projectedRound, school, rng.fork("consensus-progress")),
+    teamRank: 999,
+    teamGrade: 0,
+    valuePickScore: 0,
+    valuePickLabel: "Fair",
+    concernVisibility: { medical: true, character: true, workEthic: true },
+    concernDetails: {
+      medical: seasonContext?.injury ? `${seasonContext.injury.severity} college injury history; missed ${seasonContext.injury.missedGames} games.` : concernProfile.medical < 45 ? "Medical red flag; teams may shade availability and recovery." : "Medical range looks stable.",
+      character: concernProfile.character < 45 ? "Character red flag; teams may shade off-field availability." : "Character range looks stable.",
+      workEthic: concernProfile.workEthic < 45 ? "Work ethic red flag; teams may shade development projection." : "Work ethic range looks stable."
+    },
+    schemeFit: school.scheme,
+    productionTrend,
+    favorite: false,
+    hidden: false,
+    scoutReports: [`College roster declaration: ${player.collegeOverall} college scale translated to ${trueOverall} NFL scale. Production ${production}; awards ${awardBump}; injury drag ${injuryDrag}.`],
+    scouted: {
+      low: trueOverall,
+      high: trueOverall,
+      potentialLow: nflPotential,
+      potentialHigh: nflPotential,
+      confidence: progress,
+      progress,
+      concerns: {
+        medical: [Math.round(clamp(concernProfile.medical - injuryDrag * 7, 20, 99)), Math.round(clamp(concernProfile.medical - injuryDrag * 7, 20, 99))],
+        character: [concernProfile.character, concernProfile.character],
+        workEthic: [concernProfile.workEthic, concernProfile.workEthic]
+      },
+      watchedTape: progress > 45,
+      ratingRanges,
+      note: scoutingNote({ traits: prospectTraits, production }, school, rng)
+    }
+  } as Prospect;
+  return applyScoutingProjection(normalizeProspectModel({ ...baseProspect, ...ensureProspectConcerns(baseProspect) }, seed), progress, seed, school, scoutingQuality);
+}
+
+function draftProspectsFromCollegeRoster(
+  collegeRoster: CollegeRosterState | undefined,
+  collegeSeasonResults: CollegeSeasonResultsState | undefined,
+  schools: CollegeProgram[],
+  scoutingQuality: number,
+  seed: string,
+  draftYear: number
+): Prospect[] {
+  const productionByPlayerId = new Map((collegeSeasonResults?.production ?? []).map((row) => [row.playerId, row.productionScore]));
+  const awardsByPlayerId = new Map<string, CollegeAwardResult[]>();
+  for (const award of collegeSeasonResults?.awards ?? []) {
+    awardsByPlayerId.set(award.playerId, [...(awardsByPlayerId.get(award.playerId) ?? []), award]);
+  }
+  const injuryByPlayerId = new Map((collegeSeasonResults?.injuries ?? []).map((row) => [row.playerId, row]));
+  const declared = (collegeRoster?.players ?? [])
+    .filter((player) => player.draftDeclaredSeason === draftYear && !player.graduatedSeason || player.draftDeclaredSeason === draftYear && player.classYear === "SR")
+    .sort((a, b) => b.collegeOverall - a.collegeOverall || a.id.localeCompare(b.id))
+    .slice(0, 460);
+  return rankProspectBoard(declared.map((player) => collegePlayerToDraftProspect(player, schools, scoutingQuality, seed, {
+    productionScore: productionByPlayerId.get(player.id),
+    awardCount: awardsByPlayerId.get(player.id)?.length ?? 0,
+    injury: injuryByPlayerId.get(player.id)
+  })), schools, seed);
+}
+
+function yearZeroNflPlayersToLivePlayers(sources: YearZeroNflPlayer[], teams: NFLTeam[], schools: CollegeProgram[], seed: string, seasonYear = 2026): Player[] {
+  const teamById = new Map(teams.map((team) => [team.id, team]));
+  const marketTeam: NFLTeam = {
+    ...(teams[0] ?? nflTeams[0]),
+    id: FREE_AGENT_TEAM_ID,
+    abbreviation: "FA",
+    city: "Free Agent",
+    name: "Market",
+    fullName: "Free Agent Market",
+    marketSize: 58
+  };
+  return sources.map((source) => {
+    const rng = createRng(`${seed}:year-zero:live-nfl:${source.id}`);
+    const team = source.pool === "free_agent" ? marketTeam : teamById.get(source.teamId) ?? teams[0];
+    const ratings = generateRatings(source.position, source.overall, rng.fork("ratings"));
+    const overall = calculateOverallFromRatings(source.position, ratings);
+    const attributes = legacyAttributesFromRatings(source.position, ratings);
+    const makeup = generateConcernProfile(source.id, `${source.firstName}-${source.lastName}`);
+    const development = generateDevelopmentProfile(source.age, makeup.workEthic, rng.fork("development"));
+    const playerTraits = rng.shuffle(traits).slice(0, rng.int(1, 3));
+    const positionFits = generatePositionFits({ position: source.position, ratings, traits: playerTraits });
+    const contractOrigin = source.pool === "practice_squad" ? "practice-squad" : source.pool === "free_agent" ? "free-agent" : "generated";
+    const shell = {
+      id: source.id,
+      firstName: source.firstName,
+      lastName: source.lastName,
+      position: source.position,
+      teamId: source.pool === "free_agent" ? FREE_AGENT_TEAM_ID : team.id,
+      previousTeamId: source.previousTeamId,
+      teamStartSeason: source.pool === "active_roster" ? initialTeamStartSeason(source.age, source.contractYears, seasonYear, rng.fork("team-start")) : undefined,
+      draftYear: seasonYear - source.experience,
+      collegeId: source.collegeId,
+      age: source.age,
+      overall,
+      potential: Math.max(overall, source.potential),
+      ratings,
+      attributes,
+      positionFits,
+      salary: source.salary,
+      contractYears: source.contractYears,
+      contract: makeContract({ position: source.position, salary: source.salary, contractYears: source.contractYears, age: source.age, overall, potential: source.potential }, seasonYear, {
+        origin: contractOrigin,
+        rights: source.pool === "free_agent" ? "ufa" : "none",
+        years: source.contractYears,
+        apy: source.salary,
+        signingBonus: source.pool === "practice_squad" ? 0 : undefined,
+        guaranteedTotal: source.pool === "practice_squad" ? 0 : undefined
+      }),
+      medical: makeup.medical,
+      status: source.pool === "practice_squad" ? "practice" : "active",
+      practiceSquad: source.pool === "practice_squad",
+      practiceSquadSignedWeek: source.pool === "practice_squad" ? 1 : undefined,
+      practiceSquadSignedSeason: source.pool === "practice_squad" ? seasonYear : undefined,
+      practiceSquadOriginalSalary: source.pool === "practice_squad" ? Math.max(0.75, source.salary * 2.8) : undefined,
+      injuryWeeks: 0,
+      injury: undefined,
+      suspensionWeeks: 0,
+      makeup,
+      traits: playerTraits,
+      development,
+      stats: emptyStats(),
+      playoffStats: emptyStats()
+    } as Player;
+    const normalized = normalizePlayerModel(shell, `${seed}:year-zero:nfl:${source.id}`);
+    if (source.pool === "practice_squad") {
+      return toPracticeSquadPlayer(normalized, { seasonYear, currentWeek: 1 });
+    }
+    return normalized;
+  });
 }
 
 function normalizeCareerOptions(
@@ -1028,25 +1348,36 @@ export function createNewSave(
   const scenario = options.scenario;
   const mode = options.mode;
   const scenarioProfile = scenarioProfileFor(scenario, seed, selectedTeam.id);
-  const rosterPlayers = teams.flatMap((team) =>
-    generateRoster(team, schools, rng.fork(`${team.id}:roster`), team.id === selectedTeam.id ? scenarioProfile.rosterBias : 0)
-  );
-  const practiceSquadPlayers = teams.flatMap((team) => generatePracticeSquad(team, schools, rng.fork(`${team.id}:practice-squad`), 2026));
-  const players = [...rosterPlayers, ...practiceSquadPlayers, ...generateFreeAgentPool(teams, schools, seed)];
+  const yearZero = createYearZeroBootstrapState(seed, teams, schools);
+  const players = yearZeroNflPlayersToLivePlayers(yearZero.nflPlayers, teams, schools, seed, 2026);
   const staff = teams.flatMap((team) =>
     generateStaff(team, rng.fork(`${team.id}:staff`), team.id === selectedTeam.id ? scenarioProfile.staffBias : 0)
   );
   const selectedScouting = staff
     .filter((member) => member.teamId === selectedTeam.id && member.department === "Scouting")
     .reduce((sum, member) => sum + member.ratings.scouting, 0) / 7;
-  const prospects = generateProspects(schools, rng.fork("prospects"), selectedScouting, seed);
+  const initialProspects = yearZeroDraftClassToLiveProspects(yearZero.draftClass, schools, selectedScouting, seed);
+  const draftEvaluation = generateDraftEvaluationState(seed, 2027, initialProspects, 1);
+  const prospects = applyDraftEvaluationToProspects(initialProspects, draftEvaluation, schools, `${seed}:2027:evaluated`);
+  const annualRecruitClass = generateAnnualRecruitClass(seed, 2026);
+  const annualDebug = annualRuntimeDebug();
   const previousSeasonRanks = divisionRanksFromPlayers(teams, players, seed);
   const schedule = generateLeagueSchedule(teams, seed, previousSeasonRanks, 2026);
   const staffMarket = generateStaffMarket(teams, seed, 1);
   const draftPicks = createDraftPicks(teams, selectedTeam.id, scenarioProfile, rng.fork("draft-picks"));
+  const collegeRoster = createInitialCollegeRosterState(yearZero, 2026);
+  const collegeSeasonResults = generateCollegeSeasonResults(seed, collegeRoster, 2026);
+  const schoolProfiles = buildSchoolProfileState(schools, seed, 2026);
+  const annualRecruiting = generateAnnualRecruitingState(seed, 2026, schools, annualRecruitClass.recruits, 1, schoolProfiles, collegeRoster);
 
   const rawSave: GameSave = {
     version: 1,
+    yearZero,
+    collegeRoster,
+    schoolProfiles,
+    collegeSeasonResults,
+    collegeMorale: generateCollegeMoraleState(seed, 2026, collegeRoster, collegeSeasonResults, annualRecruiting),
+    draftEvaluation,
     seed,
     seasonYear: 2026,
     previousSeasonRanks,
@@ -1064,6 +1395,15 @@ export function createNewSave(
     players,
     staff,
     prospects,
+    annualPipeline: {
+      version: "v11_6_4",
+      lastGeneratedDraftYear: 2027,
+      runtimeCsvs: annualDebug.loadedRuntimeCsvs,
+      rngStreams: annualDebug.rngStreams,
+      usesYearZeroBundles: annualDebug.usesYearZeroBundles
+    },
+    annualRecruiting,
+    annualRecruitClass,
     schedule,
     records: createRecords(teams),
     inbox: initialInbox(selectedTeam, staff, prospects),
@@ -1089,5 +1429,8 @@ export function createNewSave(
     careerEndedRecords: [],
     irReturnUsage: Object.fromEntries(teams.map((team) => [team.id, 0]))
   };
-  return refreshCalendar(normalizeCapState(rawSave));
+  return refreshCalendar(normalizeCapState({
+    ...rawSave,
+    annualRosterImportPlan: generateAnnualRosterImportPlan(rawSave, 2026)
+  }));
 }

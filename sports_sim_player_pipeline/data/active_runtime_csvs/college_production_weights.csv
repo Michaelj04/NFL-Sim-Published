@@ -1,0 +1,14 @@
+position_group,overall_weight,snap_share_weight,scheme_usage_weight,opponent_strength_weight,team_quality_weight,game_script_weight,randomness_weight,level_comp_mult_key,notes
+QB,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+RB,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+WR,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+TE,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+OT,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+IOL,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+EDGE,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+IDL,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+LB,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+CB,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+S,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+K,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.
+P,0.32,0.2,0.14,0.1,0.08,0.08,0.08,default,Weights normalize after filtering.

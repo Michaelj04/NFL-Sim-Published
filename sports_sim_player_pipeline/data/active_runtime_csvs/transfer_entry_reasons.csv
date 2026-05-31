@@ -1,0 +1,8 @@
+reason,weight,threshold,description
+playing_time,0.24,low_snap_share,Blocked on depth chart.
+broken_promise,0.2,promise_status_broken,Promise ledger failure.
+nil,0.16,nil_below_expected,NIL dissatisfaction.
+homesick,0.1,distance_sensitivity_high,Distance sensitivity.
+coaching_change,0.12,staff_change,Coach departure.
+team_quality,0.08,team_success_low,Poor team performance.
+draft_showcase,0.1,draft_signal_needs_boost,High-end player seeks bigger stage.

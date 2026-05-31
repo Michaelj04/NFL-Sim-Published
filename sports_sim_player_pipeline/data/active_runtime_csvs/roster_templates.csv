@@ -1,0 +1,3 @@
+template_id,subdivision_level,roster_size,scholarship_limit,walkon_soft_cap,notes
+fbs_85,FBS_POWER|FBS_G5,85,85,25,Standard FBS roster template.
+fcs_63,FCS_TOP|FCS_LOW,75,63,30,FCS template with larger walk-on share.

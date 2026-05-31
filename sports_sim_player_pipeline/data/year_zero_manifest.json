@@ -1,0 +1,40 @@
+{
+  "package": "year_zero_player_base_engine_v3_1_consolidated_merged_into_v11_6_3",
+  "source_package": "year_zero_player_base_engine_v3_full_research_compiled",
+  "active_runtime_bundle_count": 19,
+  "source_csv_count": 360,
+  "bundle_files": [
+    "data/active_runtime_csvs/year_zero/college_awards.csv",
+    "data/active_runtime_csvs/year_zero/college_production.csv",
+    "data/active_runtime_csvs/year_zero/college_rosters.csv",
+    "data/active_runtime_csvs/year_zero/draft_translation.csv",
+    "data/active_runtime_csvs/year_zero/high_school_recruits.csv",
+    "data/active_runtime_csvs/year_zero/injuries.csv",
+    "data/active_runtime_csvs/year_zero/nfl_aging_decline.csv",
+    "data/active_runtime_csvs/year_zero/nfl_awards.csv",
+    "data/active_runtime_csvs/year_zero/nfl_contracts.csv",
+    "data/active_runtime_csvs/year_zero/nfl_free_agents.csv",
+    "data/active_runtime_csvs/year_zero/nfl_practice_squad.csv",
+    "data/active_runtime_csvs/year_zero/nfl_reserve_status.csv",
+    "data/active_runtime_csvs/year_zero/nfl_rosters.csv",
+    "data/active_runtime_csvs/year_zero/nfl_team_strength.csv",
+    "data/active_runtime_csvs/year_zero/scouting.csv",
+    "data/active_runtime_csvs/year_zero/transfer_portal.csv",
+    "data/active_runtime_csvs/year_zero/transfer_repair.csv",
+    "data/active_runtime_csvs/year_zero/udfa.csv",
+    "data/active_runtime_csvs/year_zero/year_zero_core.csv"
+  ],
+  "notes": [
+    "Fictional NFL team strength uses V2.18.1 seed-driven model only.",
+    "Original detailed CSV rows are preserved as payload_json in subsystem bundle CSVs.",
+    "Merged into V11.6 under data/active_runtime_csvs/year_zero/.",
+    "Consolidated Year Zero uses 19 active bundle CSVs; misc_runtime was removed after its contract-related rows were moved into nfl_contracts.csv."
+  ],
+  "merged_into": "sports_sim_player_pipeline_v11_6_3_year_zero_index_cleanup",
+  "packageVersion": "v11_6_3_year_zero_index_cleanup",
+  "validationContracts": {
+    "bundle_shape_schema": "data/implementation_control_csvs/year_zero/consolidated_bundle_schema.csv",
+    "main_schema_registry": "data/active_runtime_csvs/csv_schema_registry.csv",
+    "record_category_policy": "data/implementation_control_csvs/year_zero/year_zero_record_category_policy.csv"
+  }
+}

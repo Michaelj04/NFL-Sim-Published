@@ -1,0 +1,5 @@
+archetype,production_weight,traits_weight,medical_conservatism,small_school_confidence,combine_weight,interview_weight,regional_bias,risk_tolerance,notes
+traits_first,0.24,0.34,0.5,0.45,0.18,0.1,0.0,0.65,Traits-heavy scouts.
+production_first,0.36,0.22,0.55,0.55,0.1,0.12,0.0,0.45,Film/production scouts.
+risk_averse,0.3,0.24,0.75,0.36,0.12,0.18,0.0,0.3,Avoids high variance.
+balanced,0.3,0.28,0.55,0.5,0.14,0.12,0.0,0.5,Balanced default.

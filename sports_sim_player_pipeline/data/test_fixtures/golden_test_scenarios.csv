@@ -1,0 +1,5 @@
+scenario_id,description,seed,inputs_json,expected_range_json,notes
+seed_repeatability,Same seed creates same recruit IDs and ranks.,42,"{""classSize"":6000}","{""fiveStars"":[25,60],""invalidFinalPositions"":[0,0]}",Determinism and position conversion.
+ath_conversion,ATH recruits convert before signing.,7,"{""fixturePlayer"":""gt_ath_001""}","{""invalidFinalPositions"":[0,0]}",ATH hard rule.
+st_split,ST recruits split to K/P.,7,"{""fixturePlayer"":""gt_st_001""}","{""invalidFinalPositions"":[0,0]}",ST hard rule.
+portal_entry,Broken promise and low snap share raise portal risk.,12345,"{""promise"":""early_playing_time"",""fulfilled"":false,""snapShare"":0.05}","{""entryProbability"":[0.18,0.75]}",Promise ledger integration.

@@ -19,6 +19,7 @@ import {
 import { normalizePlayerMakeup } from "./concerns";
 import { syncPlayerModelFromRatings } from "./playerModel";
 import { coachDevelopmentGrade } from "./staffModel";
+import { annualDevelopmentCurveForPosition, annualProgressionGates } from "./annualRuntime";
 
 const physicalKeys: RatingKey[] = [
   "speed",
@@ -125,6 +126,11 @@ function ageCurve(player: Player, profile: PlayerDevelopmentProfile): number {
   return -0.8 - Math.max(0, player.age - profile.declineAge) * 0.24;
 }
 
+function experienceYear(player: Player, seasonYear: number): 1 | 2 | 3 | 4 {
+  const draftYear = player.draftYear ?? (seasonYear - Math.max(0, player.age - 21));
+  return Math.round(clamp(seasonYear - draftYear + 1, 1, 4)) as 1 | 2 | 3 | 4;
+}
+
 function updatePlayerRatings(player: Player, rawDelta: number, injuryDrag: number, rng: Rng): RatingVector {
   const ratings = [...player.ratings];
   const tech = technicalKeysByPosition[player.position];
@@ -153,6 +159,7 @@ function reportCategory(deltaOverall: number, deltaPotential: number, injuryDrag
 
 export function runAnnualDevelopment(save: GameSave): GameSave {
   const seasonYear = save.draftState?.draftYear ?? 2027;
+  const gates = annualProgressionGates();
   const reports: PlayerDevelopmentReport[] = [];
   const players = save.players.map((player) => {
     const rng = createRng(`${save.seed}:annual-development:${seasonYear}:${player.id}`);
@@ -164,6 +171,9 @@ export function runAnnualDevelopment(save: GameSave): GameSave {
       learning: Math.round(clamp(baseProfile.learning * 0.72 + makeup.workEthic * 0.28, 20, 99))
     };
     const staffGrade = coachDevelopmentGrade(save.staff, player.teamId, player.position);
+    const developmentCurve = annualDevelopmentCurveForPosition(player.position);
+    const experience = experienceYear(player, seasonYear);
+    const csvGainBaseline = developmentCurve.yearGains[experience - 1] ?? developmentCurve.yearGains[3];
     const snapTarget = player.position === "K" || player.position === "P" ? 85 : 850;
     const snapFactor = clamp((player.stats.snaps ?? 0) / snapTarget, 0, 1);
     const potentialGap = Math.max(0, player.potential - player.overall);
@@ -178,13 +188,16 @@ export function runAnnualDevelopment(save: GameSave): GameSave {
       (profile.learning - 60) * 0.042 +
       (profile.workEthic - 60) * 0.035 +
       makeupWork +
-      snapFactor * 0.75 +
+      snapFactor * (0.75 + developmentCurve.playingTimeWeight) +
+      (csvGainBaseline - 3.2) * 0.22 +
       ageCurve(player, profile) -
       injuryDrag +
       variance;
 
     if (player.age >= profile.declineAge && rawDelta > 0) rawDelta *= 0.35;
-    const targetDelta = Math.round(clamp(rawDelta, -5, 6));
+    const positiveCap = player.age >= 24 ? gates.upperclassMaxGain : gates.defaultMaxGain;
+    const gatedCap = injuryDrag > 0 ? Math.min(positiveCap, gates.injuryRegressionMaxGain) : positiveCap;
+    const targetDelta = Math.round(clamp(rawDelta, -5, Math.min(6, gatedCap)));
     const ratings = updatePlayerRatings(player, targetDelta, injuryDrag, rng);
     const newOverall = calculateOverallFromRatings(player.position, ratings);
     let newPotential = player.potential;

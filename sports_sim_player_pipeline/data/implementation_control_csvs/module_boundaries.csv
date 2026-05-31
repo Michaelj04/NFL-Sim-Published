@@ -1,0 +1,12 @@
+module,single_job,may_not_do
+loadPipelineData.ts,"Read manifest, parse CSVs, return typed PipelineData.",Generate players or mutate universe.
+validatePipelineData.ts,"Validate schema, FK, ranges, weights, and package constraints.",Auto-fix bad active CSV data silently.
+recruitGenerator.ts,Generate HS recruits from seed and active CSVs.,Sign players or create college rosters.
+signingEngine.ts,"Commit, sign, convert generation positions, import to college roster.",Leave ATH/ST/OT/IOL/IDL as final positions.
+developmentEngine.ts,"Apply development banks, caps, breakout, regression pressure.",Run UI state or direct rendering.
+transferPortalEngine.ts,Entry and destination decisions with debug explanations.,Delete players without history event.
+draftBoardEngine.ts,Build consensus and team-specific boards.,Make all teams use identical boards.
+yearZeroPlayerBaseEngine.ts,Create deterministic fresh-save starting universe from validated Year Zero bundles.,Run again inside existing saves or use real-world team-quality priors.
+yearZeroBundleLoader.ts,Load and parse consolidated Year Zero bundle CSVs into typed domain records.,Generate gameplay entities or silently ignore malformed payload_json.
+collegeToNflTranslationEngine.ts,Translate college-scale player ratings to NFL-scale rookie/veteran projections.,Treat college and NFL ratings as the same scale.
+yearZeroHistoryEngine.ts,"Generate detailed fictional player histories, awards, injuries, contracts, and production rows.",Directly increase true ability only because a history event exists.

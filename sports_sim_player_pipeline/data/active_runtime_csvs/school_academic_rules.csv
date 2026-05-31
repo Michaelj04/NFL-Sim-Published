@@ -1,0 +1,4 @@
+school_id,academic_model,academic_strictness,transfer_acceptance_modifier,juco_acceptance_modifier,notes
+repo_school_001,standard,55,0.0,0.0,Synthetic starter.
+repo_school_002,flexible,42,0.05,0.1,Synthetic starter.
+repo_school_003,standard,50,0.0,0.05,Synthetic starter.

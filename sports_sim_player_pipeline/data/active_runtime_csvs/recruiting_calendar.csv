@@ -1,0 +1,6 @@
+week,phase,allowed_actions,commitment_pressure,visit_bonus
+1-8,board_setup,evaluate|offer,0.2,0.0
+9-18,relationship_building,evaluate|offer|visit,0.45,0.07
+19-32,summer_push,evaluate|offer|visit|soft_commit,0.6,0.1
+33-48,season_recruiting,offer|visit|soft_commit|hard_commit,0.8,0.12
+49-52,signing,sign|flip|withdraw,1.0,0.04

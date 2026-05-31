@@ -1,0 +1,6 @@
+scenario_id,assertion_key,expected_value_json
+seed_repeatability,invalid_final_positions,"{""equals"":0}"
+seed_repeatability,five_star_count,"{""min"":25,""max"":60}"
+ath_conversion,final_position_not_ath,"{""equals"":true}"
+st_split,final_position_in_k_or_p,"{""equals"":true}"
+portal_entry,entry_probability,"{""min"":0.18,""max"":0.75}"

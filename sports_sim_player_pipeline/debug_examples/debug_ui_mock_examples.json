@@ -1,0 +1,32 @@
+{
+  "validationReport": {
+    "ok": true,
+    "errors": [],
+    "warnings": [
+      "Synthetic tuning CSVs are gameplay values, not factual data."
+    ]
+  },
+  "recruitCard": {
+    "name": "Example Recruit",
+    "stars": 4,
+    "position": "WR",
+    "scoutedOverall": "61-70",
+    "scoutedPotential": "78-90",
+    "confidence": 0.62,
+    "trueValuesHiddenInNormalUI": true
+  },
+  "decisionExplanation": {
+    "stage": "signing",
+    "entityType": "player",
+    "decision": "ATH converted to WR",
+    "reasons": [
+      "height/weight matched skill_speed bucket",
+      "WR need was high",
+      "conversion weight selected WR"
+    ],
+    "csvSources": [
+      "ath_conversion_rules.csv",
+      "position_group_conversion.csv"
+    ]
+  }
+}

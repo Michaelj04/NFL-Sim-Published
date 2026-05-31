@@ -1,0 +1,4 @@
+school_id,school_name,city,state,lat,lon,timezone,geo_precision,verification_status,notes
+repo_school_001,Repo Example State,Example City,NC,35.2271,-80.8431,America/New_York,city,repo_supplied,Campus geography wins conflicts.
+repo_school_002,Repo Example Tech,Sample Town,SC,34.0007,-81.0348,America/New_York,city,repo_supplied,Synthetic starter row.
+repo_school_003,Repo Example College,Metro,GA,33.749,-84.388,America/New_York,city,repo_supplied,Synthetic starter row.

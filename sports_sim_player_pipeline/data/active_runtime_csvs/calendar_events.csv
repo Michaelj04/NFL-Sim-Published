@@ -1,0 +1,9 @@
+event_id,phase,month,day_start,day_end,week_hint,applies_to,hard_gate,description,engine_effect
+season_rollover,offseason,1,1,7,1,all,1,Advance class years and initialize yearly state.,pipelineScheduler
+recruit_class_generation,offseason,1,8,14,2,college,1,Generate national recruit class.,recruitGenerator
+spring_portal,spring,4,15,30,16,college,1,Spring transfer window.,transferPortalEngine
+summer_camps,summer,6,1,30,22,college,0,Scouting confidence and camp offers.,recruitingEngine
+preseason_depth_chart,preseason,8,1,15,31,college,1,Set depth charts and redshirts.,depthChartEngine
+regular_season,season,9,1,30,36,college,1,"Weekly games, injuries, production.",productionEngine
+early_signing,recruiting,12,1,10,49,college,1,Early signing window.,signingEngine
+draft_declaration,postseason,12,15,31,52,college,1,Draft declaration decisions.,draftEligibilityEngine

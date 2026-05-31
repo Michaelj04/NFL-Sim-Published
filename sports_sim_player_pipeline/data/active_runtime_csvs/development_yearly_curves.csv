@@ -1,0 +1,14 @@
+position_group,year1_gain,year2_gain,year3_gain,year4_gain,playing_time_weight,redshirt_weight,source_basis
+QB,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+RB,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+WR,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+TE,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+OT,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+IOL,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+EDGE,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+IDL,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+LB,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+CB,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+S,5.2,4.2,3.2,2.1,0.22,0.12,synthetic_gameplay_tuning
+K,3.0,2.6,2.2,1.8,0.22,0.12,synthetic_gameplay_tuning
+P,3.0,2.6,2.2,1.8,0.22,0.12,synthetic_gameplay_tuning

@@ -1,0 +1,87 @@
+{
+  "original_active_csv_count": 360,
+  "consolidated_active_bundle_count": 20,
+  "source_rows_preserved": 14939,
+  "domains": {
+    "college_awards": {
+      "source_files": 13,
+      "records": 157
+    },
+    "college_production": {
+      "source_files": 26,
+      "records": 2071
+    },
+    "college_rosters": {
+      "source_files": 33,
+      "records": 848
+    },
+    "draft_translation": {
+      "source_files": 9,
+      "records": 1061
+    },
+    "high_school_recruits": {
+      "source_files": 34,
+      "records": 794
+    },
+    "injuries": {
+      "source_files": 19,
+      "records": 1741
+    },
+    "misc_runtime": {
+      "source_files": 4,
+      "records": 284
+    },
+    "nfl_aging_decline": {
+      "source_files": 14,
+      "records": 3744
+    },
+    "nfl_awards": {
+      "source_files": 17,
+      "records": 422
+    },
+    "nfl_contracts": {
+      "source_files": 36,
+      "records": 762
+    },
+    "nfl_free_agents": {
+      "source_files": 12,
+      "records": 880
+    },
+    "nfl_practice_squad": {
+      "source_files": 19,
+      "records": 342
+    },
+    "nfl_reserve_status": {
+      "source_files": 16,
+      "records": 176
+    },
+    "nfl_rosters": {
+      "source_files": 12,
+      "records": 372
+    },
+    "nfl_team_strength": {
+      "source_files": 18,
+      "records": 181
+    },
+    "scouting": {
+      "source_files": 26,
+      "records": 377
+    },
+    "transfer_portal": {
+      "source_files": 6,
+      "records": 39
+    },
+    "transfer_repair": {
+      "source_files": 22,
+      "records": 329
+    },
+    "udfa": {
+      "source_files": 18,
+      "records": 268
+    },
+    "year_zero_core": {
+      "source_files": 6,
+      "records": 91
+    }
+  }
+}

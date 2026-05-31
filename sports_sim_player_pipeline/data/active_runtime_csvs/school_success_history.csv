@@ -1,0 +1,4 @@
+school_id,historical_brand_score,recent_success_score,conference_strength_score,nfl_draft_output_proxy,prestige_score,source_basis
+repo_school_001,82,78,86,76,81,synthetic_gameplay_tuning
+repo_school_002,41,47,42,35,44,synthetic_gameplay_tuning
+repo_school_003,58,54,57,50,56,synthetic_gameplay_tuning

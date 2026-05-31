@@ -1,0 +1,8 @@
+old_file,new_file,status,runtime_use,notes
+development_curves.csv,development_yearly_curves.csv,superseded,do_not_load_old,Use yearly curves for runtime. Old age-only curve is not active.
+school_identity.csv,campus_locations_verified.csv,superseded,do_not_load_old,Campus file wins geography.
+school_nil_budgets.csv,nil_market_proxies.csv,superseded,do_not_load_old,NIL is synthetic proxy.
+pick_values_rich_hill_257.csv,pick_values_257.csv,superseded,do_not_load_old,Use synthetic gameplay pick values. Do not research pick charts.
+research_extractors,NONE,removed,never_load,No research pipelines in this package.
+*.R,NONE,removed,never_load,R files are banned from the package.
+*.Rmd,NONE,removed,never_load,RMarkdown files are banned from the package.

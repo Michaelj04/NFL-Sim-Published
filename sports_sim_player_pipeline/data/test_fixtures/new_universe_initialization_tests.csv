@@ -1,0 +1,5 @@
+scenario,starting_state,required_behavior,expected_assertion
+fresh_start,empty_local_storage,initialize new V11 universe,universe.version == v11_coding_first
+old_save_present,legacy_save_exists,ignore or replace with new universe path,no migration code required
+missing_active_csv,delete active_runtime_csvs/star_distribution.csv,validation fails before runtime,validation.ok == false
+invalid_final_position,signed player has ATH,validation fails or signing converts before roster,invalidFinalPositions == 0

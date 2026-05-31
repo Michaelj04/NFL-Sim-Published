@@ -1,0 +1,6 @@
+personality,work_ethic_mult,coachability_mult,nil_sensitivity,playing_time_sensitivity,distance_sensitivity,loyalty_mult,decommit_risk_mult,portal_risk_mult,early_declare_aggression,notes
+balanced,1.0,1.0,0.5,0.5,0.5,1.0,1.0,1.0,0.5,Neutral profile.
+worker,1.18,1.1,0.42,0.48,0.45,1.1,0.85,0.86,0.45,Development friendly.
+star_chaser,1.02,0.95,0.78,0.65,0.45,0.88,1.2,1.24,0.68,High NIL and role pressure.
+homebody,1.0,1.02,0.45,0.48,0.82,1.12,0.95,0.9,0.42,Regional pull matters.
+volatile,0.95,0.88,0.62,0.72,0.55,0.8,1.35,1.35,0.6,More variance.

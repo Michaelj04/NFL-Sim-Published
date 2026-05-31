@@ -1,0 +1,4 @@
+school_id,tier,nil_proxy_score,football_nil_pool_mean_usd,retention_pool_pct,hs_pool_pct,portal_pool_pct,source_basis
+repo_school_001,elite,85,4500000,0.45,0.35,0.2,synthetic_gameplay_tuning
+repo_school_002,low,34,350000,0.5,0.3,0.2,synthetic_gameplay_tuning
+repo_school_003,mid,58,1250000,0.46,0.34,0.2,synthetic_gameplay_tuning

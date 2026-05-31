@@ -1,0 +1,4 @@
+event_id,event_name,eligible_classes,target_invites,level_focus,base_scouting_confidence_gain,max_draft_delta,small_school_validation_bonus,notes
+senior_bowl,Senior Bowl,SR|RS_SR|declared_JR,120,national,0.16,8,5,Top event.
+east_west,East-West Showcase,SR|RS_SR,100,national,0.1,5,4,Secondary all-star event.
+hula_bowl,Hula Showcase,SR|RS_SR,100,regional,0.08,4,3,Regional event.

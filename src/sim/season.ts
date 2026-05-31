@@ -1,6 +1,9 @@
 import { clamp, createRng } from "../lib/rng";
 import type { Game, GameSave, InboxItem, Player, TeamRecord } from "../types";
 import { advanceToDraftPrep, normalizeCapState, openOffseasonContracts, recalculateBudgets, teamCapLedger } from "./cap";
+import { generateAnnualTransferPortalState } from "./annualTransfer";
+import { applyAnnualRosterImportPlan, generateAnnualRosterImportPlan } from "./annualRosterImport";
+import { finalizeAnnualRecruitingState } from "./annualRecruiting";
 import { activeRosterLimitForDate, addDays, buildSeasonCalendar, calendarPhaseForDate, currentFootballWeek, finalCutdownDate, gamesOnDate, leagueYearStartDate, refreshCalendar, regularSeasonStartDate } from "./calendar";
 import { normalizePlayerMakeup } from "./concerns";
 import { ensureDraftState } from "./draft";
@@ -9,6 +12,10 @@ import { clearIrState, processIrWindows } from "./ir";
 import { autoManageCpuPracticeSquads, clearPracticeSquadState, fillPracticeSquadsFromFreeAgency, isPracticeSquadPlayer, processPracticeSquadWeek } from "./practiceSquad";
 import { autoManageCpuRoster } from "./rosterAi";
 import { createDraftState, createRecords, generateSeasonDraftAssets } from "./generate";
+import { progressAnnualCollegeRoster } from "./collegeRoster";
+import { generateCollegeSeasonResults } from "./collegeSeasonResults";
+import { generateCollegeMoraleState } from "./collegeMorale";
+import { buildSchoolProfileState } from "./schoolProfiles";
 import { applyMedicalEvents, dailyPracticeMedicalEvents, tickMedicalRecovery, weeklyPracticeMedicalEvents } from "./medical";
 import { runWeeklyTraining } from "./playerModel";
 import { simulateGame } from "./playByPlay";
@@ -712,25 +719,47 @@ function resetSeasonStats(player: Player): Player {
 
 export function startNextSeason(save: GameSave): GameSave {
   if (save.phase !== "offseason-complete") return save;
-  const currentSeasonYear = save.seasonYear ?? ((save.draftState?.draftYear ?? 2027) - 1);
+  const recruitingFinalizedSave = {
+    ...save,
+    annualRecruiting: finalizeAnnualRecruitingState(save.annualRecruiting, save.seed)
+  };
+  const importReadySave = {
+    ...recruitingFinalizedSave,
+    annualRosterImportPlan: generateAnnualRosterImportPlan(recruitingFinalizedSave, recruitingFinalizedSave.seasonYear)
+  };
+  const importedSave = applyAnnualRosterImportPlan(importReadySave);
+  const currentSeasonYear = importedSave.seasonYear ?? ((importedSave.draftState?.draftYear ?? 2027) - 1);
   const seasonYear = currentSeasonYear + 1;
-  const previousSeasonRanks = divisionRanksFromRecords(save.teams, save.records);
-  const players = save.players.map(resetSeasonStats);
-  const assets = generateSeasonDraftAssets(save.teams, save.schools, save.staff, save.selectedTeamId, save.seed, seasonYear + 1);
+  const draftYear = seasonYear + 1;
+  const previousSeasonRanks = divisionRanksFromRecords(importedSave.teams, importedSave.records);
+  const players = importedSave.players.map(resetSeasonStats);
+  const previousCollegeResults = importedSave.collegeSeasonResults;
+  const collegeRoster = progressAnnualCollegeRoster(importedSave, seasonYear, draftYear);
+  const schoolProfiles = importedSave.schoolProfiles ? { ...importedSave.schoolProfiles, seasonYear } : buildSchoolProfileState(importedSave.schools, importedSave.seed, seasonYear);
+  const assets = generateSeasonDraftAssets(importedSave.teams, importedSave.schools, importedSave.staff, importedSave.selectedTeamId, importedSave.seed, draftYear, collegeRoster, previousCollegeResults, schoolProfiles);
   const carriedCurrentPicks = new Map(
-    save.draftPicks
-      .filter((pick) => pick.draftYear === seasonYear + 1)
+    importedSave.draftPicks
+      .filter((pick) => pick.draftYear === draftYear)
       .map((pick) => [pick.id, { ...pick, usedByProspectId: undefined }])
   );
-  const draftPicks = assets.draftPicks.map((pick) => (pick.draftYear === seasonYear + 1 ? carriedCurrentPicks.get(pick.id) ?? pick : pick));
+  const draftPicks = assets.draftPicks.map((pick) => (pick.draftYear === draftYear ? carriedCurrentPicks.get(pick.id) ?? pick : pick));
+  const collegeSeasonResults = generateCollegeSeasonResults(importedSave.seed, collegeRoster, seasonYear);
+  const collegeMorale = generateCollegeMoraleState(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults, assets.annualRecruiting);
   const next: GameSave = {
-    ...save,
+    ...importedSave,
     ...assets,
     draftPicks,
     draftState: createDraftState(draftPicks),
     udfaState: undefined,
     postseasonState: undefined,
     seasonYear,
+    schoolProfiles,
+    collegeRoster: collegeRoster ? {
+      ...collegeRoster,
+      seasonYear
+    } : undefined,
+    collegeSeasonResults,
+    collegeMorale,
     previousSeasonRanks,
     currentWeek: 1,
     currentDate: regularSeasonStartDate(seasonYear),
@@ -739,11 +768,12 @@ export function startNextSeason(save: GameSave): GameSave {
     seasonCalendar: [],
     phase: "regular",
     players,
-    schedule: generateLeagueSchedule(save.teams, `${save.seed}:season-${seasonYear}`, previousSeasonRanks, seasonYear),
-    records: createRecords(save.teams),
-    irReturnUsage: Object.fromEntries(save.teams.map((team) => [team.id, 0])),
-    capSettings: Object.fromEntries(save.teams.map((team) => [team.id, {
-      ...(save.capSettings?.[team.id] ?? { salaryCap: 301.2, rookieReserve: 0 }),
+    annualTransferPortal: generateAnnualTransferPortalState({ ...importedSave, seasonYear, currentWeek: 1, players, collegeRoster, collegeMorale }, seasonYear),
+    schedule: generateLeagueSchedule(importedSave.teams, `${importedSave.seed}:season-${seasonYear}`, previousSeasonRanks, seasonYear),
+    records: createRecords(importedSave.teams),
+    irReturnUsage: Object.fromEntries(importedSave.teams.map((team) => [team.id, 0])),
+    capSettings: Object.fromEntries(importedSave.teams.map((team) => [team.id, {
+      ...(importedSave.capSettings?.[team.id] ?? { salaryCap: 301.2, rookieReserve: 0 }),
       salaryCap: 301.2 + Math.max(0, seasonYear - 2026) * 10,
       rookieReserve: 0,
       franchiseTagUsed: false,
@@ -753,7 +783,7 @@ export function startNextSeason(save: GameSave): GameSave {
     lastViewedGameId: undefined,
     inbox: [
       {
-        id: `season-open-${seasonYear}-${save.inbox.length}`,
+        id: `season-open-${seasonYear}-${importedSave.inbox.length}`,
         week: 1,
         category: "staff",
         title: `${seasonYear} season plan opened`,
@@ -761,8 +791,12 @@ export function startNextSeason(save: GameSave): GameSave {
         priority: "high",
         read: false
       },
-      ...save.inbox
+      ...importedSave.inbox
     ]
   };
-  return refreshCalendar(recalculateBudgets(normalizeCapState(fillPracticeSquadsFromFreeAgency(next, { includeSelectedTeam: true }))));
+  const planned = {
+    ...next,
+    annualRosterImportPlan: generateAnnualRosterImportPlan(next, seasonYear)
+  };
+  return refreshCalendar(recalculateBudgets(normalizeCapState(fillPracticeSquadsFromFreeAgency(planned, { includeSelectedTeam: true }))));
 }

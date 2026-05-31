@@ -1,0 +1,12 @@
+record_category,loader_stage,may_drive_gameplay_logic,default_selector,notes
+runtime_tuning,runtime,yes,getYearZeroRuntimeRecords,Direct tuning rows that can drive Year Zero generation.
+weight_distribution,runtime,yes,getYearZeroWeightRows,Weighted choices used by generation logic. Validate weight groups before sampling.
+modifier,runtime,yes,getYearZeroModifierRows,Numeric or categorical modifiers used after base records are selected.
+rule,runtime,yes,getYearZeroRuleRows,"Rules that enforce eligibility, caps, conversion, accounting, or selection."
+definition,runtime_reference,yes,getYearZeroDefinitionRows,"Definitions and taxonomy records. Can be used by runtime selectors, but should not be treated as weighted choices unless a source_table-specific rule says so."
+target,validation,no,getYearZeroTargetRows,"Balance targets and guardrails. Use for validation, reporting, and caps only. Do not sample players directly from these rows."
+validation_target,validation,no,getYearZeroValidationTargets,Explicit validation pass/fail targets. Never use as generation weights.
+algorithm,implementation_reference,no,getYearZeroAlgorithmNotes,Implementation guide rows. Do not load into player generation state.
+example,debug_reference,no,getYearZeroExamples,"Examples and debug scenarios. Use only for docs, UI mockups, and tests after final phase."
+research_basis,documentation_reference,no,getYearZeroResearchBasis,Research-source notes. Do not affect runtime gameplay.
+debug_schema,debug_reference,no,getYearZeroDebugSchemas,Debug/export schema rows. Use only for debug output shape.

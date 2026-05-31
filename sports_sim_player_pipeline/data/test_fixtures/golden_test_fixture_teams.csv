@@ -1,0 +1,3 @@
+team_id,school_id,expected_subdivision_level,expected_roster_template
+repo_school_001,repo_school_001,FBS_POWER,fbs_85
+repo_school_002,repo_school_002,FCS_TOP,fcs_63

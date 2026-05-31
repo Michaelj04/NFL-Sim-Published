@@ -1,0 +1,662 @@
+csv_name,column_name,type,required,min,max,allowed_values,foreign_key,notes
+schools_master.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+schools_master.csv,school_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+schools_master.csv,mascot,string,1,,,,,V11.6.3 schema contract; required; type=string.
+schools_master.csv,subdivision,string,1,,,,,V11.6.3 schema contract; required; type=string.
+schools_master.csv,subdivision_level,string,1,,,FBS_POWER|FBS_G5|FCS_TOP|FCS_LOW|OTHER,,V11.6.3 schema contract; required; type=string; enum enforced.
+schools_master.csv,conference,string,1,,,,,V11.6.3 schema contract; required; type=string.
+schools_master.csv,city,string,1,,,,,V11.6.3 schema contract; required; type=string.
+schools_master.csv,state,string,1,,,,,V11.6.3 schema contract; required; type=string.
+schools_master.csv,active,boolean,1,,,,,V11.6.3 schema contract; required; type=boolean.
+schools_master.csv,ipeds_id,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+schools_master.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+campus_locations_verified.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+campus_locations_verified.csv,school_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+campus_locations_verified.csv,city,string,1,,,,,V11.6.3 schema contract; required; type=string.
+campus_locations_verified.csv,state,string,1,,,,,V11.6.3 schema contract; required; type=string.
+campus_locations_verified.csv,lat,number,1,-90,90,,,V11.6.3 schema contract; required; type=number; range=-90..90.
+campus_locations_verified.csv,lon,number,1,-180,180,,,V11.6.3 schema contract; required; type=number; range=-180..180.
+campus_locations_verified.csv,timezone,string,1,,,,,V11.6.3 schema contract; required; type=string.
+campus_locations_verified.csv,geo_precision,string,1,,,,,V11.6.3 schema contract; required; type=string.
+campus_locations_verified.csv,verification_status,string,1,,,,,V11.6.3 schema contract; required; type=string.
+campus_locations_verified.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+school_finance_proxies.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+school_finance_proxies.csv,athletic_revenue_proxy,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_finance_proxies.csv,football_expense_proxy,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_finance_proxies.csv,donor_booster_proxy,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_finance_proxies.csv,facilities_score,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+school_finance_proxies.csv,staff_budget_score,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+school_finance_proxies.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_success_history.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+school_success_history.csv,historical_brand_score,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+school_success_history.csv,recent_success_score,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+school_success_history.csv,conference_strength_score,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+school_success_history.csv,nfl_draft_output_proxy,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_success_history.csv,prestige_score,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+school_success_history.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_recruiting_power.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+school_recruiting_power.csv,recruiting_power,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_recruiting_power.csv,blue_chip_access,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_recruiting_power.csv,regional_pull,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_recruiting_power.csv,national_pull,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_recruiting_power.csv,relationship_floor,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_recruiting_power.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nil_market_proxies.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+nil_market_proxies.csv,tier,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nil_market_proxies.csv,nil_proxy_score,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+nil_market_proxies.csv,football_nil_pool_mean_usd,number,1,,,,,V11.6.3 schema contract; required; type=number.
+nil_market_proxies.csv,retention_pool_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nil_market_proxies.csv,hs_pool_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nil_market_proxies.csv,portal_pool_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nil_market_proxies.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nil_position_budget_shares.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+nil_position_budget_shares.csv,football_budget_share,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nil_position_budget_shares.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nil_player_demand_model.csv,component,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nil_player_demand_model.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nil_player_demand_model.csv,description,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+school_academic_rules.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+school_academic_rules.csv,academic_model,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_academic_rules.csv,academic_strictness,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_academic_rules.csv,transfer_acceptance_modifier,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_academic_rules.csv,juco_acceptance_modifier,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_academic_rules.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+academic_eligibility_model.csv,component,string,1,,,,,V11.6.3 schema contract; required; type=string.
+academic_eligibility_model.csv,required_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+academic_eligibility_model.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+academic_eligibility_model.csv,description,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+school_archetypes.csv,archetype_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_archetypes.csv,scheme,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_archetypes.csv,recruiting_style,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_archetypes.csv,development_style,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_archetypes.csv,transfer_aggression,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_archetypes.csv,portal_aggression,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_archetypes.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+school_overrides_curated.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+school_overrides_curated.csv,field,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_overrides_curated.csv,value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_overrides_curated.csv,reason,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_overrides_manual_top_programs.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+school_overrides_manual_top_programs.csv,prestige_override,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_overrides_manual_top_programs.csv,recruiting_power_override,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_overrides_manual_top_programs.csv,nil_power_override,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_overrides_manual_top_programs.csv,development_override,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_overrides_manual_top_programs.csv,reason,string,1,,,,,V11.6.3 schema contract; required; type=string.
+school_class_size_ranges.csv,subdivision_level,string,1,,,FBS_POWER|FBS_G5|FCS_TOP|FCS_LOW|OTHER,,V11.6.3 schema contract; required; type=string; enum enforced.
+school_class_size_ranges.csv,min_signings,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_class_size_ranges.csv,target_signings,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_class_size_ranges.csv,max_signings,number,1,,,,,V11.6.3 schema contract; required; type=number.
+school_class_size_ranges.csv,walkon_target,number,1,,,,,V11.6.3 schema contract; required; type=number.
+state_talent_weights.csv,state,string,1,,,,,V11.6.3 schema contract; required; type=string.
+state_talent_weights.csv,state_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+state_talent_weights.csv,talent_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+state_talent_weights.csv,nfhs_participants,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+state_talent_weights.csv,region,string,1,,,,,V11.6.3 schema contract; required; type=string.
+state_talent_weights.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+position_distribution.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+position_distribution.csv,spawn_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+position_distribution.csv,athlete_reclass_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+position_distribution.csv,height_mu,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution.csv,height_sigma,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution.csv,weight_mu,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+position_distribution.csv,weight_sigma,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+position_distribution_rules.csv,tier,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_distribution_rules.csv,qb_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,rb_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,wr_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,te_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,ol_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,dl_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,lb_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,db_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,spec_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_distribution_rules.csv,ath_target,number,1,,,,,V11.6.3 schema contract; required; type=number.
+position_group_conversion.csv,source_group,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_group_conversion.csv,stage,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_group_conversion.csv,allowed_final_repo_positions,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_group_conversion.csv,default_weights_json,json,1,,,,,V11.6.3 schema contract; required; type=json.
+position_group_conversion.csv,hard_rule,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_group_conversion.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+ath_conversion_rules.csv,ath_bucket,string,1,,,,,V11.6.3 schema contract; required; type=string.
+ath_conversion_rules.csv,height_min_in,number,1,,,,,V11.6.3 schema contract; required; type=number.
+ath_conversion_rules.csv,height_max_in,number,1,,,,,V11.6.3 schema contract; required; type=number.
+ath_conversion_rules.csv,weight_min_lb,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+ath_conversion_rules.csv,weight_max_lb,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+ath_conversion_rules.csv,primary_map,string,1,,,,,V11.6.3 schema contract; required; type=string.
+ath_conversion_rules.csv,secondary_map,string,1,,,,,V11.6.3 schema contract; required; type=string.
+ath_conversion_rules.csv,speed_bias,number,1,,,,,V11.6.3 schema contract; required; type=number.
+ath_conversion_rules.csv,position_vector,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_selector_aliases.csv,alias,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_selector_aliases.csv,canonical_selector,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_selector_aliases.csv,selector_type,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_selector_aliases.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+rating_aliases.csv,alias,string,1,,,,,V11.6.3 schema contract; required; type=string.
+rating_aliases.csv,canonical_rating,string,1,,,,,V11.6.3 schema contract; required; type=string.
+rating_input_mapping.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+rating_input_mapping.csv,formula,string,1,,,,,V11.6.3 schema contract; required; type=string.
+rating_input_mapping.csv,rating_key,string,1,,,,,V11.6.3 schema contract; required; type=string.
+rating_input_mapping.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+rating_input_mapping.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+formula_input_defaults.csv,formula,string,1,,,,,V11.6.3 schema contract; required; type=string.
+formula_input_defaults.csv,input_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+formula_input_defaults.csv,default_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+formula_input_defaults.csv,allowed_fallback,boolean,1,,,,,V11.6.3 schema contract; required; type=boolean.
+formula_input_defaults.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+star_distribution.csv,class_size,number,1,,,,,V11.6.3 schema contract; required; type=number.
+star_distribution.csv,stars_5,number,1,,,,,V11.6.3 schema contract; required; type=number.
+star_distribution.csv,stars_4,number,1,,,,,V11.6.3 schema contract; required; type=number.
+star_distribution.csv,stars_3,number,1,,,,,V11.6.3 schema contract; required; type=number.
+star_distribution.csv,stars_2_or_unranked,number,1,,,,,V11.6.3 schema contract; required; type=number.
+star_distribution.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+player_personality_archetypes.csv,personality,string,1,,,,,V11.6.3 schema contract; required; type=string.
+player_personality_archetypes.csv,work_ethic_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+player_personality_archetypes.csv,coachability_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+player_personality_archetypes.csv,nil_sensitivity,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+player_personality_archetypes.csv,playing_time_sensitivity,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+player_personality_archetypes.csv,distance_sensitivity,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+player_personality_archetypes.csv,loyalty_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+player_personality_archetypes.csv,decommit_risk_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+player_personality_archetypes.csv,portal_risk_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+player_personality_archetypes.csv,early_declare_aggression,number,1,,,,,V11.6.3 schema contract; required; type=number.
+player_personality_archetypes.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+development_yearly_curves.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+development_yearly_curves.csv,year1_gain,number,1,,,,,V11.6.3 schema contract; required; type=number.
+development_yearly_curves.csv,year2_gain,number,1,,,,,V11.6.3 schema contract; required; type=number.
+development_yearly_curves.csv,year3_gain,number,1,,,,,V11.6.3 schema contract; required; type=number.
+development_yearly_curves.csv,year4_gain,number,1,,,,,V11.6.3 schema contract; required; type=number.
+development_yearly_curves.csv,playing_time_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+development_yearly_curves.csv,redshirt_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+development_yearly_curves.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+yearly_progression_gates.csv,gate_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+yearly_progression_gates.csv,applies_to_class,string,1,,,,,V11.6.3 schema contract; required; type=string.
+yearly_progression_gates.csv,max_single_year_gain,number,1,,,,,V11.6.3 schema contract; required; type=number.
+yearly_progression_gates.csv,breakout_exception_allowed,number,1,,,,,V11.6.3 schema contract; required; type=number.
+yearly_progression_gates.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+staff_effects.csv,staff_component,string,1,,,,,V11.6.3 schema contract; required; type=string.
+staff_effects.csv,affected_system,string,1,,,,,V11.6.3 schema contract; required; type=string.
+staff_effects.csv,effect_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+staff_effects.csv,min_effect,number,1,,,,,V11.6.3 schema contract; required; type=number.
+staff_effects.csv,max_effect,number,1,,,,,V11.6.3 schema contract; required; type=number.
+staff_effects.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+roster_templates.csv,template_id,number,1,,,,,V11.6.3 schema contract; required; type=number.
+roster_templates.csv,subdivision_level,string,1,,,FBS_POWER|FBS_G5|FCS_TOP|FCS_LOW|OTHER,,V11.6.3 schema contract; required; type=string; enum enforced.
+roster_templates.csv,roster_size,number,1,,,,,V11.6.3 schema contract; required; type=number.
+roster_templates.csv,scholarship_limit,number,1,,,,,V11.6.3 schema contract; required; type=number.
+roster_templates.csv,walkon_soft_cap,number,1,,,,,V11.6.3 schema contract; required; type=number.
+roster_templates.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+roster_position_targets.csv,template_id,number,1,,,,,V11.6.3 schema contract; required; type=number.
+roster_position_targets.csv,final_position,string,1,,,QB|RB|WR|TE|LT|LG|C|RG|RT|EDGE|DL|LB|CB|S|K|P,,V11.6.3 schema contract; required; type=string; enum enforced.
+roster_position_targets.csv,target_count,number,1,,,,,V11.6.3 schema contract; required; type=number.
+roster_position_targets.csv,min_count,number,1,,,,,V11.6.3 schema contract; required; type=number.
+roster_position_targets.csv,max_count,number,1,,,,,V11.6.3 schema contract; required; type=number.
+walk_on_generation_rules.csv,subdivision_level,string,1,,,FBS_POWER|FBS_G5|FCS_TOP|FCS_LOW|OTHER,,V11.6.3 schema contract; required; type=string; enum enforced.
+walk_on_generation_rules.csv,walkon_quality_mean,number,1,,,,,V11.6.3 schema contract; required; type=number.
+walk_on_generation_rules.csv,walkon_quality_sigma,number,1,,,,,V11.6.3 schema contract; required; type=number.
+walk_on_generation_rules.csv,preferred_local_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+walk_on_generation_rules.csv,max_stars,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+depth_chart_weights.csv,overall,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+depth_chart_weights.csv,position_fit,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,experience,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,coach_trust,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,scheme_fit,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,recent_form,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,promise_pressure,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,injury_readiness,number,1,,,,,V11.6.3 schema contract; required; type=number.
+depth_chart_weights.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+snap_share_rules.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+snap_share_rules.csv,starter_share,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+snap_share_rules.csv,rotation_depth,number,1,,,,,V11.6.3 schema contract; required; type=number.
+snap_share_rules.csv,fatigue_sensitivity,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+snap_share_rules.csv,blowout_backup_share,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+calendar_events.csv,event_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+calendar_events.csv,phase,string,1,,,,,V11.6.3 schema contract; required; type=string.
+calendar_events.csv,month,number,1,,,,,V11.6.3 schema contract; required; type=number.
+calendar_events.csv,day_start,number,1,,,,,V11.6.3 schema contract; required; type=number.
+calendar_events.csv,day_end,number,1,,,,,V11.6.3 schema contract; required; type=number.
+calendar_events.csv,week_hint,number,1,,,,,V11.6.3 schema contract; required; type=number.
+calendar_events.csv,applies_to,string,1,,,,,V11.6.3 schema contract; required; type=string.
+calendar_events.csv,hard_gate,boolean,1,,,,,V11.6.3 schema contract; required; type=boolean.
+calendar_events.csv,description,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+calendar_events.csv,engine_effect,string,1,,,,,V11.6.3 schema contract; required; type=string.
+recruiting_calendar.csv,week,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruiting_calendar.csv,phase,string,1,,,,,V11.6.3 schema contract; required; type=string.
+recruiting_calendar.csv,allowed_actions,string,1,,,,,V11.6.3 schema contract; required; type=string.
+recruiting_calendar.csv,commitment_pressure,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruiting_calendar.csv,visit_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruit_interest_weights.csv,component,string,1,,,,,V11.6.3 schema contract; required; type=string.
+recruit_interest_weights.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+recruit_interest_weights.csv,min_effect,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruit_interest_weights.csv,max_effect,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruit_interest_weights.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+recruiting_pipeline_state_weights.csv,pipeline_type,string,1,,,,,V11.6.3 schema contract; required; type=string.
+recruiting_pipeline_state_weights.csv,same_state_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruiting_pipeline_state_weights.csv,border_state_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruiting_pipeline_state_weights.csv,regional_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+recruiting_pipeline_state_weights.csv,national_penalty,number,1,,,,,V11.6.3 schema contract; required; type=number.
+promise_types.csv,promise_type,string,1,,,,,V11.6.3 schema contract; required; type=string.
+promise_types.csv,fulfillment_rule,string,1,,,,,V11.6.3 schema contract; required; type=string.
+promise_types.csv,target_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+promise_types.csv,evaluation_window,string,1,,,,,V11.6.3 schema contract; required; type=string.
+promise_types.csv,broken_severity,number,1,,,,,V11.6.3 schema contract; required; type=number.
+promise_types.csv,morale_impact,number,1,,,,,V11.6.3 schema contract; required; type=number.
+promise_types.csv,portal_impact,number,1,,,,,V11.6.3 schema contract; required; type=number.
+promise_types.csv,school_reputation_impact,number,1,,,,,V11.6.3 schema contract; required; type=number.
+morale_model_weights.csv,component,string,1,,,,,V11.6.3 schema contract; required; type=string.
+morale_model_weights.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+morale_model_weights.csv,min_effect,number,1,,,,,V11.6.3 schema contract; required; type=number.
+morale_model_weights.csv,max_effect,number,1,,,,,V11.6.3 schema contract; required; type=number.
+morale_model_weights.csv,description,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+morale_model_weights.csv,affects,string,1,,,,,V11.6.3 schema contract; required; type=string.
+morale_model_weights.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+morale_promise_params.csv,driver,string,1,,,,,V11.6.3 schema contract; required; type=string.
+morale_promise_params.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+morale_promise_params.csv,good_threshold,number,1,,,,,V11.6.3 schema contract; required; type=number.
+morale_promise_params.csv,bad_threshold,number,1,,,,,V11.6.3 schema contract; required; type=number.
+morale_promise_params.csv,transfer_trigger_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_base_rates.csv,event_type,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_base_rates.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+injury_base_rates.csv,base_daily_risk,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_base_rates.csv,contact_level,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_base_rates.csv,load_sensitivity,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+injury_base_rates.csv,repeat_injury_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_family_params.csv,injury_family,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_family_params.csv,base_recurrence_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+injury_family_params.csv,games_missed_mean,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_family_params.csv,perm_speed_penalty,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_family_params.csv,perm_strength_penalty,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_family_params.csv,perm_awareness_penalty,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_family_params.csv,durability_penalty,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_family_params.csv,draft_medical_penalty,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_family_params.csv,position_sensitivity,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_recurrence.csv,injury_family,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_recurrence.csv,recurrence_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_recurrence.csv,permanent_athletic_loss_chance,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_recurrence.csv,potential_loss_min,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+injury_recurrence.csv,potential_loss_max,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+injury_recurrence.csv,position_sensitivity,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_recurrence.csv,recovery_bank_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_recurrence.csv,draft_medical_penalty_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_recurrence.csv,draft_medical_penalty_max,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_recurrence.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+injury_severity_distribution.csv,injury_family,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_severity_distribution.csv,severity,string,1,,,,,V11.6.3 schema contract; required; type=string.
+injury_severity_distribution.csv,probability,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+injury_severity_distribution.csv,min_days,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_severity_distribution.csv,max_days,number,1,,,,,V11.6.3 schema contract; required; type=number.
+injury_severity_distribution.csv,season_ending_prob,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+college_production_weights.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+college_production_weights.csv,overall_weight,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+college_production_weights.csv,snap_share_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+college_production_weights.csv,scheme_usage_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+college_production_weights.csv,opponent_strength_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+college_production_weights.csv,team_quality_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+college_production_weights.csv,game_script_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+college_production_weights.csv,randomness_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+college_production_weights.csv,level_comp_mult_key,number,1,,,,,V11.6.3 schema contract; required; type=number.
+college_production_weights.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+production_formula_params.csv,param,string,1,,,,,V11.6.3 schema contract; required; type=string.
+production_formula_params.csv,value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+production_formula_params.csv,unit,string,1,,,,,V11.6.3 schema contract; required; type=string.
+production_formula_params.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+position_stat_profiles.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+position_stat_profiles.csv,primary_stats,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_stat_profiles.csv,volume_driver,string,1,,,,,V11.6.3 schema contract; required; type=string.
+position_stat_profiles.csv,efficiency_driver,string,1,,,,,V11.6.3 schema contract; required; type=string.
+stat_generation_curves.csv,stat_curve_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+stat_generation_curves.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+stat_generation_curves.csv,base_per_100_snaps,number,1,,,,,V11.6.3 schema contract; required; type=number.
+stat_generation_curves.csv,production_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+stat_generation_curves.csv,scheme_mult_key,number,1,,,,,V11.6.3 schema contract; required; type=number.
+stat_generation_curves.csv,random_sigma,number,1,,,,,V11.6.3 schema contract; required; type=number.
+awards_impact.csv,award,string,1,,,,,V11.6.3 schema contract; required; type=string.
+awards_impact.csv,award_group,string,1,,,,,V11.6.3 schema contract; required; type=string.
+awards_impact.csv,draft_board_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+awards_impact.csv,nil_bonus_pct,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+awards_impact.csv,media_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+transfer_entry_reasons.csv,reason,string,1,,,,,V11.6.3 schema contract; required; type=string.
+transfer_entry_reasons.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+transfer_entry_reasons.csv,threshold,number,1,,,,,V11.6.3 schema contract; required; type=number.
+transfer_entry_reasons.csv,description,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+transfer_destination_weights.csv,component,string,1,,,,,V11.6.3 schema contract; required; type=string.
+transfer_destination_weights.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+transfer_destination_weights.csv,description,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+transfer_transition_probabilities.csv,from_level,string,1,,,FBS_POWER|FBS_G5|FCS_TOP|FCS_LOW|OTHER,,V11.6.3 schema contract; required; type=string; enum enforced.
+transfer_transition_probabilities.csv,to_level,string,1,,,FBS_POWER|FBS_G5|FCS_TOP|FCS_LOW|OTHER,,V11.6.3 schema contract; required; type=string; enum enforced.
+transfer_transition_probabilities.csv,probability,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+all_star_events.csv,event_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+all_star_events.csv,event_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+all_star_events.csv,eligible_classes,string,1,,,,,V11.6.3 schema contract; required; type=string.
+all_star_events.csv,target_invites,number,1,,,,,V11.6.3 schema contract; required; type=number.
+all_star_events.csv,level_focus,string,1,,,,,V11.6.3 schema contract; required; type=string.
+all_star_events.csv,base_scouting_confidence_gain,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+all_star_events.csv,max_draft_delta,number,1,,,,,V11.6.3 schema contract; required; type=number.
+all_star_events.csv,small_school_validation_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+all_star_events.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+allstar_event_effects.csv,event,string,1,,,,,V11.6.3 schema contract; required; type=string.
+allstar_event_effects.csv,invite_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+allstar_event_effects.csv,practice_winner_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+allstar_event_effects.csv,game_mvp_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+allstar_event_effects.csv,draft_floor_raise,number,1,,,,,V11.6.3 schema contract; required; type=number.
+allstar_event_effects.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+combine_event_weights.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+combine_event_weights.csv,event_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+combine_event_weights.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+combine_event_weights.csv,include_in_athletic_composite,boolean,1,,,,,V11.6.3 schema contract; required; type=boolean.
+combine_event_weights.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+pro_day_adjustments.csv,measurement,string,1,,,,,V11.6.3 schema contract; required; type=string.
+pro_day_adjustments.csv,pro_day_bias,number,1,,,,,V11.6.3 schema contract; required; type=number.
+pro_day_adjustments.csv,max_positive_delta,number,1,,,,,V11.6.3 schema contract; required; type=number.
+pro_day_adjustments.csv,max_negative_delta,number,1,,,,,V11.6.3 schema contract; required; type=number.
+pro_day_adjustments.csv,confidence_penalty,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+draft_board_weights.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+draft_board_weights.csv,film_prod_w,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_board_weights.csv,athletic_w,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_board_weights.csv,age_w,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_board_weights.csv,medical_w,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_board_weights.csv,competition_w,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_board_weights.csv,allstar_w,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_board_weights.csv,character_w,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_hit_rates.csv,star_bucket,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_hit_rates.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+draft_hit_rates.csv,draft_prob,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+draft_hit_rates.csv,early_round_prob,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+draft_hit_rates.csv,starter_hit_prob,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+draft_hit_rates.csv,impact_hit_prob,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+draft_hit_rates.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+draft_position_value.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+draft_position_value.csv,draft_position_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_position_value.csv,round1_bonus,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_position_value.csv,day3_discount,number,1,,,,,V11.6.3 schema contract; required; type=number.
+draft_position_value.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+draft_stock_component_weights.csv,position_group,string,1,,,QB|RB|WR|TE|OT|IOL|EDGE|IDL|LB|CB|S|K|P|ATH|ST|DEFAULT,,V11.6.3 schema contract; required; type=string; enum enforced.
+draft_stock_component_weights.csv,component,string,1,,,,,V11.6.3 schema contract; required; type=string.
+draft_stock_component_weights.csv,weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+pick_values_257.csv,pick,number,1,,,,,V11.6.3 schema contract; required; type=number.
+pick_values_257.csv,round,number,1,,,,,V11.6.3 schema contract; required; type=number.
+pick_values_257.csv,pick_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+pick_values_257.csv,internal_value_default,number,1,,,,,V11.6.3 schema contract; required; type=number.
+pick_values_257.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_scouting_team_archetypes.csv,archetype,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_scouting_team_archetypes.csv,production_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_scouting_team_archetypes.csv,traits_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_scouting_team_archetypes.csv,medical_conservatism,number,1,,,,,V11.6.3 schema contract; required; type=number.
+nfl_scouting_team_archetypes.csv,small_school_confidence,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_scouting_team_archetypes.csv,combine_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_scouting_team_archetypes.csv,interview_weight,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_scouting_team_archetypes.csv,regional_bias,number,1,,,,,V11.6.3 schema contract; required; type=number.
+nfl_scouting_team_archetypes.csv,risk_tolerance,number,1,,,,,V11.6.3 schema contract; required; type=number.
+nfl_scouting_team_archetypes.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+nfl_team_archetypes.csv,team_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_team_archetypes.csv,archetype,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_team_archetypes.csv,weight_traits,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_team_archetypes.csv,weight_production,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_team_archetypes.csv,weight_age,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_team_archetypes.csv,weight_medical,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_team_archetypes.csv,weight_competition,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_team_archetypes.csv,weight_allstar,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_team_archetypes.csv,small_school_confidence,number,1,0,1,,,V11.6.3 schema contract; required; type=number; range=0..1.
+nfl_team_archetypes.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+competition_translation.csv,competition_tier,string,1,,,,,V11.6.3 schema contract; required; type=string.
+competition_translation.csv,stat_mult_pass,number,1,,,,,V11.6.3 schema contract; required; type=number.
+competition_translation.csv,stat_mult_rush,number,1,,,,,V11.6.3 schema contract; required; type=number.
+competition_translation.csv,stat_mult_defense,number,1,,,,,V11.6.3 schema contract; required; type=number.
+competition_translation.csv,draft_eval_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+competition_translation.csv,nil_visibility_mult,number,1,,,,,V11.6.3 schema contract; required; type=number.
+balance_targets.csv,metric,string,1,,,,,V11.6.3 schema contract; required; type=string.
+balance_targets.csv,target_mean,number,1,,,,,V11.6.3 schema contract; required; type=number.
+balance_targets.csv,lower_bound,number,1,,,,,V11.6.3 schema contract; required; type=number.
+balance_targets.csv,upper_bound,number,1,,,,,V11.6.3 schema contract; required; type=number.
+balance_targets.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+data_precedence_rules.csv,domain,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_precedence_rules.csv,primary_source,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_precedence_rules.csv,secondary_source,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_precedence_rules.csv,rule,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_precedence_rules.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+data_provenance.csv,csv_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_provenance.csv,source_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_provenance.csv,source_type,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_provenance.csv,confidence_level,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_provenance.csv,extract_method,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_provenance.csv,last_verified,string,1,,,,,V11.6.3 schema contract; required; type=string.
+data_provenance.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+csv_parser_rules.csv,rule_type,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_parser_rules.csv,applies_to,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_parser_rules.csv,accepted_values,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_parser_rules.csv,normalization,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_parser_rules.csv,hard_fail,number,1,,,,,V11.6.3 schema contract; required; type=number.
+csv_supersession_map.csv,old_file,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_supersession_map.csv,new_file,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_supersession_map.csv,status,string,1,,,active|superseded|removed|runtime|reference_only|never_load|Implemented|Partially Implemented|Not Implemented|deferred|removed|deferred_until_engine_passes,,V11.6.3 schema contract; required; type=string; enum enforced.
+csv_supersession_map.csv,runtime_use,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_supersession_map.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+performance_constraints.csv,constraint_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+performance_constraints.csv,hard_rule,string,1,,,,,V11.6.3 schema contract; required; type=string.
+performance_constraints.csv,threshold_or_target,number,1,,,,,V11.6.3 schema contract; required; type=number.
+performance_constraints.csv,implementation_requirement,string,1,,,,,V11.6.3 schema contract; required; type=string.
+performance_constraints.csv,failure_mode_to_prevent,string,1,,,,,V11.6.3 schema contract; required; type=string.
+deterministic_rng_streams.csv,stream_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+deterministic_rng_streams.csv,seed_namespace,string,1,,,,,V11.6.3 schema contract; required; type=string.
+deterministic_rng_streams.csv,allowed_engines,string,1,,,,,V11.6.3 schema contract; required; type=string.
+deterministic_rng_streams.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+implementation_execution_checklist_v11.csv,step,number,1,,,,,V11.6.3 schema contract; required; type=number.
+implementation_execution_checklist_v11.csv,checkpoint,string,1,,,,,V11.6.3 schema contract; required; type=string.
+implementation_execution_checklist_v11.csv,task,string,1,,,,,V11.6.3 schema contract; required; type=string.
+implementation_execution_checklist_v11.csv,required_output,string,1,,,,,V11.6.3 schema contract; required; type=string.
+implementation_execution_checklist_v11.csv,blocks_runtime,boolean,1,,,,,V11.6.3 schema contract; required; type=boolean.
+compile_checkpoints.csv,checkpoint_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+compile_checkpoints.csv,name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+compile_checkpoints.csv,must_compile_files,string,1,,,,,V11.6.3 schema contract; required; type=string.
+compile_checkpoints.csv,required_tests,string,1,,,,,V11.6.3 schema contract; required; type=string.
+module_boundaries.csv,module,string,1,,,,,V11.6.3 schema contract; required; type=string.
+module_boundaries.csv,single_job,string,1,,,,,V11.6.3 schema contract; required; type=string.
+module_boundaries.csv,may_not_do,string,1,,,,,V11.6.3 schema contract; required; type=string.
+performance_benchmarks.csv,benchmark_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+performance_benchmarks.csv,target_ms,number,1,,,,,V11.6.3 schema contract; required; type=number.
+performance_benchmarks.csv,max_ms,number,1,,,,,V11.6.3 schema contract; required; type=number.
+performance_benchmarks.csv,dataset_size,number,1,,,,,V11.6.3 schema contract; required; type=number.
+performance_benchmarks.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+no_research_policy.csv,rule_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+no_research_policy.csv,hard_rule,string,1,,,,,V11.6.3 schema contract; required; type=string.
+no_research_policy.csv,blocked_patterns,string,1,,,,,V11.6.3 schema contract; required; type=string.
+no_research_policy.csv,required_behavior,string,1,,,,,V11.6.3 schema contract; required; type=string.
+self_audit_requirements.csv,row_id,number,1,,,,,V11.6.3 schema contract; required; type=number.
+self_audit_requirements.csv,requirement,string,1,,,,,V11.6.3 schema contract; required; type=string.
+self_audit_requirements.csv,required_status_values,number,1,,,,,V11.6.3 schema contract; required; type=number.
+self_audit_requirements.csv,required_columns,string,1,,,,,V11.6.3 schema contract; required; type=string.
+debug_screen_requirements.csv,screen,string,1,,,,,V11.6.3 schema contract; required; type=string.
+debug_screen_requirements.csv,required_data,string,1,,,,,V11.6.3 schema contract; required; type=string.
+debug_screen_requirements.csv,dev_only,boolean,1,,,,,V11.6.3 schema contract; required; type=boolean.
+feature_deferral_registry.csv,feature,string,1,,,,,V11.6.3 schema contract; required; type=string.
+feature_deferral_registry.csv,status,string,1,,,active|superseded|removed|runtime|reference_only|never_load|Implemented|Partially Implemented|Not Implemented|deferred|removed|deferred_until_engine_passes,,V11.6.3 schema contract; required; type=string; enum enforced.
+feature_deferral_registry.csv,reason,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_fixture_players.csv,player_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_fixture_players.csv,position,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_fixture_players.csv,class_year,number,1,,,,,V11.6.3 schema contract; required; type=number.
+golden_test_fixture_players.csv,true_overall,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+golden_test_fixture_players.csv,true_potential,number,1,0,100,,,V11.6.3 schema contract; required; type=number; range=0..100.
+golden_test_fixture_players.csv,star_level,number,1,,,,,V11.6.3 schema contract; required; type=number.
+golden_test_fixture_players.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+golden_test_fixture_players.csv,expected_final_position,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_fixture_teams.csv,team_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_fixture_teams.csv,school_id,string,1,,,,schools_master.school_id,V11.6.3 schema contract; required; type=string; foreign key enforced.
+golden_test_fixture_teams.csv,expected_subdivision_level,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_fixture_teams.csv,expected_roster_template,number,1,,,,,V11.6.3 schema contract; required; type=number.
+golden_test_scenarios.csv,scenario_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_scenarios.csv,description,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+golden_test_scenarios.csv,seed,number,1,,,,,V11.6.3 schema contract; required; type=number.
+golden_test_scenarios.csv,inputs_json,json,1,,,,,V11.6.3 schema contract; required; type=json.
+golden_test_scenarios.csv,expected_range_json,json,1,,,,,V11.6.3 schema contract; required; type=json.
+golden_test_scenarios.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+golden_test_numeric_assertions.csv,scenario_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_numeric_assertions.csv,assertion_key,string,1,,,,,V11.6.3 schema contract; required; type=string.
+golden_test_numeric_assertions.csv,expected_value_json,json,1,,,,,V11.6.3 schema contract; required; type=json.
+seeded_snapshot_expectations.csv,seed,number,1,,,,,V11.6.3 schema contract; required; type=number.
+seeded_snapshot_expectations.csv,metric,string,1,,,,,V11.6.3 schema contract; required; type=string.
+seeded_snapshot_expectations.csv,min_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+seeded_snapshot_expectations.csv,max_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+seeded_snapshot_expectations.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+new_universe_initialization_tests.csv,scenario,string,1,,,,,V11.6.3 schema contract; required; type=string.
+new_universe_initialization_tests.csv,starting_state,string,1,,,,,V11.6.3 schema contract; required; type=string.
+new_universe_initialization_tests.csv,required_behavior,string,1,,,,,V11.6.3 schema contract; required; type=string.
+new_universe_initialization_tests.csv,expected_assertion,string,1,,,,,V11.6.3 schema contract; required; type=string.
+validator_failure_cases.csv,case_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+validator_failure_cases.csv,csv_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+validator_failure_cases.csv,mutation,string,1,,,,,V11.6.3 schema contract; required; type=string.
+validator_failure_cases.csv,expected_error_code,string,1,,,,,V11.6.3 schema contract; required; type=string.
+long_run_balance_targets.csv,metric_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+long_run_balance_targets.csv,metric_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+long_run_balance_targets.csv,sim_horizon_years,number,1,,,,,V11.6.3 schema contract; required; type=number.
+long_run_balance_targets.csv,target_min,number,1,,,,,V11.6.3 schema contract; required; type=number.
+long_run_balance_targets.csv,target_max,number,1,,,,,V11.6.3 schema contract; required; type=number.
+long_run_balance_targets.csv,severity,string,1,,,,,V11.6.3 schema contract; required; type=string.
+long_run_balance_targets.csv,calculation_notes,number,1,,,,,V11.6.3 schema contract; required; type=number.
+long_run_balance_targets.csv,source_basis,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_validation_tests.csv,test_id,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_validation_tests.csv,metric,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_validation_tests.csv,min_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+nfl_validation_tests.csv,max_value,number,1,,,,,V11.6.3 schema contract; required; type=number.
+nfl_validation_tests.csv,severity,string,1,,,,,V11.6.3 schema contract; required; type=string.
+nfl_validation_tests.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+csv_schema_registry.csv,csv_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_schema_registry.csv,column_name,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_schema_registry.csv,type,string,1,,,,,V11.6.3 schema contract; required; type=string.
+csv_schema_registry.csv,required,boolean,1,,,,,V11.6.3 schema contract; required; type=boolean.
+csv_schema_registry.csv,min,number,0,,,,,V11.6.3 schema contract; optional; type=number.
+csv_schema_registry.csv,max,number,0,,,,,V11.6.3 schema contract; optional; type=number.
+csv_schema_registry.csv,allowed_values,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+csv_schema_registry.csv,foreign_key,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+csv_schema_registry.csv,notes,string,0,,,,,V11.6.3 schema contract; optional; type=string.
+year_zero/college_awards.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/college_awards.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/college_awards.csv,source_table,string,1,,,,,Original source table name.
+year_zero/college_awards.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/college_awards.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/college_awards.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/college_awards.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/college_production.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/college_production.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/college_production.csv,source_table,string,1,,,,,Original source table name.
+year_zero/college_production.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/college_production.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/college_production.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/college_production.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/college_rosters.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/college_rosters.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/college_rosters.csv,source_table,string,1,,,,,Original source table name.
+year_zero/college_rosters.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/college_rosters.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/college_rosters.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/college_rosters.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/draft_translation.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/draft_translation.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/draft_translation.csv,source_table,string,1,,,,,Original source table name.
+year_zero/draft_translation.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/draft_translation.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/draft_translation.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/draft_translation.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/high_school_recruits.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/high_school_recruits.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/high_school_recruits.csv,source_table,string,1,,,,,Original source table name.
+year_zero/high_school_recruits.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/high_school_recruits.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/high_school_recruits.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/high_school_recruits.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/injuries.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/injuries.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/injuries.csv,source_table,string,1,,,,,Original source table name.
+year_zero/injuries.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/injuries.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/injuries.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/injuries.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_aging_decline.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_aging_decline.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_aging_decline.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_aging_decline.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_aging_decline.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_aging_decline.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_aging_decline.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_awards.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_awards.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_awards.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_awards.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_awards.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_awards.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_awards.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_contracts.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_contracts.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_contracts.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_contracts.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_contracts.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_contracts.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_contracts.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_free_agents.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_free_agents.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_free_agents.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_free_agents.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_free_agents.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_free_agents.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_free_agents.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_practice_squad.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_practice_squad.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_practice_squad.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_practice_squad.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_practice_squad.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_practice_squad.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_practice_squad.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_reserve_status.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_reserve_status.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_reserve_status.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_reserve_status.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_reserve_status.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_reserve_status.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_reserve_status.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_rosters.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_rosters.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_rosters.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_rosters.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_rosters.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_rosters.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_rosters.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/nfl_team_strength.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/nfl_team_strength.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/nfl_team_strength.csv,source_table,string,1,,,,,Original source table name.
+year_zero/nfl_team_strength.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/nfl_team_strength.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/nfl_team_strength.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/nfl_team_strength.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/scouting.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/scouting.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/scouting.csv,source_table,string,1,,,,,Original source table name.
+year_zero/scouting.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/scouting.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/scouting.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/scouting.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/transfer_portal.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/transfer_portal.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/transfer_portal.csv,source_table,string,1,,,,,Original source table name.
+year_zero/transfer_portal.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/transfer_portal.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/transfer_portal.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/transfer_portal.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/transfer_repair.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/transfer_repair.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/transfer_repair.csv,source_table,string,1,,,,,Original source table name.
+year_zero/transfer_repair.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/transfer_repair.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/transfer_repair.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/transfer_repair.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/udfa.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/udfa.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/udfa.csv,source_table,string,1,,,,,Original source table name.
+year_zero/udfa.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/udfa.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/udfa.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/udfa.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.
+year_zero/year_zero_core.csv,domain,string,1,,,,,Year Zero bundle subsystem domain.
+year_zero/year_zero_core.csv,source_file,string,1,,,,,Original detailed Year Zero source CSV filename.
+year_zero/year_zero_core.csv,source_table,string,1,,,,,Original source table name.
+year_zero/year_zero_core.csv,record_category,string,1,,,runtime_tuning|weight_distribution|modifier|rule|target|definition|algorithm|example|research_basis|debug_schema|validation_target,,Bundled record category.
+year_zero/year_zero_core.csv,source_row,integer,1,1,,,,Original source row number.
+year_zero/year_zero_core.csv,row_key,string,1,,,,,Stable bundled row key.
+year_zero/year_zero_core.csv,payload_json,json,1,,,,,Original detailed source row encoded as JSON.

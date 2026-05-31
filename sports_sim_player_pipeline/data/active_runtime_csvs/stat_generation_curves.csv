@@ -1,0 +1,8 @@
+stat_curve_id,position_group,base_per_100_snaps,production_mult,scheme_mult_key,random_sigma
+passing_yards,QB,240,1.25,pass_rate,35
+rushing_yards,RB,90,1.15,rush_rate,18
+receiving_yards,WR,82,1.2,pass_rate,20
+sacks,EDGE,0.85,1.2,pressure_rate,0.35
+tackles,LB,8.5,1.1,def_snaps,2.0
+interceptions,CB,0.18,1.2,coverage_snaps,0.2
+field_goals,K,0.0,1.0,team_scoring,1.2

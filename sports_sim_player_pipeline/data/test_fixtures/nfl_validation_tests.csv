@@ -1,0 +1,4 @@
+test_id,metric,min_value,max_value,severity,notes
+draft_count_257,drafted_count,257,257,error,Draft must produce 257 picks.
+no_invalid_import_positions,invalid_nfl_rookie_positions,0,0,error,No ATH/ST/OT/IOL/IDL imported to NFL.
+team_specific_boards_differ,unique_team_board_hashes,8,32,warning,NFL teams should not all evaluate identically.

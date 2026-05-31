@@ -1,0 +1,8 @@
+component,weight,description
+star_level,0.2,Higher recruit stars increase demand.
+position_value,0.18,Position market share from NIL budget shares.
+visible_overall,0.16,Scouted current ability.
+visible_potential,0.14,Scouted future ability.
+production,0.14,College production and awards.
+school_market,0.12,School NIL proxy score.
+personality_nil_sensitivity,0.06,Hidden trait demand modifier.

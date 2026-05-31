@@ -1,0 +1,6 @@
+driver,weight,good_threshold,bad_threshold,transfer_trigger_bonus
+broken_major_promise,0.32,0,1,0.24
+low_snap_share,0.22,0.4,0.12,0.18
+nil_below_expectation,0.16,0.75,0.35,0.12
+low_coach_trust,0.14,65,35,0.1
+depth_chart_blocked,0.16,1,4,0.14

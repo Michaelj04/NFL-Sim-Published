@@ -1,0 +1,4 @@
+ath_bucket,height_min_in,height_max_in,weight_min_lb,weight_max_lb,primary_map,secondary_map,speed_bias,position_vector
+skill_speed,66,74,160,215,WR|CB|S|RB,WR|CB,0.7,speed_space
+big_skill,72,78,205,255,TE|LB|EDGE|S,TE|LB,0.45,hybrid_power
+power_athlete,73,80,235,310,EDGE|IDL|OT|IOL,EDGE|DL,0.25,front_power

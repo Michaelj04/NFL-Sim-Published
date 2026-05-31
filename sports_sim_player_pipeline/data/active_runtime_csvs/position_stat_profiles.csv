@@ -1,0 +1,14 @@
+position_group,primary_stats,volume_driver,efficiency_driver
+QB,pass_att|pass_yds|pass_td|int|rush_yds,team_pass_rate,passing
+RB,rush_att|rush_yds|rush_td|rec|rec_yds,team_rush_rate,rushing
+WR,targets|rec|rec_yds|rec_td,team_pass_rate,receiving
+TE,targets|rec|rec_yds|rec_td|blocks,mixed_usage,receiving|blocking
+OT,snaps|sacks_allowed|pressures_allowed,snap_share,blocking
+IOL,snaps|sacks_allowed|pressures_allowed,snap_share,blocking
+EDGE,tackles|sacks|tfl|pressures,defensive_snaps,tackling|athleticism
+IDL,tackles|sacks|tfl|pressures,defensive_snaps,tackling|strength
+LB,tackles|tfl|sacks|passes_defensed,defensive_snaps,tackling|awareness
+CB,tackles|passes_defensed|interceptions,coverage_snaps,coverage|speed
+S,tackles|passes_defensed|interceptions,coverage_snaps,coverage|tackling
+K,fg_att|fg_made|xp_att|xp_made,team_scoring,kicking
+P,punts|punt_avg|inside_20,team_punting,kicking

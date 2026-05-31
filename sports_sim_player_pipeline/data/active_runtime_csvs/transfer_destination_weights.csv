@@ -1,0 +1,9 @@
+component,weight,description
+playing_time_opportunity,0.24,Depth chart path.
+nil_offer,0.18,NIL package.
+prestige,0.15,Program brand.
+distance_fit,0.1,Geography.
+scheme_fit,0.12,Usage fit.
+development,0.1,Development potential.
+academic_fit,0.04,Eligibility fit.
+prior_relationship,0.07,Former recruit history.

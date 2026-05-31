@@ -1,0 +1,6 @@
+domain,primary_source,secondary_source,rule,notes
+school_geography,campus_locations_verified.csv,schools_master.csv,campus_locations_verified.csv wins city state lat lon timezone conflicts,Hard rule.
+school_archetype,school_overrides_manual_top_programs.csv,school_archetypes.csv,manual top-program overrides win when present,Hard rule.
+school_name,schools_master.csv,repo_existing_team_data,repo existing data can seed schools_master but does not override active CSV at runtime,No research.
+nil,nil_market_proxies.csv,school_finance_proxies.csv,NIL proxy file wins NIL-specific scores,Synthetic tuning only.
+position_conversion,position_group_conversion.csv,ath_conversion_rules.csv,specific ATH rule can choose candidate; conversion file validates final allowed positions,No invalid finals.

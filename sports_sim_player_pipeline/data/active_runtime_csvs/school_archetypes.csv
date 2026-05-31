@@ -1,0 +1,4 @@
+archetype_id,scheme,recruiting_style,development_style,transfer_aggression,portal_aggression,notes
+national_power,balanced_pro,national,elite,0.55,0.62,High-resource program default.
+regional_developer,spread,regional,development,0.42,0.48,Mid-tier program default.
+fcs_builder,multiple,local,patient,0.3,0.35,FCS program default.

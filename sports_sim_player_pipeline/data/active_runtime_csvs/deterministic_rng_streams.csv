@@ -1,0 +1,9 @@
+stream_id,seed_namespace,allowed_engines,notes
+recruit_generation,recruit,recruitGenerator,National recruit class.
+position_conversion,position,signingEngine|recruitGenerator,ATH/ST/OT/IOL/IDL conversion.
+recruiting,recruiting,recruitingEngine|signingEngine,"Offers, visits, commits."
+development,development,trainingEngine|developmentEngine,Development banks and yearly application.
+injury,injury,injuryEngine,Injuries and recurrence.
+production,production,snapShareEngine|productionEngine|awardsEngine,Stats and awards.
+transfer_portal,portal,transferPortalEngine,Entry and destination decisions.
+draft,draft,draftEligibilityEngine|draftBoardEngine|nflImportEngine,"Declaration, board, draft."

@@ -1,0 +1,6 @@
+feature,status,reason
+Commissioner mode,deferred,Not part of player pipeline implementation.
+Trading overhaul,deferred,User asked to focus on player generation/development coding.
+Research extractors,removed,No R/research layer in V11 coding-first package.
+Polished UI redesign,deferred_until_engine_passes,Engine-first rule.
+Old save migration,removed,Fresh universe only.

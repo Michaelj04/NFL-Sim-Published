@@ -1,0 +1,10 @@
+alias,canonical_selector,selector_type,notes
+OL,OT|IOL,group,Broad offensive line selector.
+DL,EDGE|IDL,group,Broad defensive line selector.
+DB,CB|S,group,Defensive back selector.
+SPEC,K|P,group,Final special teams selector.
+ST,K|P,generation_only,Convert before roster.
+ATH,RB|WR|TE|CB|S|LB|EDGE,generation_only,Convert before signing.
+OT,LT|RT,conversion,Final repo conversion.
+IOL,LG|C|RG,conversion,Final repo conversion.
+IDL,DL,conversion,Final repo conversion.

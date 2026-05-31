@@ -1,0 +1,10 @@
+component,weight,min_effect,max_effect,notes
+prestige,0.16,-0.15,0.18,Program brand.
+playing_time,0.14,-0.2,0.2,Depth chart opportunity.
+distance,0.11,-0.18,0.15,Player home distance sensitivity.
+nil,0.13,-0.12,0.2,NIL package.
+development,0.13,-0.1,0.18,Development quality.
+scheme_fit,0.1,-0.12,0.14,Position/scheme fit.
+relationship,0.13,-0.15,0.18,Recruiting effort.
+academics,0.04,-0.08,0.08,Eligibility and school fit.
+promises,0.06,-0.08,0.12,Role promises.

@@ -1,0 +1,6 @@
+csv_name,source_name,source_type,confidence_level,extract_method,last_verified,notes
+schools_master.csv,repo_existing_or_user_supplied,repo_supplied,medium,manual_or_repo_adapter,package_build,Do not research missing schools.
+campus_locations_verified.csv,user_supplied_or_repo_existing,repo_supplied,medium,manual_or_repo_adapter,package_build,Geography precedence source.
+school_finance_proxies.csv,synthetic_gameplay_tuning,synthetic_tuning,gameplay,authored_csv,package_build,Not factual budgets.
+nil_market_proxies.csv,synthetic_gameplay_tuning,synthetic_tuning,gameplay,authored_csv,package_build,Not factual NIL budgets.
+development_yearly_curves.csv,synthetic_gameplay_tuning,synthetic_tuning,gameplay,authored_csv,package_build,Tunable gameplay curve.

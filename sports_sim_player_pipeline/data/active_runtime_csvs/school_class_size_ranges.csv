@@ -1,0 +1,5 @@
+subdivision_level,min_signings,target_signings,max_signings,walkon_target
+FBS_POWER,18,24,30,8
+FBS_G5,16,22,28,10
+FCS_TOP,14,20,26,12
+FCS_LOW,12,18,24,14

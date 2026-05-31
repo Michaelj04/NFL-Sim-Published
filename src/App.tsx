@@ -2,6 +2,14 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, typ
 import { collegeImageFor } from "./data/collegeImages";
 import { nflTeams } from "./data/nflTeams";
 import { careerScenarioLabels, createNewSave, generateFreeAgentPool } from "./sim/generate";
+import { createInitialCollegeRosterState } from "./sim/collegeRoster";
+import { generateCollegeSeasonResults } from "./sim/collegeSeasonResults";
+import { generateCollegeMoraleState } from "./sim/collegeMorale";
+import { generateDraftEvaluationState } from "./sim/draftEvaluation";
+import { generateAnnualRecruitClass } from "./sim/annualRecruitClass";
+import { buildSchoolProfileState } from "./sim/schoolProfiles";
+import { loadYearZeroProgressTemplate } from "./sim/yearZero/yearZeroBootstrap";
+import { buildYearZeroDebugExport } from "./sim/yearZero/yearZeroDebug";
 import {
   acceptDraftTradeOffer,
   acceptDraftTradeCounterOffer,
@@ -311,6 +319,8 @@ export function normalizeSave(save: GameSave): GameSave {
     ...collegeImageFor(school)
   }));
   const schoolById = new Map(normalizedSchools.map((school) => [school.id, school]));
+  const normalizedCollegeRoster = save.collegeRoster ?? (save.yearZero ? createInitialCollegeRosterState(save.yearZero, seasonYear) : undefined);
+  const normalizedCollegeSeasonResults = save.collegeSeasonResults ?? generateCollegeSeasonResults(save.seed, normalizedCollegeRoster, seasonYear);
   const statDefaults = {
     games: 0,
     snaps: 0,
@@ -337,6 +347,12 @@ export function normalizeSave(save: GameSave): GameSave {
     leagueYearStartDate: save.leagueYearStartDate ?? leagueYearStartDate(seasonYear),
     calendarPhase: save.calendarPhase ?? "league-year",
     seasonCalendar: save.seasonCalendar ?? [],
+    schoolProfiles: save.schoolProfiles ?? buildSchoolProfileState(normalizedSchools, save.seed, seasonYear),
+    annualRecruitClass: save.annualRecruitClass ?? generateAnnualRecruitClass(save.seed, seasonYear),
+    collegeRoster: normalizedCollegeRoster,
+    collegeSeasonResults: normalizedCollegeSeasonResults,
+    collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.annualRecruiting),
+    draftEvaluation: save.draftEvaluation ?? generateDraftEvaluationState(save.seed, normalizedDraftState.draftYear, save.prospects ?? [], save.currentWeek ?? 1),
     previousSeasonRanks: save.previousSeasonRanks,
     scenario: save.scenario ?? "neutral",
     players: playersToNormalize.map((player) => {
@@ -584,6 +600,8 @@ export default function App() {
   const [setupMode, setSetupMode] = useState<SaveMode>("goals");
   const [setupScenario, setSetupScenario] = useState<CareerScenario>("neutral");
   const [setupSeed, setSetupSeed] = useState(() => randomCareerSeed());
+  const [isCreatingYearZero, setIsCreatingYearZero] = useState(false);
+  const [yearZeroProgress, setYearZeroProgress] = useState(() => loadYearZeroProgressTemplate());
   const [teamSearch, setTeamSearch] = useState("");
   const [teamConference, setTeamConference] = useState<Conference | "all">("all");
   const [activeTab, setActiveTab] = useState<Tab>("inbox");
@@ -704,6 +722,9 @@ export default function App() {
   async function startCareer() {
     const seed = setupSeed.trim() || randomCareerSeed();
     setSetupSeed(seed);
+    setYearZeroProgress(loadYearZeroProgressTemplate());
+    setIsCreatingYearZero(true);
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
     const newSave = normalizeSave(createNewSave({ selectedTeamId: setupTeamId, mode: setupMode, seed, scenario: setupScenario }));
     try {
       const record = await createCareer(newSave);
@@ -721,6 +742,7 @@ export default function App() {
       setSaveStatus("Save failed");
       setSaveFailure(error instanceof Error ? error.message : "New career could not be saved. Export is still available.");
     }
+    setIsCreatingYearZero(false);
     setActiveTab("inbox");
   }
 
@@ -1123,6 +1145,27 @@ export default function App() {
     );
   }
 
+  if (isCreatingYearZero) {
+    return (
+      <div className="setup-screen">
+        <section className="setup-panel year-zero-loading-panel">
+          <p className="eyebrow">Year Zero Bootstrap</p>
+          <h1>Building the starting football universe</h1>
+          <p className="setup-copy">Validating the V11.6.4 bundle set and generating the complete starting player base once for this save.</p>
+          <div className="year-zero-meter"><span /></div>
+          <ol className="year-zero-progress-list">
+            {yearZeroProgress.slice(0, 8).map((step) => (
+              <li key={step.id}>
+                <strong>{step.label}</strong>
+                <span>{step.detail}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </div>
+    );
+  }
+
   if (!save) {
     return (
       <div
@@ -1403,7 +1446,6 @@ export default function App() {
             submitOffer={submitFreeAgentPlayerOffer}
             resolveWave={resolveFreeAgentOffers}
             signPractice={signFreeAgentPracticeSquadPlayer}
-            claimWaiver={claimWaiverPlayer}
           />
         )}
         {activeTab === "medical" && (
@@ -1570,6 +1612,7 @@ type InboxFilter = "all" | "important" | "medical" | "staff" | "scouting" | "gam
 
 function InboxView({ save, markRead }: { save: GameSave; markRead: (itemId: string) => void }) {
   const [filter, setFilter] = useState<InboxFilter>("all");
+  const yearZeroDebug = buildYearZeroDebugExport(save);
   const filters: Array<{ id: InboxFilter; label: string }> = [
     { id: "all", label: "All" },
     { id: "important", label: "Important" },
@@ -1590,6 +1633,7 @@ function InboxView({ save, markRead }: { save: GameSave; markRead: (itemId: stri
   return (
     <section className="view-stack">
       <MetricStrip save={save} />
+      {yearZeroDebug ? <YearZeroDebugPanel debug={yearZeroDebug} /> : null}
       <div className="section-heading">
         <div>
           <p className="eyebrow">Staff reports</p>
@@ -1628,6 +1672,103 @@ function InboxView({ save, markRead }: { save: GameSave; markRead: (itemId: stri
         ))}
       </div>
     </section>
+  );
+}
+
+function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof buildYearZeroDebugExport>> }) {
+  const invariantEntries = Object.entries(debug.invariants);
+  const passed = invariantEntries.filter(([, ok]) => ok).length;
+  const implementedAudit = debug.selfAudit.filter((row) => row.status === "Implemented").length;
+  const partialAudit = debug.selfAudit.filter((row) => row.status === "Partially Implemented").length;
+  function downloadDebugExport() {
+    const blob = new Blob([JSON.stringify(debug, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `year-zero-debug-${debug.seed}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  return (
+    <article className="year-zero-debug-card">
+      <div>
+        <p className="eyebrow">Year Zero Bootstrap</p>
+        <h3>V11.6.4 universe loaded</h3>
+        <p>
+          {debug.bundleCount} bundles / {debug.bundledRows.toLocaleString()} rows. Artifacts generated once for seed <strong>{debug.seed}</strong>.
+        </p>
+        {debug.annualPipeline ? (
+          <p>
+            Annual pipeline armed for draft year {debug.annualPipeline.lastGeneratedDraftYear} using {debug.annualPipeline.runtimeCsvs.length} normal runtime CSVs.
+          </p>
+        ) : null}
+        {debug.annualTransferPortal ? (
+          <p>
+            Annual transfer board: {debug.annualTransferPortal.entries} entries for {debug.annualTransferPortal.seasonYear}, {debug.annualTransferPortal.collegeEntries} college-sourced and {debug.annualTransferPortal.committedEntries} committed.
+          </p>
+        ) : null}
+        {debug.annualRecruiting ? (
+          <p>
+            Annual recruiting: {debug.annualRecruiting.boardEntries.toLocaleString()} board entries in {debug.annualRecruiting.currentPhase}, {debug.annualRecruiting.visitedEntries.toLocaleString()} visits, {debug.annualRecruiting.promisedEntries.toLocaleString()} promises, avg need {debug.annualRecruiting.averagePositionNeed}, {debug.annualRecruiting.signedEntries.toLocaleString()} signed and {debug.annualRecruiting.committedEntries.toLocaleString()} committed.
+          </p>
+        ) : null}
+        {debug.annualRecruitClass ? (
+          <p>
+            Annual recruit class: {debug.annualRecruitClass.recruits.toLocaleString()} recruits, including {debug.annualRecruitClass.fiveStars.toLocaleString()} five-stars and {debug.annualRecruitClass.fourStars.toLocaleString()} four-stars.
+          </p>
+        ) : null}
+        {debug.annualRosterImportPlan ? (
+          <p>
+            Annual import plan: {debug.annualRosterImportPlan.entries.toLocaleString()} roster handoff entries, {debug.annualRosterImportPlan.plannedEntries.toLocaleString()} ready, {debug.annualRosterImportPlan.deferredEntries.toLocaleString()} deferred.
+          </p>
+        ) : null}
+        {debug.schoolProfiles ? (
+          <p>
+            School profiles: {debug.schoolProfiles.profiles.toLocaleString()} active profiles, {debug.schoolProfiles.csvMatchedProfiles.toLocaleString()} CSV-matched and {debug.schoolProfiles.repoAdaptedProfiles.toLocaleString()} deterministic repo-adapted.
+          </p>
+        ) : null}
+        {debug.collegeRoster ? (
+          <p>
+            College roster state: {debug.collegeRoster.players.toLocaleString()} players on the college scale, {debug.collegeRoster.annualSignees.toLocaleString()} annual signees.
+            {debug.collegeRoster.lastProgression ? ` Last progression declared ${debug.collegeRoster.lastProgression.draftDeclarations.toLocaleString()} players for the ${debug.collegeRoster.lastProgression.draftYear} draft, redshirted ${debug.collegeRoster.lastProgression.redshirtedPlayers.toLocaleString()}, added ${debug.collegeRoster.lastProgression.walkOnsAdded.toLocaleString()} walk-ons, cut ${debug.collegeRoster.lastProgression.cutPlayers.toLocaleString()}.` : ""}
+          </p>
+        ) : null}
+        {debug.collegeSeasonResults ? (
+          <p>
+            College season results: {debug.collegeSeasonResults.production.toLocaleString()} production rows, {debug.collegeSeasonResults.starters.toLocaleString()} starters, avg snap share {debug.collegeSeasonResults.averageSnapShare}, {debug.collegeSeasonResults.awards.toLocaleString()} awards, {debug.collegeSeasonResults.injuries.toLocaleString()} injuries.
+          </p>
+        ) : null}
+        {debug.collegeMorale ? (
+          <p>
+            College morale: {debug.collegeMorale.entries.toLocaleString()} players, {debug.collegeMorale.lowMorale.toLocaleString()} low morale, {debug.collegeMorale.highTransferRisk.toLocaleString()} high transfer risk, avg promise pressure {debug.collegeMorale.averagePromisePressure}.
+          </p>
+        ) : null}
+        {debug.draftEvaluation ? (
+          <p>
+            Draft evaluation: {debug.draftEvaluation.results.toLocaleString()} prospects, {debug.draftEvaluation.allStarInvites.toLocaleString()} all-star invites, average combine {debug.draftEvaluation.averageCombine}.
+          </p>
+        ) : null}
+      </div>
+      <div className="year-zero-debug-grid">
+        <span><strong>{debug.artifactCounts.collegePlayers.toLocaleString()}</strong> college players</span>
+        <span><strong>{debug.artifactCounts.highSchoolRecruits.toLocaleString()}</strong> HS recruits</span>
+        <span><strong>{debug.artifactCounts.draftClass.toLocaleString()}</strong> draft prospects</span>
+        <span><strong>{debug.artifactCounts.nflPlayers.toLocaleString()}</strong> NFL players</span>
+      </div>
+      <div className="year-zero-invariants">
+        <strong>{passed}/{invariantEntries.length} invariants passing</strong>
+        {invariantEntries.map(([key, ok]) => (
+          <span key={key} className={ok ? "ok" : "warn"}>{ok ? "OK" : "Check"} {key}</span>
+        ))}
+      </div>
+      <div className="year-zero-invariants">
+        <strong>Self-audit: {implementedAudit} implemented, {partialAudit} partial, {debug.selfAudit.length - implementedAudit - partialAudit} pending</strong>
+        {debug.selfAudit.slice(0, 10).map((row) => (
+          <span key={row.requirement} className={row.status === "Implemented" ? "ok" : row.status === "Partially Implemented" ? "warn" : "danger"}>{row.status} {row.requirement}</span>
+        ))}
+      </div>
+      <button type="button" onClick={downloadDebugExport}>Export Year Zero Debug JSON</button>
+    </article>
   );
 }
 

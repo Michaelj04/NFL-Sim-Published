@@ -1,0 +1,5 @@
+promise_type,fulfillment_rule,target_value,evaluation_window,broken_severity,morale_impact,portal_impact,school_reputation_impact
+early_playing_time,snap_share_threshold,0.25,season_1,0.35,-12,0.14,-2
+starter_by_year_two,starter_status,1,season_2,0.45,-16,0.18,-3
+position_stability,no_position_change_without_consent,1,career,0.25,-8,0.08,-1
+nil_floor,nil_deal_minimum,1,season_1,0.3,-10,0.1,-2

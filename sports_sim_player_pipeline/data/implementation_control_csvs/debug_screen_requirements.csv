@@ -1,0 +1,16 @@
+screen,required_data,dev_only
+Pipeline validation report,validation errors warnings row counts active files,1
+National recruit rankings,visible stars ranks ranges confidence notes,0
+State recruit rankings,state rank position rank home state visible range,0
+School recruiting board,targets offers interest scores promises debug reasons,0
+College roster,position class scouted ranges morale injuries eligibility,0
+Depth chart,depth score snap share blockers injuries promises,0
+Training/development report,banks yearly gain gates fatigue regression debug,1
+Transfer portal,entry reasons probability destinations decision debug,0
+Draft watchlist,film athletic medical age competition projected round uncertainty,0
+NFL draft board,consensus rank team rank scheme fit need medical uncertainty,0
+Calibration report,metric actual min target max status tuning direction,1
+Performance benchmark report,benchmark target actual status notes,1
+Year Zero bootstrap report,seed phase progress generated counts college rosters nfl rosters transfer portal draft class free agents validation warnings,1
+Year Zero player history inspector,player origin college history nfl history injuries awards contracts scouting views rating translation debug,1
+Year Zero scouting view comparison,hidden truth evaluator ranges confidence bias profile source events disagreement reason,1

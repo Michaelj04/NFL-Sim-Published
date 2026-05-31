@@ -1,0 +1,5 @@
+subdivision_level,walkon_quality_mean,walkon_quality_sigma,preferred_local_pct,max_stars
+FBS_POWER,42,8,0.8,2
+FBS_G5,40,8,0.82,2
+FCS_TOP,38,8,0.86,2
+FCS_LOW,36,8,0.88,2

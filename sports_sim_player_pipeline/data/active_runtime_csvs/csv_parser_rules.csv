@@ -1,0 +1,7 @@
+rule_type,applies_to,accepted_values,normalization,hard_fail
+boolean,*_flag|active|hard_gate|scholarship|include_in_athletic_composite,1|0|true|false|yes|no,true_false,1
+number,*_score|*_weight|*_pct|*_probability|lat|lon|weight|height|value,numeric,trim_parse_float,1
+integer,*_count|*_days|year|month|day|week|pick|round,integer,trim_parse_int,1
+json,*_json|inputs_json|expected_range_json|expected_value_json,valid_json,JSON.parse,1
+pipe_list,*_positions|eligible_classes|allowed_actions|primary_stats,pipe_delimited_string,split_pipe_trim,0
+blank_optional,ipeds_id|nfhs_participants|notes|source_url|foreign_key|allowed_values,blank_allowed,empty_string_to_null,0

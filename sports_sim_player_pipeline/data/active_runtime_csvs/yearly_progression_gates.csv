@@ -1,0 +1,4 @@
+gate_id,applies_to_class,max_single_year_gain,breakout_exception_allowed,notes
+freshman_cap,FR|RS_FR,12,1,Prevents runaway freshmen without blocking rare breakouts.
+upperclass_growth_cap,JR|RS_JR|SR|RS_SR,8,1,Upperclass growth slows.
+injury_regression_gate,ALL,5,0,Major injury limits growth.

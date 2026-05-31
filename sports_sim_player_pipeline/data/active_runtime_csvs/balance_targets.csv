@@ -1,0 +1,9 @@
+metric,target_mean,lower_bound,upper_bound,notes
+national_recruit_count,6000,4000,8000,Annual generated HS seniors.
+five_star_count,40,25,60,Stars are priors only.
+four_star_count,420,300,600,Stars are priors only.
+fbs_roster_count_per_school,85,80,110,Roster soft cap.
+signed_player_invalid_position_count,0,0,0,ATH/ST/OT/IOL/IDL must not remain final positions.
+transfer_portal_entry_rate,0.13,0.06,0.22,Annual portal activity target.
+draft_declared_count,350,250,500,Draft pool rough size.
+drafted_count,257,257,257,Fixed NFL draft count.

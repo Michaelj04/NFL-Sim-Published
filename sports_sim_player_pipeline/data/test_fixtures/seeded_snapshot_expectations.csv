@@ -1,0 +1,5 @@
+seed,metric,min_value,max_value,notes
+1,national_recruit_count,4000,8000,Annual class size.
+7,invalid_final_positions,0,0,Position conversion hard rule.
+42,fbs_roster_count_per_school,80,110,Roster target.
+12345,drafted_count,257,257,Draft size.

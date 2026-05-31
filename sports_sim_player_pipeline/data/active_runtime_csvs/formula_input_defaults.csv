@@ -1,0 +1,4 @@
+formula,input_name,default_value,allowed_fallback,notes
+overall,missing_rating,50,0,Missing required ratings should fail unless explicitly optional.
+distance,home_lat_lon,,1,Fallback to state centroid only if player city is blank.
+morale,recent_form,50,1,Use neutral recent form for new players.

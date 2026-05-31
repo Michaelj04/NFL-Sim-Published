@@ -1,0 +1,5 @@
+rule_id,hard_rule,blocked_patterns,required_behavior
+no_r,"Do not create, use, import, run, or maintain R, Rscript, or RMarkdown files.",*.R|*.Rmd|renv.lock|DESCRIPTION|NAMESPACE,delete or ignore if present unless user explicitly asks
+no_scraping,"Do not build scrapers, extractors, broad research pipelines, or web data harvesters.",research_extractors|scrapers|nflverse_extract|cfb_data_extract,focus on implementation and validated CSVs
+no_data_chase,Do not pause implementation to search for better real-world data.,source_dataset_registry|data_extraction_plan|confidence_upgrade_map,use supplied CSVs and repo-existing data only
+synthetic_is_allowed,Synthetic gameplay tuning is allowed when declared in source_basis.,undocumented_proxy,mark synthetic values clearly

@@ -1,0 +1,45 @@
+row_id,requirement,required_status_values,required_columns
+1,CSV loader,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+2,CSV validator,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+3,Active manifest enforcement,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+4,No R or research extractors,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+5,School profile builder,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+6,Campus geography precedence,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+7,Fresh universe only,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+8,Initial college rosters,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+9,Recruit generation,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+10,Star priors and scouting uncertainty,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+11,ATH conversion,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+12,ST split to K/P,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+13,OT/IOL/IDL final conversion,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+14,Recruiting AI,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+15,Commitments and decommitments,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+16,Signing day,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+17,Roster caps,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+18,Walk-ons and cuts,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+19,Redshirts,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+20,Depth chart,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+21,Snap share,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+22,Training policies,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+23,Development banks,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+24,Injury engine,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+25,Injury recurrence and degradation,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+26,College production,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+27,Stat generation curves,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+28,Awards,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+29,Morale and promises,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+30,Transfer portal,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+31,Draft eligibility,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+32,Early declaration,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+33,All-star events,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+34,Combine,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+35,Pro day,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+36,NFL scouting,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+37,Draft board,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+38,NFL import,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+39,Balance metrics,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+40,Golden tests,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+41,Seeded snapshot tests,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+42,Long-run tests,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+43,Performance benchmarks,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes
+44,Debug UI,Implemented|Partially Implemented|Not Implemented,Requirement|Status|Files changed|Final-phase tests covering it|Notes

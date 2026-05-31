@@ -1,0 +1,14 @@
+position_group,football_budget_share,source_basis
+QB,0.22,synthetic_gameplay_tuning
+RB,0.07,synthetic_gameplay_tuning
+WR,0.12,synthetic_gameplay_tuning
+TE,0.05,synthetic_gameplay_tuning
+OT,0.09,synthetic_gameplay_tuning
+IOL,0.07,synthetic_gameplay_tuning
+EDGE,0.1,synthetic_gameplay_tuning
+IDL,0.08,synthetic_gameplay_tuning
+LB,0.06,synthetic_gameplay_tuning
+CB,0.08,synthetic_gameplay_tuning
+S,0.04,synthetic_gameplay_tuning
+K,0.01,synthetic_gameplay_tuning
+P,0.01,synthetic_gameplay_tuning

@@ -1,0 +1,7 @@
+benchmark_id,target_ms,max_ms,dataset_size,notes
+csv_validation,500,2000,package_csvs,Validation must be fast enough for startup.
+annual_recruit_generation,1500,5000,6000_recruits,Seeded generation.
+one_recruiting_week_all_schools,1000,4000,all_repo_schools,Use narrowed target boards.
+one_development_week_all_players,1000,4500,all_college_players,Use sparse deltas.
+full_offseason_pipeline,4000,12000,all_schools,Can run async/chunked in app.
+draft_board_creation,1000,4000,draft_pool_all_teams,Cache consensus grades.

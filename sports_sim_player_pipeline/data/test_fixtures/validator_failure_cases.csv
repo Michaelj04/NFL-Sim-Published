@@ -1,0 +1,6 @@
+case_id,csv_name,mutation,expected_error_code
+missing_required_column,schools_master.csv,remove school_id column,MISSING_REQUIRED_COLUMN
+invalid_number,campus_locations_verified.csv,lat = abc,TYPE_PARSE_ERROR
+foreign_key_fail,school_recruiting_power.csv,school_id = does_not_exist,FOREIGN_KEY_ERROR
+bad_weight_sum,nil_position_budget_shares.csv,shares sum to 1.2,WEIGHT_SUM_ERROR
+invalid_final_position,golden_test_fixture_players.csv,expected final position ATH,INVALID_FINAL_POSITION

@@ -1105,6 +1105,17 @@ export interface PlayerDevelopmentReport {
 export interface GameSave {
   version: number;
   careerId?: string;
+  yearZero?: YearZeroBootstrapState;
+  annualPipeline?: AnnualPipelineState;
+  annualTransferPortal?: AnnualTransferPortalState;
+  annualRecruiting?: AnnualRecruitingState;
+  annualRecruitClass?: AnnualRecruitClassState;
+  annualRosterImportPlan?: AnnualRosterImportPlan;
+  schoolProfiles?: SchoolProfileState;
+  collegeRoster?: CollegeRosterState;
+  collegeSeasonResults?: CollegeSeasonResultsState;
+  collegeMorale?: CollegeMoraleState;
+  draftEvaluation?: DraftEvaluationState;
   seed: string;
   seasonYear: number;
   previousSeasonRanks?: Record<string, number>;
@@ -1147,6 +1158,453 @@ export interface GameSave {
   waiverState?: WaiverState;
   injuryReports?: InjuryReport[];
   lastViewedGameId?: string;
+}
+
+export interface AnnualPipelineState {
+  version: "v11_6_4";
+  lastGeneratedDraftYear: number;
+  runtimeCsvs: string[];
+  rngStreams: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface AnnualTransferEntry {
+  id: string;
+  playerPool: "college" | "nfl";
+  playerId: string;
+  playerName: string;
+  fromTeamId: string;
+  position: Position;
+  reason: string;
+  destinationScores: Array<{ teamId: string; score: number }>;
+  status: "open" | "committed" | "withdrawn";
+}
+
+export interface AnnualTransferPortalState {
+  seasonYear: number;
+  generatedWeek: number;
+  entries: AnnualTransferEntry[];
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface AnnualRecruitingBoardEntry {
+  id: string;
+  prospectId: string;
+  schoolId: string;
+  interestScore: number;
+  targetPriority: number;
+  positionNeed: number;
+  nilScore: number;
+  visitImpact: number;
+  promiseType?: string;
+  debugFactors: string[];
+  pipelineType: "primary" | "secondary" | "national";
+  status: "evaluating" | "offered" | "visited" | "committed" | "signed";
+}
+
+export interface AnnualRecruitingState {
+  seasonYear: number;
+  currentPhase: string;
+  board: AnnualRecruitingBoardEntry[];
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface AnnualRecruit {
+  id: string;
+  firstName: string;
+  lastName: string;
+  position: Position;
+  generationPosition: string;
+  secondaryPositions: Position[];
+  homeState: string;
+  homeRegion: ScoutingRegion;
+  stars: 2 | 3 | 4 | 5;
+  height: number;
+  weight: number;
+  trueOverall: number;
+  truePotential: number;
+  visibleOverallRange: [number, number];
+  visiblePotentialRange: [number, number];
+  nationalRank: number;
+  stateRank: number;
+  positionRank: number;
+  developmentTrait: "early" | "steady" | "late" | "volatile";
+  personality: string;
+  debug: string;
+}
+
+export interface AnnualRecruitClassState {
+  seasonYear: number;
+  recruits: AnnualRecruit[];
+  classSize: number;
+  starCounts: Record<string, number>;
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface AnnualRosterImportPlanEntry {
+  id: string;
+  source: "recruiting" | "transfer";
+  playerId?: string;
+  prospectId?: string;
+  fromTeamId?: string;
+  targetTeamId: string;
+  position: Position;
+  priority: number;
+  status: "planned" | "applied" | "deferred";
+  summary: string;
+}
+
+export interface AnnualRosterImportPlan {
+  seasonYear: number;
+  generatedWeek: number;
+  entries: AnnualRosterImportPlanEntry[];
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface SchoolProfile {
+  schoolId: string;
+  schoolName: string;
+  mascot: string;
+  subdivision: Subdivision;
+  subdivisionLevel: string;
+  conference: string;
+  city: string;
+  state: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  campusRegion: ScoutingRegion;
+  programTier: string;
+  prestige: number;
+  competition: number;
+  recruitingPower: number;
+  nilPower: number;
+  academicStrictness: number;
+  transferAggression: number;
+  primaryPipelineStates: string[];
+  secondaryPipelineStates: string[];
+  scheme: CollegeProgram["scheme"];
+  source: "active_csv" | "repo_adapter";
+}
+
+export interface SchoolProfileState {
+  seasonYear: number;
+  profiles: SchoolProfile[];
+  csvMatchedProfiles: number;
+  repoAdaptedProfiles: number;
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface CollegeRosterPlayer {
+  id: string;
+  firstName: string;
+  lastName: string;
+  schoolId: string;
+  position: Position;
+  classYear: "FR" | "SO" | "JR" | "SR" | "RS-SO";
+  age: number;
+  collegeOverall: number;
+  collegePotential: number;
+  ratingScaleContext: "college";
+  source: "year_zero_college_roster" | "annual_recruiting" | "annual_transfer";
+  rosterStatus?: "active" | "redshirt" | "walk_on" | "cut" | "graduated" | "declared";
+  signedSeason?: number;
+  draftDeclaredSeason?: number;
+  graduatedSeason?: number;
+  redshirted?: boolean;
+  cutSeason?: number;
+}
+
+export interface CollegeRosterProgressionSummary {
+  seasonYear: number;
+  draftYear: number;
+  progressedPlayers: number;
+  draftDeclarations: number;
+  graduatedPlayers: number;
+  redshirtedPlayers: number;
+  walkOnsAdded: number;
+  cutPlayers: number;
+}
+
+export interface CollegeRosterState {
+  seasonYear: number;
+  players: CollegeRosterPlayer[];
+  lastProgression?: CollegeRosterProgressionSummary;
+  runtimeCsvs: string[];
+  usesYearZeroBundles: boolean;
+}
+
+export interface CollegeProductionResult {
+  id: string;
+  playerId: string;
+  schoolId: string;
+  position: Position;
+  seasonYear: number;
+  depthRank: number;
+  productionScore: number;
+  snapShare: number;
+}
+
+export interface CollegeAwardResult {
+  id: string;
+  playerId: string;
+  schoolId: string;
+  seasonYear: number;
+  award: "all_conference" | "all_american" | "position_award";
+}
+
+export interface CollegeInjuryResult {
+  id: string;
+  playerId: string;
+  schoolId: string;
+  seasonYear: number;
+  severity: InjurySeverity;
+  missedGames: number;
+}
+
+export interface CollegeSeasonResultsState {
+  seasonYear: number;
+  production: CollegeProductionResult[];
+  awards: CollegeAwardResult[];
+  injuries: CollegeInjuryResult[];
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface CollegeMoraleEntry {
+  playerId: string;
+  schoolId: string;
+  morale: number;
+  promisePressure: number;
+  transferRisk: number;
+  reasons: string[];
+}
+
+export interface CollegeMoraleState {
+  seasonYear: number;
+  entries: CollegeMoraleEntry[];
+  usesYearZeroBundles: false;
+}
+
+export interface DraftEvaluationResult {
+  prospectId: string;
+  allStarInvite: boolean;
+  allStarSignal: number;
+  combineScore: number;
+  proDayScore: number;
+  medicalGrade: number;
+  evaluationSummary: string;
+}
+
+export interface DraftEvaluationState {
+  draftYear: number;
+  generatedWeek: number;
+  results: DraftEvaluationResult[];
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
+export interface YearZeroProgressStep {
+  id: string;
+  label: string;
+  detail: string;
+  sortOrder: number;
+}
+
+export interface YearZeroTeamStrengthContext {
+  teamId: string;
+  tier: string;
+  rosterBias: number;
+  capHealth: string;
+  draftCapital: string;
+}
+
+export interface YearZeroCollegePlayer {
+  id: string;
+  firstName: string;
+  lastName: string;
+  schoolId: string;
+  position: Position;
+  classYear: "FR" | "SO" | "JR" | "SR" | "RS-SO";
+  age: number;
+  collegeOverall: number;
+  collegePotential: number;
+  ratingScaleContext: "college";
+  source: "year_zero_college_roster";
+}
+
+export interface YearZeroDraftProspect {
+  id: string;
+  collegePlayerId: string;
+  firstName: string;
+  lastName: string;
+  schoolId: string;
+  position: Position;
+  classYear: "JR" | "SR" | "RS-SO";
+  collegeOverall: number;
+  nflOverall: number;
+  nflPotential: number;
+  projectedRound: number;
+  ratingScaleContext: "nfl";
+  source: "year_zero_draft_class";
+}
+
+export interface YearZeroNflPlayer {
+  id: string;
+  firstName: string;
+  lastName: string;
+  teamId: string;
+  previousTeamId?: string;
+  pool: "active_roster" | "practice_squad" | "free_agent";
+  position: Position;
+  age: number;
+  experience: number;
+  collegeId: string;
+  overall: number;
+  potential: number;
+  salary: number;
+  contractYears: number;
+  ratingScaleContext: "nfl";
+  source: "year_zero_nfl_player";
+}
+
+export interface YearZeroTransferPortalEntry {
+  id: string;
+  playerId: string;
+  firstName: string;
+  lastName: string;
+  originSchoolId: string;
+  desiredSchoolId: string;
+  position: Position;
+  classYear: YearZeroCollegePlayer["classYear"];
+  collegeOverall: number;
+  reason: string;
+  repairedByPlayerId: string;
+}
+
+export interface YearZeroHighSchoolRecruit {
+  id: string;
+  firstName: string;
+  lastName: string;
+  position: Position;
+  stars: 1 | 2 | 3 | 4 | 5;
+  region: ScoutingRegion;
+  collegeProjection: number;
+  collegePotential: number;
+  visibleRankBand: string;
+  ratingScaleContext: "college";
+  source: "year_zero_high_school_recruit";
+}
+
+export interface YearZeroScoutingView {
+  id: string;
+  teamId: string;
+  subjectType: "high_school_recruit" | "transfer" | "draft_prospect" | "nfl_free_agent";
+  subjectId: string;
+  visibleOverallLow: number;
+  visibleOverallHigh: number;
+  confidence: number;
+  note: string;
+}
+
+export interface YearZeroProductionSeason {
+  id: string;
+  playerId: string;
+  schoolId: string;
+  seasonOffset: number;
+  games: number;
+  productionScore: number;
+  role: string;
+}
+
+export interface YearZeroAwardHistory {
+  id: string;
+  playerId: string;
+  level: "college" | "nfl";
+  awardId: string;
+  seasonOffset: number;
+}
+
+export interface YearZeroInjuryHistory {
+  id: string;
+  playerId: string;
+  level: "college" | "nfl" | "high_school";
+  injuryFamily: string;
+  severity: InjurySeverity;
+  gamesMissed: number;
+  medicalFlag: boolean;
+}
+
+export interface YearZeroNflContractHistoryEvent {
+  id: string;
+  playerId: string;
+  teamId: string;
+  eventType: string;
+  seasonOffset: number;
+  apy: number;
+}
+
+export interface YearZeroNflAgingSnapshot {
+  id: string;
+  playerId: string;
+  age: number;
+  wearScore: number;
+  declineRisk: number;
+}
+
+export interface YearZeroUdfaPath {
+  id: string;
+  playerId: string;
+  pathType: string;
+  longTermOutcome: string;
+}
+
+export interface YearZeroBootstrapState {
+  version: "v11_6_4";
+  status: "complete";
+  seed: string;
+  completedAt: string;
+  bundleCount: number;
+  bundledRows: number;
+  progressSteps: YearZeroProgressStep[];
+  teamStrength: YearZeroTeamStrengthContext[];
+  collegePlayers: YearZeroCollegePlayer[];
+  transferPortal: YearZeroTransferPortalEntry[];
+  highSchoolRecruits: YearZeroHighSchoolRecruit[];
+  scoutingViews: YearZeroScoutingView[];
+  productionHistory: YearZeroProductionSeason[];
+  awardHistory: YearZeroAwardHistory[];
+  injuryHistory: YearZeroInjuryHistory[];
+  draftClass: YearZeroDraftProspect[];
+  nflPlayers: YearZeroNflPlayer[];
+  nflContractHistory: YearZeroNflContractHistoryEvent[];
+  nflAgingSnapshots: YearZeroNflAgingSnapshot[];
+  udfaPaths: YearZeroUdfaPath[];
+  debugSummary: {
+    loadedRuntimeBundles: string[];
+    gameplayCategories: string[];
+    validationOnlyCategories: string[];
+    annualSystemsUseNormalRuntimeCsvs: boolean;
+    hardcodedInitialNflGenerationReplaced: boolean;
+    collegeRosterPlayersGenerated: number;
+    transferPortalEntriesGenerated: number;
+    highSchoolRecruitsGenerated: number;
+    scoutingViewsGenerated: number;
+    productionHistoryGenerated: number;
+    awardHistoryGenerated: number;
+    injuryHistoryGenerated: number;
+    draftProspectsGenerated: number;
+    nflPlayersGenerated: number;
+    nflContractHistoryGenerated: number;
+    nflAgingSnapshotsGenerated: number;
+    udfaPathsGenerated: number;
+    initialDraftBoardDerivedFromYearZeroCollegePlayers: boolean;
+  };
 }
 
 export interface CalendarEvent {
