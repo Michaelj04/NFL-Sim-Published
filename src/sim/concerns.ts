@@ -30,19 +30,19 @@ const concernSymbols: Record<ProspectConcernKey, string> = {
 
 function concernValue(rng: Rng): number {
   const roll = rng.float(0, 1);
-  if (roll < 0.02) return rng.int(25, 44);
-  if (roll < 0.08) return rng.int(45, 59);
-  if (roll < 0.9) return rng.int(60, 79);
-  if (roll < 0.98) return rng.int(80, 89);
+  if (roll < 0.016) return rng.int(25, 44);
+  if (roll < 0.05) return rng.int(45, 59);
+  if (roll < 0.93) return rng.int(60, 79);
+  if (roll < 0.988) return rng.int(80, 89);
   return rng.int(90, 99);
 }
 
 function medicalValue(rng: Rng): number {
   const roll = rng.float(0, 1);
-  if (roll < 0.015) return rng.int(25, 44);
-  if (roll < 0.065) return rng.int(45, 59);
-  if (roll < 0.695) return rng.int(65, 79);
-  if (roll < 0.92) return rng.int(80, 89);
+  if (roll < 0.012) return rng.int(25, 44);
+  if (roll < 0.042) return rng.int(45, 59);
+  if (roll < 0.83) return rng.int(65, 79);
+  if (roll < 0.95) return rng.int(80, 89);
   return rng.int(90, 99);
 }
 

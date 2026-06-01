@@ -90,6 +90,7 @@ function newId(prefix: string): string {
 }
 
 function clone<T>(value: T): T {
+  if (typeof structuredClone === "function") return structuredClone(value);
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
@@ -163,7 +164,7 @@ export function createSaveRepository(driver: SaveStorageDriver, localStorage: St
       id: newId(`backup-${id}`),
       careerId: id,
       createdAt: nowIso(),
-      save: clone(withCareerId(save, id))
+      save: clone(compactSaveForStorage(withCareerId(save, id)))
     });
     await pruneBackups(driver, id, BACKUP_LIMIT);
   }
@@ -407,16 +408,16 @@ export function createMemorySaveDriver(options: { failCareerPuts?: number } = {}
     },
     async putCareer(record) {
       maybeFail();
-      careers.set(record.id, clone(record));
+      careers.set(record.id, record);
     },
     async deleteCareer(id) {
       careers.delete(id);
     },
     async listBackups(careerId) {
-      return [...backups.values()].filter((backup) => backup.careerId === careerId).map(clone);
+      return [...backups.values()].filter((backup) => backup.careerId === careerId);
     },
     async putBackup(backup) {
-      backups.set(backup.id, clone(backup));
+      backups.set(backup.id, backup);
     },
     async deleteBackup(id) {
       backups.delete(id);
@@ -485,6 +486,42 @@ function isUserTeamGame(save: GameSave, homeTeamId: string, awayTeamId: string):
 export function compactSaveForStorage(save: GameSave): GameSave {
   return {
     ...save,
+    yearZero: save.yearZero
+      ? {
+          ...save.yearZero,
+          collegePlayers: [],
+          transferPortal: [],
+          highSchoolRecruits: [],
+          scoutingViews: [],
+          productionHistory: [],
+          awardHistory: [],
+          injuryHistory: [],
+          draftClass: [],
+          nflPlayers: [],
+          nflReserveStatuses: [],
+          nflContractHistory: [],
+          nflAgingSnapshots: [],
+          udfaPaths: []
+        }
+      : undefined,
+    annualRecruitClass: save.annualRecruitClass
+      ? { ...save.annualRecruitClass, recruits: [] }
+      : undefined,
+    annualRecruiting: save.annualRecruiting
+      ? { ...save.annualRecruiting, board: [] }
+      : undefined,
+    collegeRoster: save.collegeRoster
+      ? { ...save.collegeRoster, players: [] }
+      : undefined,
+    collegeTraining: save.collegeTraining
+      ? { ...save.collegeTraining, entries: [] }
+      : undefined,
+    collegeSeasonResults: save.collegeSeasonResults
+      ? { ...save.collegeSeasonResults, production: [], awards: [], injuries: [] }
+      : undefined,
+    collegeMorale: save.collegeMorale
+      ? { ...save.collegeMorale, entries: [] }
+      : undefined,
     schedule: save.schedule.map((game) => {
       const keepFullGame = isUserTeamGame(save, game.homeTeamId, game.awayTeamId) || game.id === save.lastViewedGameId;
       if (keepFullGame) return game;

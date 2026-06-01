@@ -501,10 +501,10 @@ function isFullyScouted(prospect: Prospect): boolean {
 function saturationMultiplier(prospect: Prospect): number {
   const progress = progressFor(prospect);
   if (progress >= 100) return 0;
-  if (progress >= 95) return 0.04;
-  if (progress >= 90) return 0.12;
-  if (progress >= 85) return 0.25;
-  if (progress >= 75) return 0.55;
+  if (progress >= 95) return 0.02;
+  if (progress >= 90) return 0.06;
+  if (progress >= 85) return 0.1;
+  if (progress >= 75) return 0.38;
   return clamp(1.28 - progress / 220, 0.78, 1.24);
 }
 
@@ -603,8 +603,11 @@ function targetScoreForAssignment(
 
 function likelyTargetsForAssignment(save: GameSave, assignment: ScoutingAssignment, scout: StaffMember | undefined, count: number, gainRange: [number, number]): ScoutingPreviewTarget[] {
   const schoolById = new Map(save.schools.map((school) => [school.id, school]));
-  const matches = save.prospects
+  const directMatches = save.prospects
     .filter((prospect) => !prospect.hidden && matchesAssignment(assignment, prospect, schoolById.get(prospect.schoolId)));
+  const matches = assignment.type !== "prospect" && directMatches.length <= 1
+    ? save.prospects.filter((prospect) => !prospect.hidden)
+    : directMatches;
   const meaningful = matches.filter((prospect) => !isFullyScouted(prospect));
   return (meaningful.length ? meaningful : matches)
     .sort((a, b) => {
@@ -644,7 +647,10 @@ export function scoutingAssignmentPreview(save: GameSave, assignment: ScoutingAs
   const scout = save.staff.find((member) => member.id === assignment.scoutId);
   const fit = focusFitForAssignment(save, assignment, scout);
   const schoolById = new Map(save.schools.map((school) => [school.id, school]));
-  const matches = save.prospects.filter((prospect) => !prospect.hidden && matchesAssignment(assignment, prospect, schoolById.get(prospect.schoolId)));
+  const directMatches = save.prospects.filter((prospect) => !prospect.hidden && matchesAssignment(assignment, prospect, schoolById.get(prospect.schoolId)));
+  const matches = assignment.type !== "prospect" && directMatches.length <= 1
+    ? save.prospects.filter((prospect) => !prospect.hidden)
+    : directMatches;
   const meaningfulCount = matches.filter((prospect) => !isFullyScouted(prospect)).length;
   const matchCount = meaningfulCount || matches.length;
   const count = Math.min(matchCount, assignmentTargetCount(assignment.type, fit));

@@ -1047,10 +1047,11 @@ function yearZeroDraftClassToLiveProspects(
     const development = generateDevelopmentProfile(source.classYear === "SR" ? 22 : 21, 70, rng.fork("development"));
     const traitsForProspect = rng.shuffle(traits).slice(0, rng.int(1, 3));
     const positionFits = generatePositionFits({ position: source.position, ratings, traits: traitsForProspect });
-    const progress = Math.round(clamp(selectedScouting * 0.42 + rng.int(6, 24), 12, 72));
-    const medical = Math.round(clamp(rng.normal(72, 13), 30, 99));
-    const character = Math.round(clamp(rng.normal(70, 14), 25, 99));
-    const workEthic = Math.round(clamp(rng.normal(71, 14), 25, 99));
+    const progress = Math.round(clamp(selectedScouting * 0.32 + rng.int(4, 14), 12, 50));
+    const concernProfile = generateConcernProfile(seed, `year-zero-draft-${source.id}`);
+    const medical = concernProfile.medical;
+    const character = concernProfile.character;
+    const workEthic = concernProfile.workEthic;
     const region = geographicRegionForSchool(school);
     const baseProspect = {
       id: source.id,
@@ -1083,7 +1084,7 @@ function yearZeroDraftClassToLiveProspects(
       concernProfileVersion: CONCERN_PROFILE_VERSION,
       consensusRank: 999,
       consensusGrade: 0,
-      consensusProgress: Math.round(clamp(progress + rng.int(4, 18), 10, 88)),
+      consensusProgress: Math.round(clamp(progress + rng.int(0, 8), 10, 50)),
       teamRank: 999,
       teamGrade: 0,
       valuePickScore: 0,
@@ -1115,6 +1116,55 @@ function yearZeroDraftClassToLiveProspects(
     return applyScoutingProjection(normalizeProspectModel({ ...baseProspect, ...ensureProspectConcerns(baseProspect) }, `${seed}:year-zero`), progress, seed, school, selectedScouting);
   });
   return rankProspectBoard(prospects, schools, seed);
+}
+
+function calibrateFreshDraftProspect(prospect: Prospect, seed: string): Prospect {
+  const roundCap = prospect.projectedRound === 1 ? 60 : prospect.projectedRound === 2 ? 57 : prospect.projectedRound <= 4 ? 55 : 53;
+  const targetOverall = Math.round(clamp(prospect.trueOverall - 14, 34, roundCap));
+  const potentialCap = prospect.projectedRound === 1 ? 82 : prospect.projectedRound === 2 ? 79 : 77;
+  const potential = Math.round(clamp(prospect.potential - 7, targetOverall, potentialCap));
+  const rng = createRng(`${seed}:fresh-draft-scale:${prospect.id}`);
+  const ratings = generateRatings(prospect.position, targetOverall, rng.fork("ratings"));
+  const trueOverall = calculateOverallFromRatings(prospect.position, ratings);
+  const scoutedOverallShift = trueOverall - prospect.trueOverall;
+  const scoutedPotentialShift = potential - prospect.potential;
+  return {
+    ...prospect,
+    trueOverall,
+    potential,
+    ratings,
+    combine: {
+      speed: ratingValue(ratings, "speed"),
+      strength: ratingValue(ratings, "strength"),
+      agility: ratingValue(ratings, "agility"),
+      explosion: ratingValue(ratings, "explosiveness")
+    },
+    scouted: {
+      ...prospect.scouted,
+      low: Math.round(clamp(prospect.scouted.low + scoutedOverallShift, 20, trueOverall)),
+      high: Math.round(clamp(prospect.scouted.high + scoutedOverallShift, trueOverall, 99)),
+      potentialLow: Math.round(clamp(prospect.scouted.potentialLow + scoutedPotentialShift, trueOverall, potential)),
+      potentialHigh: Math.round(clamp(prospect.scouted.potentialHigh + scoutedPotentialShift, potential, 99)),
+      ratingRanges: ratingRangesFor(ratings, prospect.scouted.progress, rng.fork("rating-ranges"))
+    }
+  };
+}
+
+function applySchoolPositionDuplicateCaps(prospects: Prospect[], schools: CollegeProgram[]): Prospect[] {
+  const schoolById = new Map(schools.map((school) => [school.id, school]));
+  const counts = new Map<string, number>();
+  const selected: Prospect[] = [];
+  for (const prospect of prospects) {
+    const school = schoolById.get(prospect.schoolId);
+    const bucket = duplicateBucketForPosition(prospect.position);
+    const key = `${prospect.schoolId}:${bucket}`;
+    const limit = school ? duplicateLimitForSchoolPosition(school, prospect.position) : bucket === "QB" || bucket === "K" || bucket === "P" ? 1 : 2;
+    const current = counts.get(key) ?? 0;
+    if (current >= limit) continue;
+    selected.push(prospect);
+    counts.set(key, current + 1);
+  }
+  return selected;
 }
 
 function collegePlayerToDraftProspect(
@@ -1270,6 +1320,7 @@ function yearZeroNflPlayersToLivePlayers(sources: YearZeroNflPlayer[], teams: NF
     const playerTraits = rng.shuffle(traits).slice(0, rng.int(1, 3));
     const positionFits = generatePositionFits({ position: source.position, ratings, traits: playerTraits });
     const contractOrigin = source.pool === "practice_squad" ? "practice-squad" : source.pool === "free_agent" ? "free-agent" : "generated";
+    const salary = source.pool === "practice_squad" ? 0.25 : source.salary;
     const shell = {
       id: source.id,
       firstName: source.firstName,
@@ -1277,8 +1328,8 @@ function yearZeroNflPlayersToLivePlayers(sources: YearZeroNflPlayer[], teams: NF
       position: source.position,
       teamId: source.pool === "free_agent" ? FREE_AGENT_TEAM_ID : team.id,
       previousTeamId: source.previousTeamId,
-      teamStartSeason: source.pool === "active_roster" ? initialTeamStartSeason(source.age, source.contractYears, seasonYear, rng.fork("team-start")) : undefined,
-      draftYear: seasonYear - source.experience,
+      teamStartSeason: source.pool === "free_agent" ? undefined : initialTeamStartSeason(source.age, source.contractYears, seasonYear, rng.fork("team-start")),
+      draftYear: source.pool === "practice_squad" ? seasonYear : seasonYear - source.experience,
       collegeId: source.collegeId,
       age: source.age,
       overall,
@@ -1286,13 +1337,13 @@ function yearZeroNflPlayersToLivePlayers(sources: YearZeroNflPlayer[], teams: NF
       ratings,
       attributes,
       positionFits,
-      salary: source.salary,
+      salary,
       contractYears: source.contractYears,
-      contract: makeContract({ position: source.position, salary: source.salary, contractYears: source.contractYears, age: source.age, overall, potential: source.potential }, seasonYear, {
+      contract: makeContract({ position: source.position, salary, contractYears: source.contractYears, age: source.age, overall, potential: source.potential }, seasonYear, {
         origin: contractOrigin,
         rights: source.pool === "free_agent" ? "ufa" : "none",
         years: source.contractYears,
-        apy: source.salary,
+        apy: salary,
         signingBonus: source.pool === "practice_squad" ? 0 : undefined,
         guaranteedTotal: source.pool === "practice_squad" ? 0 : undefined
       }),
@@ -1360,16 +1411,62 @@ export function createNewSave(
   const mode = options.mode;
   const scenarioProfile = scenarioProfileFor(scenario, seed, selectedTeam.id);
   const yearZero = createYearZeroBootstrapState(seed, teams, schools);
-  const players = yearZeroNflPlayersToLivePlayers(yearZero.nflPlayers, teams, schools, seed, 2026);
+  const players = yearZeroNflPlayersToLivePlayers(yearZero.nflPlayers, teams, schools, seed, 2026).map((player) => {
+    if (player.teamId !== selectedTeam.id || player.practiceSquad) return player;
+    const playerRng = createRng(`${seed}:scenario-bias:${selectedTeam.id}:${player.id}`);
+    const overall = Math.round(clamp(player.overall + scenarioProfile.rosterBias, 35, 95));
+    const ratings = generateRatings(player.position, overall, playerRng.fork("ratings"));
+    return {
+      ...player,
+      overall,
+      potential: Math.max(overall, Math.round(clamp(player.potential + scenarioProfile.rosterBias, overall, 98))),
+      ratings,
+      attributes: legacyAttributesFromRatings(player.position, ratings),
+      positionFits: generatePositionFits({ position: player.position, ratings, traits: player.traits })
+    };
+  });
   const staff = teams.flatMap((team) =>
     generateStaff(team, rng.fork(`${team.id}:staff`), team.id === selectedTeam.id ? scenarioProfile.staffBias : 0)
   );
   const selectedScouting = staff
     .filter((member) => member.teamId === selectedTeam.id && member.department === "Scouting")
     .reduce((sum, member) => sum + member.ratings.scouting, 0) / 7;
-  const initialProspects = yearZeroDraftClassToLiveProspects(yearZero.draftClass, schools, selectedScouting, seed);
+  const yearZeroProspects = yearZeroDraftClassToLiveProspects(yearZero.draftClass, schools, selectedScouting, seed);
+  const supplementalPositionCounts = new Map<Position, number>();
+  for (const prospect of yearZeroProspects) supplementalPositionCounts.set(prospect.position, (supplementalPositionCounts.get(prospect.position) ?? 0) + 1);
+  const supplementalProspects: Prospect[] = [];
+  for (const prospect of generateProspects(schools, rng.fork("year-zero-supplemental-prospects"), selectedScouting, `${seed}:2027:supplemental`)
+    .filter((prospect) => !yearZeroProspects.some((candidate) => candidate.id === prospect.id))
+  ) {
+    const cap = prospect.position === "QB" ? 32 : prospect.position === "K" || prospect.position === "P" ? 12 : 56;
+    const current = supplementalPositionCounts.get(prospect.position) ?? 0;
+    if (current >= cap) continue;
+    supplementalProspects.push(prospect);
+    supplementalPositionCounts.set(prospect.position, current + 1);
+  }
+  const cappedProspectPool = applySchoolPositionDuplicateCaps([...yearZeroProspects, ...supplementalProspects], schools);
+  const initialProspects = rankProspectBoard(cappedProspectPool, schools, seed).slice(0, 460).map((prospect) => {
+    const scaled = calibrateFreshDraftProspect(prospect, seed);
+    return {
+      ...scaled,
+      consensusProgress: Math.min(50, scaled.consensusProgress),
+      scouted: {
+        ...scaled.scouted,
+        confidence: Math.min(50, scaled.scouted.confidence),
+        progress: Math.min(50, scaled.scouted.progress)
+      }
+    };
+  });
   const draftEvaluation = generateDraftEvaluationState(seed, 2027, initialProspects, 1, schools);
-  const prospects = applyDraftEvaluationToProspects(initialProspects, draftEvaluation, schools, `${seed}:2027:evaluated`);
+  const prospects = applyDraftEvaluationToProspects(initialProspects, draftEvaluation, schools, `${seed}:2027:evaluated`).map((prospect) => ({
+    ...prospect,
+    consensusProgress: Math.min(50, prospect.consensusProgress),
+    scouted: {
+      ...prospect.scouted,
+      confidence: Math.min(50, prospect.scouted.confidence),
+      progress: Math.min(50, prospect.scouted.progress)
+    }
+  }));
   const annualRecruitClass = generateAnnualRecruitClass(seed, 2026);
   const annualDebug = annualRuntimeDebug();
   const previousSeasonRanks = divisionRanksFromPlayers(teams, players, seed);

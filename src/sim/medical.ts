@@ -211,6 +211,9 @@ function applyPermanentDamage(player: Player, event: MedicalEvent, rng: Rng): Pl
   if (event.permanentOverallDelta >= 0 && event.permanentPotentialDelta >= 0) return player;
   const ratings: RatingVector = [...player.ratings];
   const damage = Math.abs(event.permanentOverallDelta);
+  for (let index = 0; index < ratings.length; index += 1) {
+    ratings[index] = calibrateOverall((ratings[index] ?? 55) - damage * rng.float(0.18, 0.42));
+  }
   for (const key of physicalDamageKeys) {
     const index = ratingIndex.get(key);
     if (index === undefined) continue;
@@ -219,13 +222,14 @@ function applyPermanentDamage(player: Player, event: MedicalEvent, rng: Rng): Pl
   const calculated = calculateOverallFromRatings(player.position, ratings);
   const newOverall = Math.min(calculated, calibrateOverall(player.overall + event.permanentOverallDelta));
   const newPotential = calibratePotential(newOverall, player.potential + event.permanentPotentialDelta);
-  return syncPlayerModelFromRatings({
+  const synced = syncPlayerModelFromRatings({
     ...player,
     ratings,
     overall: newOverall,
     potential: newPotential,
     attributes: legacyAttributesFromRatings(player.position, ratings)
   }, `medical-damage:${player.id}`);
+  return { ...synced, overall: Math.min(synced.overall, newOverall), potential: newPotential };
 }
 
 export function applyMedicalEventToPlayer(player: Player, event: MedicalEvent, seed: string): { player?: Player; careerEndedRecord?: CareerEndedMedicalRecord } {

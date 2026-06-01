@@ -44,7 +44,7 @@ export function canSignFreeAgent(save: GameSave, playerId: string, teamId = save
   if (!player) return { ok: false, reason: "Player not found." };
   if (player.teamId !== FREE_AGENT_TEAM_ID) return { ok: false, reason: "Player is not a free agent." };
   if (!save.teams.some((team) => team.id === teamId)) return { ok: false, reason: "Team not found." };
-  if (rosterSize(save, teamId) >= rosterLimit(save)) return { ok: false, reason: "Release a player to open a roster spot." };
+  if (rosterSize(save, teamId) >= Math.min(MAX_ROSTER_SIZE, rosterLimit(save))) return { ok: false, reason: "Release a player to open a roster spot." };
   const offer = contractOfferForPlayer(save, player, teamId);
   const firstYear = offer.seasons.find((season) => season.seasonYear === save.seasonYear) ?? offer.seasons[0];
   const capHit = (firstYear?.baseSalary ?? player.salary) + (firstYear?.signingBonusProration ?? 0);

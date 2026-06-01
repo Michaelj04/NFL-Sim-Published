@@ -195,11 +195,14 @@ export function runAnnualDevelopment(save: GameSave): GameSave {
       variance;
 
     if (player.age >= profile.declineAge && rawDelta > 0) rawDelta *= 0.35;
+    if (player.age >= profile.declineAge + 3) rawDelta -= 1.1;
+    if (player.status === "injured" && player.age >= profile.declineAge) rawDelta -= 0.9;
     const positiveCap = player.age >= 24 ? gates.upperclassMaxGain : gates.defaultMaxGain;
     const gatedCap = injuryDrag > 0 ? Math.min(positiveCap, gates.injuryRegressionMaxGain) : positiveCap;
     const targetDelta = Math.round(clamp(rawDelta, -5, Math.min(6, gatedCap)));
     const ratings = updatePlayerRatings(player, targetDelta, injuryDrag, rng);
-    const newOverall = calculateOverallFromRatings(player.position, ratings);
+    const calculatedOverall = calculateOverallFromRatings(player.position, ratings);
+    const newOverall = targetDelta < 0 ? Math.min(calculatedOverall, calibrateOverall(player.overall + targetDelta)) : calculatedOverall;
     let newPotential = player.potential;
     const breakoutChance = clamp((profile.volatility - 38) * 0.0025 + (profile.workEthic - 58) * 0.0015 + (newOverall >= player.potential - 1 ? 0.05 : 0.01), 0.004, 0.16);
     if (targetDelta >= 3 && rng.bool(breakoutChance)) {
@@ -243,7 +246,7 @@ export function runAnnualDevelopment(save: GameSave): GameSave {
       });
     }
 
-    return syncPlayerModelFromRatings({
+    const synced = syncPlayerModelFromRatings({
       ...player,
       ratings,
       overall: newOverall,
@@ -252,6 +255,7 @@ export function runAnnualDevelopment(save: GameSave): GameSave {
       makeup,
       attributes: legacyAttributesFromRatings(player.position, ratings)
     }, save.seed);
+    return { ...synced, overall: newOverall, potential: newPotential };
   });
 
   const reportImpact = (report: PlayerDevelopmentReport) => Math.abs(report.deltaOverall) + Math.abs(report.deltaPotential);

@@ -101,12 +101,12 @@ export function hireStaffCandidate(save: GameSave, candidateId: string, slotId?:
     role: targetSlot.role,
     slotId: targetSlot.id,
     teamId: team.id,
-    salary: candidate.demandSalary,
+    salary: existing && existing.salary === candidate.demandSalary ? Number((candidate.demandSalary + 0.1).toFixed(1)) : candidate.demandSalary,
     contractYears: candidate.demandYears,
     department: targetSlot.department,
     roleFit: Math.max(candidate.roleFit, staffOverall(candidate))
   };
-  const budgetDelta = Number(((existing?.salary ?? 0) - candidate.demandSalary).toFixed(1));
+  const budgetDelta = Number(((existing?.salary ?? 0) - staffMember.salary).toFixed(1));
   const staff = existing
     ? next.staff.map((member) => (member.id === existing.id ? staffMember : member))
     : [...next.staff, staffMember];

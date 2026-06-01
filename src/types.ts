@@ -1547,6 +1547,16 @@ export interface YearZeroNflPlayer {
   source: "year_zero_nfl_player";
 }
 
+export interface YearZeroNflReserveStatus {
+  id: string;
+  playerId: string;
+  teamId: string;
+  status: "injured_reserve" | "physically_unable" | "non_football_injury";
+  weeksRemaining: number;
+  countsAgainstRoster: boolean;
+  medicalFlag: boolean;
+}
+
 export interface YearZeroTransferPortalEntry {
   id: string;
   playerId: string;
@@ -1656,6 +1666,7 @@ export interface YearZeroBootstrapState {
   injuryHistory: YearZeroInjuryHistory[];
   draftClass: YearZeroDraftProspect[];
   nflPlayers: YearZeroNflPlayer[];
+  nflReserveStatuses: YearZeroNflReserveStatus[];
   nflContractHistory: YearZeroNflContractHistoryEvent[];
   nflAgingSnapshots: YearZeroNflAgingSnapshot[];
   udfaPaths: YearZeroUdfaPath[];
@@ -1674,6 +1685,7 @@ export interface YearZeroBootstrapState {
     injuryHistoryGenerated: number;
     draftProspectsGenerated: number;
     nflPlayersGenerated: number;
+    nflReserveStatusesGenerated: number;
     nflContractHistoryGenerated: number;
     nflAgingSnapshotsGenerated: number;
     udfaPathsGenerated: number;

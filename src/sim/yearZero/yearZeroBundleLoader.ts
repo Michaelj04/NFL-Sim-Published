@@ -202,7 +202,10 @@ function validateRegistryCoverage(bundleFiles: string[]): void {
   const header = rows[0];
   const csvNameIndex = header.indexOf("csv_name");
   const covered = new Set(rows.slice(1).map((row) => row[csvNameIndex]));
-  const missing = bundleFiles.map((path) => path.split("/").pop() ?? path).filter((name) => !covered.has(name));
+  const missing = bundleFiles.filter((path) => {
+    const basename = path.split("/").pop() ?? path;
+    return !covered.has(basename) && !covered.has(`year_zero/${basename}`) && !covered.has(path);
+  });
   if (missing.length > 0) throw new Error(`Year Zero bundle(s) missing csv_schema_registry coverage: ${missing.join(", ")}`);
 }
 

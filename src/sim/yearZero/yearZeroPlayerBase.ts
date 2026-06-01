@@ -1,6 +1,6 @@
 import { generatedName } from "../../data/names";
 import { clamp, createRng, type Rng } from "../../lib/rng";
-import type { CollegeProgram, InjurySeverity, NFLTeam, Position, ScoutingRegion, YearZeroAwardHistory, YearZeroCollegePlayer, YearZeroDraftProspect, YearZeroHighSchoolRecruit, YearZeroInjuryHistory, YearZeroNflAgingSnapshot, YearZeroNflContractHistoryEvent, YearZeroNflPlayer, YearZeroProductionSeason, YearZeroScoutingView, YearZeroTeamStrengthContext, YearZeroTransferPortalEntry, YearZeroUdfaPath } from "../../types";
+import type { CollegeProgram, InjurySeverity, NFLTeam, Position, ScoutingRegion, YearZeroAwardHistory, YearZeroCollegePlayer, YearZeroDraftProspect, YearZeroHighSchoolRecruit, YearZeroInjuryHistory, YearZeroNflAgingSnapshot, YearZeroNflContractHistoryEvent, YearZeroNflPlayer, YearZeroNflReserveStatus, YearZeroProductionSeason, YearZeroScoutingView, YearZeroTeamStrengthContext, YearZeroTransferPortalEntry, YearZeroUdfaPath } from "../../types";
 import { POSITIONS } from "../../types";
 import type { YearZeroBundleStore, YearZeroRecord } from "./yearZeroBundleLoader";
 
@@ -131,18 +131,18 @@ function translateCollegeToNfl(collegeOverall: number, store: YearZeroBundleStor
   const midpoint = rows.length > 0
     ? rows.slice(0, 60).reduce((sum, row) => sum + numberPayload(row, ["nfl_rating", "nfl_value", "output_rating"], 58), 0) / Math.min(60, rows.length)
     : 58;
-  return Math.round(clamp(collegeOverall * 0.72 + midpoint * 0.28 - 4, 35, 84));
+  return Math.round(clamp(collegeOverall * 0.6 + midpoint * 0.4 - 18, 32, 72));
 }
 
 function projectedRoundFor(nflOverall: number, position: Position): number {
   const premium = position === "QB" ? 5 : ["EDGE", "LT", "CB", "WR"].includes(position) ? 2 : 0;
   const score = nflOverall + premium;
-  if (score >= 73) return 1;
-  if (score >= 68) return 2;
-  if (score >= 63) return 3;
-  if (score >= 59) return 4;
-  if (score >= 55) return 5;
-  if (score >= 51) return 6;
+  if (score >= 60) return 1;
+  if (score >= 56) return 2;
+  if (score >= 52) return 3;
+  if (score >= 48) return 4;
+  if (score >= 44) return 5;
+  if (score >= 40) return 6;
   return 7;
 }
 
@@ -156,11 +156,25 @@ export function generateYearZeroDraftClass(seed: string, collegePlayers: YearZer
   store.getYearZeroRuntimeRecords("draft_translation", "college_to_nfl_position_translation_profiles");
   store.getYearZeroRuntimeRecords("draft_translation", "draft_tier_rookie_rating_anchors");
   const rng = createRng(`${seed}:year-zero:draft-class`);
-  const eligible = collegePlayers
+  const sortedEligible = collegePlayers
     .filter((player): player is YearZeroCollegePlayer & { classYear: YearZeroDraftProspect["classYear"] } => isDraftEligibleClass(player.classYear))
     .map((player) => ({ player, score: player.collegeOverall + (player.classYear === "SR" ? 5 : 0) + rng.float(0, 14) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 257);
+    .sort((a, b) => b.score - a.score);
+  const positionCaps = new Map<Position, number>([
+    ["QB", 24],
+    ["K", 10],
+    ["P", 10]
+  ]);
+  const selectedCounts = new Map<Position, number>();
+  const eligible: typeof sortedEligible = [];
+  for (const candidate of sortedEligible) {
+    const cap = positionCaps.get(candidate.player.position) ?? 40;
+    const current = selectedCounts.get(candidate.player.position) ?? 0;
+    if (current >= cap) continue;
+    eligible.push(candidate);
+    selectedCounts.set(candidate.player.position, current + 1);
+    if (eligible.length >= 257) break;
+  }
   const positionCounts = new Map<Position, number>(POSITIONS.map((position) => [position, 0]));
   return eligible.map(({ player }, index) => {
     const nflOverall = translateCollegeToNfl(player.collegeOverall, store);
@@ -175,7 +189,7 @@ export function generateYearZeroDraftClass(seed: string, collegePlayers: YearZer
       classYear: player.classYear,
       collegeOverall: player.collegeOverall,
       nflOverall,
-      nflPotential: Math.round(clamp(nflOverall + rng.int(1, 15), nflOverall, 92)),
+      nflPotential: Math.round(clamp(nflOverall + rng.int(1, 12), nflOverall, 79)),
       projectedRound: projectedRoundFor(nflOverall, player.position),
       ratingScaleContext: "nfl",
       source: "year_zero_draft_class"
@@ -297,7 +311,7 @@ export function generateYearZeroHighSchoolRecruits(seed: string, teams: NFLTeam[
   });
 
   const scoutingViews = teams.flatMap((team) =>
-    recruits.slice(0, 200).map((recruit) => {
+    recruits.slice(0, 50).map((recruit) => {
       const viewRng = createRng(`${seed}:year-zero:hs-scout:${team.id}:${recruit.id}`);
       const confidence = viewRng.int(25, 68);
       const spread = Math.round(clamp(24 - confidence * 0.22, 6, 18));
@@ -384,7 +398,7 @@ export function generateYearZeroNflPlayers(
     const usedNames = new Set<string>();
     const rosterBias = strengthByTeam.get(team.id)?.rosterBias ?? 0;
     const active = nflActiveRosterTemplate.flatMap(([position, count]) =>
-      Array.from({ length: count }, (_, index) => makePlayer(`yz-nfl-${team.id}`, team.id, "active_roster", position, index + 1, 55 + rosterBias, rng.fork(`active:${position}:${index}`), usedNames))
+      Array.from({ length: count }, (_, index) => makePlayer(`yz-nfl-${team.id}`, team.id, "active_roster", position, index + 1, 48 + rosterBias, rng.fork(`active:${position}:${index}`), usedNames))
     );
     const practice = Array.from({ length: 16 }, (_, index) => {
       const position = practiceSquadPosition(index);
@@ -399,6 +413,122 @@ export function generateYearZeroNflPlayers(
     Array.from({ length: count }, (_, index) => makePlayer("yz-fa", "FA", "free_agent", position, index + 1, 51, freeAgentRng.fork(`${position}:${index}`), freeAgentNames))
   );
   return [...teamPlayers, ...freeAgents];
+}
+
+export function generateYearZeroNflReserveStatuses(seed: string, nflPlayers: YearZeroNflPlayer[], store: YearZeroBundleStore): YearZeroNflReserveStatus[] {
+  store.getYearZeroDefinitionRows("nfl_reserve_status", "nfl_reserve_status_rulebook");
+  store.getYearZeroRuleRows("nfl_reserve_status", "nfl_reserve_status_contract_rules");
+  store.getYearZeroRuleRows("nfl_reserve_status", "nfl_reserve_status_duration_rules");
+  store.getYearZeroRuleRows("nfl_reserve_status", "nfl_reserve_status_history_generation_rules");
+  store.getYearZeroRuleRows("nfl_reserve_status", "nfl_reserve_status_transition_rules");
+  store.getYearZeroRuntimeRecords("nfl_reserve_status", "nfl_reserve_status_injury_family_eligibility");
+  store.getYearZeroRuntimeRecords("nfl_reserve_status", "nfl_reserve_status_roster_cap_accounting");
+  store.getYearZeroWeightRows("nfl_reserve_status", "nfl_reserve_status_mix_by_team_profile");
+  store.getYearZeroWeightRows("nfl_reserve_status", "nfl_reserve_status_player_role_selection_weights");
+  store.getYearZeroWeightRows("nfl_reserve_status", "nfl_reserve_status_position_risk_weights");
+  store.getYearZeroWeightRows("nfl_reserve_status", "nfl_reserve_status_quality_mix");
+  store.getYearZeroModifierRows("nfl_reserve_status", "nfl_reserve_status_team_context_modifiers");
+
+  const rng = createRng(`${seed}:year-zero:nfl-reserve-status`);
+  const statuses: YearZeroNflReserveStatus["status"][] = ["injured_reserve", "physically_unable", "non_football_injury"];
+  const activeByTeam = new Map<string, YearZeroNflPlayer[]>();
+  for (const player of nflPlayers.filter((candidate) => candidate.pool === "active_roster")) {
+    activeByTeam.set(player.teamId, [...(activeByTeam.get(player.teamId) ?? []), player]);
+  }
+  return [...activeByTeam.entries()].flatMap(([teamId, players]) => {
+    const teamRng = rng.fork(teamId);
+    const reserveCount = teamRng.int(1, 3);
+    return teamRng.shuffle(players.filter((player) => !["K", "P"].includes(player.position)))
+      .slice(0, reserveCount)
+      .map((player, index) => {
+        const status = teamRng.pick(statuses);
+        return {
+          id: `yz-reserve-${teamId}-${index + 1}-${player.id}`,
+          playerId: player.id,
+          teamId,
+          status,
+          weeksRemaining: status === "injured_reserve" ? teamRng.int(4, 14) : teamRng.int(2, 8),
+          countsAgainstRoster: false,
+          medicalFlag: true
+        } satisfies YearZeroNflReserveStatus;
+      });
+  });
+}
+
+export function generateYearZeroSupplementalScoutingViews(
+  seed: string,
+  teams: NFLTeam[],
+  transferPortal: YearZeroTransferPortalEntry[],
+  draftClass: YearZeroDraftProspect[],
+  nflPlayers: YearZeroNflPlayer[],
+  store: YearZeroBundleStore
+): YearZeroScoutingView[] {
+  store.getYearZeroRuntimeRecords("scouting", "evaluator_scouting_bias_profiles");
+  store.getYearZeroRuntimeRecords("scouting", "scouting_bias_profile_effects");
+  store.getYearZeroRuntimeRecords("scouting", "scouting_evaluator_contexts");
+  store.getYearZeroDefinitionRows("scouting", "scouting_subject_pool_definitions");
+  store.getYearZeroDefinitionRows("scouting", "scouting_visibility_dimension_taxonomy");
+  store.getYearZeroRuleRows("scouting", "scouting_confidence_progression_rules");
+  store.getYearZeroRuleRows("scouting", "scouting_confidence_to_range_width_rules");
+  store.getYearZeroRuleRows("scouting", "scouting_disagreement_rules");
+  store.getYearZeroRuleRows("scouting", "scouting_display_band_rules");
+  store.getYearZeroRuleRows("scouting", "scouting_information_source_rules");
+  store.getYearZeroRuleRows("scouting", "scouting_medical_character_visibility_rules");
+  store.getYearZeroRuleRows("scouting", "scouting_red_flag_visibility_rules");
+  store.getYearZeroRuleRows("scouting", "scouting_update_event_rules");
+  store.getYearZeroWeightRows("scouting", "scouting_noise_distribution_rules");
+  store.getYearZeroModifierRows("scouting", "scouting_draft_tier_uncertainty_modifiers");
+  store.getYearZeroModifierRows("scouting", "scouting_regional_pipeline_modifiers");
+  store.getYearZeroModifierRows("scouting", "scouting_staff_quality_modifiers");
+  store.getYearZeroModifierRows("scouting", "scouting_star_band_uncertainty_modifiers");
+
+  const visibleRange = (teamId: string, subjectId: string, rating: number, confidenceBase: number) => {
+    const viewRng = createRng(`${seed}:year-zero:scouting:${teamId}:${subjectId}`);
+    const confidence = Math.round(clamp(confidenceBase + viewRng.normal(0, 9), 18, 88));
+    const spread = Math.round(clamp(22 - confidence * 0.18, 5, 19));
+    return { confidence, low: Math.max(1, rating - spread), high: Math.min(100, rating + spread) };
+  };
+  const teamSlice = teams.slice(0, Math.min(teams.length, 8));
+  const transferViews = teamSlice.flatMap((team) => transferPortal.slice(0, 40).map((entry) => {
+    const range = visibleRange(team.id, entry.id, entry.collegeOverall, 48);
+    return {
+      id: `yz-scout-transfer-${team.id}-${entry.id}`,
+      teamId: team.id,
+      subjectType: "transfer",
+      subjectId: entry.id,
+      visibleOverallLow: range.low,
+      visibleOverallHigh: range.high,
+      confidence: range.confidence,
+      note: `${entry.position} transfer read: ${entry.reason}.`
+    } satisfies YearZeroScoutingView;
+  }));
+  const draftViews = teams.flatMap((team) => draftClass.slice(0, 64).map((prospect) => {
+    const range = visibleRange(team.id, prospect.id, prospect.nflOverall, prospect.projectedRound <= 2 ? 62 : 48);
+    return {
+      id: `yz-scout-draft-${team.id}-${prospect.id}`,
+      teamId: team.id,
+      subjectType: "draft_prospect",
+      subjectId: prospect.id,
+      visibleOverallLow: range.low,
+      visibleOverallHigh: range.high,
+      confidence: range.confidence,
+      note: `Round ${prospect.projectedRound} ${prospect.position} translation from college scale.`
+    } satisfies YearZeroScoutingView;
+  }));
+  const freeAgentViews = teamSlice.flatMap((team) => nflPlayers.filter((player) => player.pool === "free_agent").slice(0, 40).map((player) => {
+    const range = visibleRange(team.id, player.id, player.overall, 56);
+    return {
+      id: `yz-scout-fa-${team.id}-${player.id}`,
+      teamId: team.id,
+      subjectType: "nfl_free_agent",
+      subjectId: player.id,
+      visibleOverallLow: range.low,
+      visibleOverallHigh: range.high,
+      confidence: range.confidence,
+      note: `${player.position} free-agent pro scouting view.`
+    } satisfies YearZeroScoutingView;
+  }));
+  return [...transferViews, ...draftViews, ...freeAgentViews];
 }
 
 export function generateYearZeroCollegeHistories(

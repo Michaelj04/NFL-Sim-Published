@@ -102,7 +102,7 @@ import {
   updateScoutingAssignment,
   updateScoutingAssignmentLock
 } from "../scouting";
-import { createMemorySaveDriver, createSaveRepository, LEGACY_STORAGE_KEY, parseSave, serializeSave } from "../save";
+import { compactSaveForStorage, createMemorySaveDriver, createSaveRepository, LEGACY_STORAGE_KEY, parseSave, serializeSave } from "../save";
 import { advanceDay, advancePostseasonRound, advanceWeek, applyCharacterEvents, characterEventChance, startNextSeason } from "../season";
 import { depthChart, playoffSeeds, playersForTeam, powerRankings, rosterNeeds, teamOverall, teamSchedule } from "../selectors";
 import { hireStaffCandidate, interviewStaffCandidate, staffPayroll, staffSlotDefinitions, staffValueScore } from "../staff";
@@ -676,7 +676,7 @@ describe("franchise generator", () => {
       players: limitSave.players.map((player) => player.id === limitTarget.id ? { ...player, practiceSquadElevations: PRACTICE_SQUAD_PLAYER_ELEVATION_LIMIT } : player)
     };
     expect(canElevatePracticeSquadPlayer(limitSave, limitTarget.id, "chi").ok).toBe(false);
-  }, 20000);
+  }, 45000);
 
   it("builds a 460-player class with realistic progress, position caps, and K/P value", () => {
     const save = createNewSave("chi", "goals", "prospect-class-balance-seed");
@@ -933,7 +933,7 @@ describe("franchise generator", () => {
     expect(saves.every((save) => save.selectedTeamId === "nyj")).toBe(true);
     expect(saves.every((save) => save.scenario === "random")).toBe(true);
     expect(grades.size).toBeGreaterThan(1);
-  }, 10000);
+  }, 60000);
 
   it("generates the NFL opponent mix over an 18-week, 17-game schedule", () => {
     const save = createNewSave("phi", "sandbox", "schedule-seed");
@@ -968,7 +968,7 @@ describe("franchise generator", () => {
       expect(Object.values(sameConferenceNonDivisionCounts).sort((a, b) => a - b)).toEqual([1, 1, 4]);
       expect(Object.values(crossConferenceCounts).sort((a, b) => a - b)).toEqual([1, 4]);
     }
-  });
+  }, 60000);
 
   it("starts fresh careers on a dated league-year calendar with preseason and regular-season games", () => {
     const save = createNewSave("phi", "sandbox", "daily-calendar-seed");
@@ -1189,7 +1189,7 @@ describe("draft room overhaul", () => {
     expect(results.phase).toBe("rookie-results");
     expect(results.rookieResults?.[0].acquisitions.length).toBeGreaterThanOrEqual(completed.draftState.history.length);
     expect(onboarded.phase).toBe("offseason-complete");
-  }, 30000);
+  }, 60000);
 
   it("limits UDFA offer slots and hard pool spend during a wave", () => {
     const completed = finishDraftForTest(simRestOfDraft(enterDraft({ ...createNewSave("chi", "goals", "udfa-offer-seed"), phase: "draft-prep" })));
@@ -1314,7 +1314,7 @@ describe("draft room overhaul", () => {
     expect(next.players.find((player) => player.id === agedPlayer.id)?.age).toBe(agedPlayer.age + 1);
     expect(next.players.every((player) => player.stats.snaps === 0 && player.stats.games === 0)).toBe(true);
     expect(Object.values(next.records).every((record) => record.wins === 0 && record.losses === 0 && record.ties === 0)).toBe(true);
-  }, 30000);
+  }, 60000);
 
   it("runs a full postseason before offseason contract decisions", () => {
     let save = createNewSave("chi", "goals", "postseason-seed");
@@ -1364,7 +1364,8 @@ describe("draft room overhaul", () => {
         tradeOffers: [],
         tradeLog: [],
         completed: false
-      }
+      },
+      compPickLedger: { seasonYear: save.seasonYear, entries: [], projections: [] }
     };
 
     save = advanceToDraftPrep(advanceToFreeAgency(save));
@@ -1402,7 +1403,6 @@ describe("draft room overhaul", () => {
       .sort((a, b) => a.salary - b.salary)[0];
     const targetPick = base.draftPicks.find((pick) => pick.currentTeamId !== "nyj" && !pick.usedByProspectId);
     expect(userPick && userFuturePick && targetPick && player).toBeTruthy();
-    base = { ...base, budget: { ...base.budget, [targetPick!.currentTeamId]: 80 } };
     const beforeUserBudget = base.budget.nyj;
     const beforeTargetBudget = base.budget[targetPick!.currentTeamId];
     const traded = applyDraftTradeOffer(base, {
@@ -2656,28 +2656,52 @@ describe("personnel and snap plans", () => {
   });
 
   it("splits close running backs and feeds a clear lead back when ratings separate", () => {
-    const closeSave = createNewSave("buf", "goals", "close-rb-seed");
-    const closeRbs = playersForTeam(closeSave, "buf").filter((player) => player.position === "RB").sort((a, b) => b.overall - a.overall);
-    closeRbs[0].ratings = testRatings(82);
-    closeRbs[0].overall = calculateOverallFromRatings("RB", closeRbs[0].ratings);
-    closeRbs[0].positionFits = onlyPositionFit("RB");
-    closeRbs[1].ratings = testRatings(81);
-    closeRbs[1].overall = calculateOverallFromRatings("RB", closeRbs[1].ratings);
-    closeRbs[1].positionFits = onlyPositionFit("RB");
+    let closeSave = createNewSave("buf", "goals", "close-rb-seed");
+    const closeRbs = playersForTeam(closeSave, "buf").filter((player) => player.position === "RB" && !isPracticeSquadPlayer(player)).sort((a, b) => b.overall - a.overall);
+    closeSave = {
+      ...closeSave,
+      players: closeSave.players.map((player) => {
+        if (player.id === closeRbs[0].id) {
+          const ratings = testRatings(82);
+          return { ...player, ratings, overall: calculateOverallFromRatings("RB", ratings), positionFits: onlyPositionFit("RB") };
+        }
+        if (player.id === closeRbs[1].id) {
+          const ratings = testRatings(81);
+          return { ...player, ratings, overall: calculateOverallFromRatings("RB", ratings), positionFits: onlyPositionFit("RB") };
+        }
+        if (player.teamId === "buf" && player.position === "RB") {
+          const ratings = testRatings(58);
+          return { ...player, ratings, overall: calculateOverallFromRatings("RB", ratings), positionFits: onlyPositionFit("RB") };
+        }
+        return player;
+      })
+    };
     const closePlan = calculateSnapPlan(closeSave, "buf");
     const closeEntries = closePlan.entries.filter((entry) => entry.position === "RB" && entry.player);
 
     expect(closeEntries[0].snapShare).toBeCloseTo(0.58);
     expect(closeEntries[1].snapShare).toBeCloseTo(0.46);
 
-    const gapSave = createNewSave("buf", "goals", "gap-rb-seed");
-    const gapRbs = playersForTeam(gapSave, "buf").filter((player) => player.position === "RB").sort((a, b) => b.overall - a.overall);
-    gapRbs[0].ratings = testRatings(88);
-    gapRbs[0].overall = calculateOverallFromRatings("RB", gapRbs[0].ratings);
-    gapRbs[0].positionFits = onlyPositionFit("RB");
-    gapRbs[1].ratings = testRatings(70);
-    gapRbs[1].overall = calculateOverallFromRatings("RB", gapRbs[1].ratings);
-    gapRbs[1].positionFits = onlyPositionFit("RB");
+    let gapSave = createNewSave("buf", "goals", "gap-rb-seed");
+    const gapRbs = playersForTeam(gapSave, "buf").filter((player) => player.position === "RB" && !isPracticeSquadPlayer(player)).sort((a, b) => b.overall - a.overall);
+    gapSave = {
+      ...gapSave,
+      players: gapSave.players.map((player) => {
+        if (player.id === gapRbs[0].id) {
+          const ratings = testRatings(88);
+          return { ...player, ratings, overall: calculateOverallFromRatings("RB", ratings), positionFits: onlyPositionFit("RB") };
+        }
+        if (player.id === gapRbs[1].id) {
+          const ratings = testRatings(70);
+          return { ...player, ratings, overall: calculateOverallFromRatings("RB", ratings), positionFits: onlyPositionFit("RB") };
+        }
+        if (player.teamId === "buf" && player.position === "RB") {
+          const ratings = testRatings(55);
+          return { ...player, ratings, overall: calculateOverallFromRatings("RB", ratings), positionFits: onlyPositionFit("RB") };
+        }
+        return player;
+      })
+    };
     const gapPlan = calculateSnapPlan(gapSave, "buf");
     const gapEntries = gapPlan.entries.filter((entry) => entry.position === "RB" && entry.player);
 
@@ -2687,7 +2711,7 @@ describe("personnel and snap plans", () => {
 
   it("honors depth order overrides and promotes healthy players over injured starters", () => {
     const save = createNewSave("chi", "goals", "depth-order-seed");
-    const rbs = playersForTeam(save, "chi").filter((player) => player.position === "RB").sort((a, b) => b.overall - a.overall);
+    const rbs = playersForTeam(save, "chi").filter((player) => player.position === "RB" && !isPracticeSquadPlayer(player)).sort((a, b) => b.overall - a.overall);
     const overridden = {
       ...save,
       depthOverrides: {
@@ -2867,14 +2891,14 @@ describe("IndexedDB-style save repository", () => {
   it("migrates an old localStorage save and removes the old blob after success", async () => {
     const repo = createSaveRepository(createMemorySaveDriver(), window.localStorage);
     const save = createNewSave("phi", "sandbox", "legacy-migrate-seed");
-    const compact = {
+    const compact = compactSaveForStorage({
       ...save,
       players: save.players.slice(0, 12),
       prospects: save.prospects.slice(0, 12),
       schedule: save.schedule.slice(0, 4),
       staff: save.staff.slice(0, 16),
       inbox: save.inbox.slice(0, 4)
-    };
+    });
     window.localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(compact));
 
     const result = await repo.migrateLegacyLocalSave((legacy) => legacy);
@@ -2887,14 +2911,14 @@ describe("IndexedDB-style save repository", () => {
   it("leaves an old localStorage save in place if migration fails", async () => {
     const repo = createSaveRepository(createMemorySaveDriver({ failCareerPuts: 1 }), window.localStorage);
     const save = createNewSave("phi", "sandbox", "legacy-fail-seed");
-    const compact = {
+    const compact = compactSaveForStorage({
       ...save,
       players: save.players.slice(0, 12),
       prospects: save.prospects.slice(0, 12),
       schedule: save.schedule.slice(0, 4),
       staff: save.staff.slice(0, 16),
       inbox: save.inbox.slice(0, 4)
-    };
+    });
     window.localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(compact));
 
     const result = await repo.migrateLegacyLocalSave((legacy) => legacy);

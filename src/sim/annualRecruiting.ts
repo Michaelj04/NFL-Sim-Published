@@ -35,7 +35,8 @@ export function generateAnnualRecruitingState(
     const boardSize = Math.round(clamp(classRange.targetSignings + classRange.walkonTarget * 0.5 + basePower / 10, classRange.minSignings, classRange.maxSignings + 12));
     const nilMarket = annualNilMarketProxy(school.id);
     const schoolNeeds = needsBySchool.get(school.id) ?? new Map<Position, number>();
-    const schoolProspects = rng.shuffle(recruits).map((prospect) => {
+    const candidatePool = sampleRecruitPool(recruits, Math.max(boardSize * 2, 50), rng.fork(`pool:${school.id}`));
+    const schoolProspects = candidatePool.map((prospect) => {
       const pipelineType = pipelineTypeFor(school, prospect);
       const pipeline = config.pipelineWeights.find((row) => row.pipelineType === pipelineType);
       const positionNeed = schoolNeeds.get(prospect.position) ?? 45;
@@ -98,6 +99,13 @@ export function generateAnnualRecruitingState(
     runtimeCsvs: annualRuntimeDebug().loadedRuntimeCsvs.filter((path) => path.includes("recruit") || path.includes("nil_") || path.includes("academic_eligibility") || path.includes("school_class_size")),
     usesYearZeroBundles: false
   };
+}
+
+function sampleRecruitPool(recruits: AnnualRecruit[], count: number, rng: ReturnType<typeof createRng>): AnnualRecruit[] {
+  if (count >= recruits.length) return rng.shuffle(recruits);
+  const selected = new Set<number>();
+  while (selected.size < count) selected.add(rng.int(0, recruits.length - 1));
+  return [...selected].map((index) => recruits[index]);
 }
 
 function academicFitScore(academicStrictness: number, prospect: AnnualRecruit): number {

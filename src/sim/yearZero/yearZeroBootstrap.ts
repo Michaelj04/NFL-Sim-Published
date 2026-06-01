@@ -2,7 +2,7 @@ import { clamp, createRng, type Rng } from "../../lib/rng";
 import type { NFLTeam, YearZeroBootstrapState, YearZeroProgressStep, YearZeroTeamStrengthContext } from "../../types";
 import type { CollegeProgram } from "../../types";
 import { YEAR_ZERO_GAMEPLAY_CATEGORIES, YEAR_ZERO_NON_GAMEPLAY_CATEGORIES, loadYearZeroBundles, type YearZeroBundleStore, type YearZeroRecord } from "./yearZeroBundleLoader";
-import { extractYearZeroTransferPortal, generateYearZeroCollegeHistories, generateYearZeroCollegePlayers, generateYearZeroDraftClass, generateYearZeroHighSchoolRecruits, generateYearZeroNflHistories, generateYearZeroNflPlayers } from "./yearZeroPlayerBase";
+import { extractYearZeroTransferPortal, generateYearZeroCollegeHistories, generateYearZeroCollegePlayers, generateYearZeroDraftClass, generateYearZeroHighSchoolRecruits, generateYearZeroNflHistories, generateYearZeroNflPlayers, generateYearZeroNflReserveStatuses, generateYearZeroSupplementalScoutingViews } from "./yearZeroPlayerBase";
 
 function textPayload(record: YearZeroRecord, keys: string[], fallback: string): string {
   for (const key of keys) {
@@ -75,10 +75,15 @@ export function generateYearZeroTeamStrength(seed: string, teams: NFLTeam[], sto
 export function createYearZeroBootstrapState(seed: string, teams: NFLTeam[], schools: CollegeProgram[], store: YearZeroBundleStore = loadYearZeroBundles()): YearZeroBootstrapState {
   const initialCollegePlayers = generateYearZeroCollegePlayers(seed, schools, store);
   const { retainedCollegePlayers: collegePlayers, transferPortal } = extractYearZeroTransferPortal(seed, schools, initialCollegePlayers, store);
-  const { recruits: highSchoolRecruits, scoutingViews } = generateYearZeroHighSchoolRecruits(seed, teams, store);
+  const { recruits: highSchoolRecruits, scoutingViews: highSchoolScoutingViews } = generateYearZeroHighSchoolRecruits(seed, teams, store);
   const draftClass = generateYearZeroDraftClass(seed, collegePlayers, store);
   const teamStrength = generateYearZeroTeamStrength(seed, teams, store);
   const nflPlayers = generateYearZeroNflPlayers(seed, teams, schools, teamStrength, store);
+  const nflReserveStatuses = generateYearZeroNflReserveStatuses(seed, nflPlayers, store);
+  const scoutingViews = [
+    ...highSchoolScoutingViews,
+    ...generateYearZeroSupplementalScoutingViews(seed, teams, transferPortal, draftClass, nflPlayers, store)
+  ];
   const collegeHistories = generateYearZeroCollegeHistories(seed, collegePlayers, highSchoolRecruits, store);
   const nflHistories = generateYearZeroNflHistories(seed, nflPlayers, store);
   return {
@@ -99,6 +104,7 @@ export function createYearZeroBootstrapState(seed: string, teams: NFLTeam[], sch
     injuryHistory: [...collegeHistories.injuryHistory, ...nflHistories.nflInjuryHistory],
     draftClass,
     nflPlayers,
+    nflReserveStatuses,
     nflContractHistory: nflHistories.nflContractHistory,
     nflAgingSnapshots: nflHistories.nflAgingSnapshots,
     udfaPaths: nflHistories.udfaPaths,
@@ -117,6 +123,7 @@ export function createYearZeroBootstrapState(seed: string, teams: NFLTeam[], sch
       injuryHistoryGenerated: collegeHistories.injuryHistory.length + nflHistories.nflInjuryHistory.length,
       draftProspectsGenerated: draftClass.length,
       nflPlayersGenerated: nflPlayers.length,
+      nflReserveStatusesGenerated: nflReserveStatuses.length,
       nflContractHistoryGenerated: nflHistories.nflContractHistory.length,
       nflAgingSnapshotsGenerated: nflHistories.nflAgingSnapshots.length,
       udfaPathsGenerated: nflHistories.udfaPaths.length,
