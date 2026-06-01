@@ -5,6 +5,7 @@ import { careerScenarioLabels, createNewSave, generateFreeAgentPool } from "./si
 import { createInitialCollegeRosterState } from "./sim/collegeRoster";
 import { generateCollegeSeasonResults } from "./sim/collegeSeasonResults";
 import { generateCollegeMoraleState } from "./sim/collegeMorale";
+import { generateCollegeTrainingBanks } from "./sim/collegeTraining";
 import { generateDraftEvaluationState } from "./sim/draftEvaluation";
 import { generateAnnualRecruitClass } from "./sim/annualRecruitClass";
 import { buildSchoolProfileState } from "./sim/schoolProfiles";
@@ -350,9 +351,10 @@ export function normalizeSave(save: GameSave): GameSave {
     schoolProfiles: save.schoolProfiles ?? buildSchoolProfileState(normalizedSchools, save.seed, seasonYear),
     annualRecruitClass: save.annualRecruitClass ?? generateAnnualRecruitClass(save.seed, seasonYear),
     collegeRoster: normalizedCollegeRoster,
+    collegeTraining: save.collegeTraining ?? generateCollegeTrainingBanks(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults),
     collegeSeasonResults: normalizedCollegeSeasonResults,
     collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.annualRecruiting),
-    draftEvaluation: save.draftEvaluation ?? generateDraftEvaluationState(save.seed, normalizedDraftState.draftYear, save.prospects ?? [], save.currentWeek ?? 1),
+    draftEvaluation: save.draftEvaluation ?? generateDraftEvaluationState(save.seed, normalizedDraftState.draftYear, save.prospects ?? [], save.currentWeek ?? 1, save.schools),
     previousSeasonRanks: save.previousSeasonRanks,
     scenario: save.scenario ?? "neutral",
     players: playersToNormalize.map((player) => {
@@ -1699,17 +1701,17 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
         </p>
         {debug.annualPipeline ? (
           <p>
-            Annual pipeline armed for draft year {debug.annualPipeline.lastGeneratedDraftYear} using {debug.annualPipeline.runtimeCsvs.length} normal runtime CSVs.
+            Annual pipeline armed for draft year {debug.annualPipeline.lastGeneratedDraftYear} using {debug.annualPipeline.runtimeCsvs.length} normal runtime CSVs; schema checked {debug.annualPipeline.schemaValidatedColumns} columns across {debug.annualPipeline.schemaValidatedCsvs} CSVs.
           </p>
         ) : null}
         {debug.annualTransferPortal ? (
           <p>
-            Annual transfer board: {debug.annualTransferPortal.entries} entries for {debug.annualTransferPortal.seasonYear}, {debug.annualTransferPortal.collegeEntries} college-sourced and {debug.annualTransferPortal.committedEntries} committed.
+            Annual transfer board: {debug.annualTransferPortal.entries} entries for {debug.annualTransferPortal.seasonYear}, {debug.annualTransferPortal.collegeEntries} college-sourced and {debug.annualTransferPortal.committedEntries} committed, avg top destination {debug.annualTransferPortal.averageTopDestinationScore}.
           </p>
         ) : null}
         {debug.annualRecruiting ? (
           <p>
-            Annual recruiting: {debug.annualRecruiting.boardEntries.toLocaleString()} board entries in {debug.annualRecruiting.currentPhase}, {debug.annualRecruiting.visitedEntries.toLocaleString()} visits, {debug.annualRecruiting.promisedEntries.toLocaleString()} promises, avg need {debug.annualRecruiting.averagePositionNeed}, {debug.annualRecruiting.signedEntries.toLocaleString()} signed and {debug.annualRecruiting.committedEntries.toLocaleString()} committed.
+            Annual recruiting: {debug.annualRecruiting.boardEntries.toLocaleString()} board entries in {debug.annualRecruiting.currentPhase}, {debug.annualRecruiting.visitedEntries.toLocaleString()} visits, {debug.annualRecruiting.promisedEntries.toLocaleString()} promises, avg need {debug.annualRecruiting.averagePositionNeed}, avg NIL demand {debug.annualRecruiting.averageNilDemand}, avg academic fit {debug.annualRecruiting.averageAcademicFit}, avg class target {debug.annualRecruiting.averageTargetClassSize}, {debug.annualRecruiting.signedEntries.toLocaleString()} signed and {debug.annualRecruiting.committedEntries.toLocaleString()} committed.
           </p>
         ) : null}
         {debug.annualRecruitClass ? (
@@ -1724,7 +1726,7 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
         ) : null}
         {debug.schoolProfiles ? (
           <p>
-            School profiles: {debug.schoolProfiles.profiles.toLocaleString()} active profiles, {debug.schoolProfiles.csvMatchedProfiles.toLocaleString()} CSV-matched and {debug.schoolProfiles.repoAdaptedProfiles.toLocaleString()} deterministic repo-adapted.
+            School profiles: {debug.schoolProfiles.profiles.toLocaleString()} active profiles, {debug.schoolProfiles.csvMatchedProfiles.toLocaleString()} CSV-matched and {debug.schoolProfiles.repoAdaptedProfiles.toLocaleString()} deterministic repo-adapted; {debug.schoolProfiles.archetypeProfiles.toLocaleString()} have archetype/template fields, avg development {debug.schoolProfiles.averageDevelopment}, avg portal aggression {debug.schoolProfiles.averagePortalAggression}; schema checked {debug.schoolProfiles.schemaValidatedColumns} columns across {debug.schoolProfiles.schemaValidatedCsvs} CSVs.
           </p>
         ) : null}
         {debug.collegeRoster ? (
@@ -1735,7 +1737,7 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
         ) : null}
         {debug.collegeSeasonResults ? (
           <p>
-            College season results: {debug.collegeSeasonResults.production.toLocaleString()} production rows, {debug.collegeSeasonResults.starters.toLocaleString()} starters, avg snap share {debug.collegeSeasonResults.averageSnapShare}, {debug.collegeSeasonResults.awards.toLocaleString()} awards, {debug.collegeSeasonResults.injuries.toLocaleString()} injuries.
+            College season results: {debug.collegeSeasonResults.production.toLocaleString()} production rows, {debug.collegeSeasonResults.starters.toLocaleString()} starters, avg snap share {debug.collegeSeasonResults.averageSnapShare}, {debug.collegeSeasonResults.awards.toLocaleString()} awards ({debug.collegeSeasonResults.awardGroups.join(", ") || "no groups"}, draft bonus {debug.collegeSeasonResults.totalAwardDraftBonus}), {debug.collegeSeasonResults.injuries.toLocaleString()} injuries ({debug.collegeSeasonResults.recurrenceTaggedInjuries.toLocaleString()} recurrence-tagged, avg recurrence {Math.round(debug.collegeSeasonResults.averageRecurrenceRisk * 100)}%, avg wear {debug.collegeSeasonResults.averageLongTermWear}).
           </p>
         ) : null}
         {debug.collegeMorale ? (
@@ -1743,9 +1745,14 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
             College morale: {debug.collegeMorale.entries.toLocaleString()} players, {debug.collegeMorale.lowMorale.toLocaleString()} low morale, {debug.collegeMorale.highTransferRisk.toLocaleString()} high transfer risk, avg promise pressure {debug.collegeMorale.averagePromisePressure}.
           </p>
         ) : null}
+        {debug.collegeTraining ? (
+          <p>
+            College training banks: {debug.collegeTraining.entries.toLocaleString()} entries, avg technical {debug.collegeTraining.averageTechnicalBank}, avg fatigue {debug.collegeTraining.averageFatigue}.
+          </p>
+        ) : null}
         {debug.draftEvaluation ? (
           <p>
-            Draft evaluation: {debug.draftEvaluation.results.toLocaleString()} prospects, {debug.draftEvaluation.allStarInvites.toLocaleString()} all-star invites, average combine {debug.draftEvaluation.averageCombine}.
+            Draft evaluation: {debug.draftEvaluation.results.toLocaleString()} prospects, {debug.draftEvaluation.allStarInvites.toLocaleString()} all-star invites ({debug.draftEvaluation.allStarEvents.join(", ") || "none"}), competition tiers {debug.draftEvaluation.competitionTiers.join(", ") || "none"}, average combine {debug.draftEvaluation.averageCombine}, {debug.draftEvaluation.draftRuntimeCsvs} draft runtime CSVs.
           </p>
         ) : null}
       </div>
@@ -1762,9 +1769,21 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
         ))}
       </div>
       <div className="year-zero-invariants">
+        <strong>Pipeline scheduler: {debug.pipelineScheduler.phaseGates.filter((gate) => gate.status === "complete").length}/{debug.pipelineScheduler.phaseGates.length} gates complete</strong>
+        {debug.pipelineScheduler.phaseGates.map((gate) => (
+          <span key={gate.eventId} className={gate.status === "complete" ? "ok" : gate.status === "ready" ? "warn" : "danger"} title={`${gate.phase} week ${gate.weekHint} | ${gate.engineEffect}`}>{gate.status} {gate.eventId}</span>
+        ))}
+      </div>
+      <div className="year-zero-invariants">
+        <strong>Balance metrics: {debug.pipelineScheduler.balanceMetrics.filter((metric) => metric.status === "within_range").length}/{debug.pipelineScheduler.balanceMetrics.length} in range</strong>
+        {debug.pipelineScheduler.balanceMetrics.map((metric) => (
+          <span key={metric.metric} className={metric.status === "within_range" ? "ok" : metric.status === "missing" ? "danger" : "warn"} title={`target ${metric.lowerBound}-${metric.upperBound}, mean ${metric.targetMean}`}>{metric.metric}: {metric.actual}</span>
+        ))}
+      </div>
+      <div className="year-zero-invariants">
         <strong>Self-audit: {implementedAudit} implemented, {partialAudit} partial, {debug.selfAudit.length - implementedAudit - partialAudit} pending</strong>
         {debug.selfAudit.slice(0, 10).map((row) => (
-          <span key={row.requirement} className={row.status === "Implemented" ? "ok" : row.status === "Partially Implemented" ? "warn" : "danger"}>{row.status} {row.requirement}</span>
+          <span key={row.requirement} className={row.status === "Implemented" ? "ok" : row.status === "Partially Implemented" ? "warn" : "danger"} title={`${row.filesChanged} | ${row.finalPhaseTests}`}>{row.status} {row.requirement}</span>
         ))}
       </div>
       <button type="button" onClick={downloadDebugExport}>Export Year Zero Debug JSON</button>

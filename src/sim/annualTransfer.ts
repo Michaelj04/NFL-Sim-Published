@@ -1,6 +1,6 @@
 import { clamp, createRng, type Rng } from "../lib/rng";
-import type { AnnualTransferPortalState, CollegeProgram, CollegeRosterPlayer, GameSave, NFLTeam, Player } from "../types";
-import { annualRuntimeDebug, annualTransferDestinationWeights, annualTransferReasons } from "./annualRuntime";
+import type { AnnualTransferPortalState, CollegeProgram, CollegeRosterPlayer, GameSave, NFLTeam, Player, SchoolProfile } from "../types";
+import { annualRuntimeDebug, annualTransferDestinationWeights, annualTransferReasons, annualTransferTransitionProbability } from "./annualRuntime";
 import { isPracticeSquadPlayer } from "./practiceSquad";
 
 function weightedPick<T>(items: T[], rng: Rng, weightFor: (item: T) => number): T {
@@ -40,15 +40,49 @@ function destinationScore(team: NFLTeam, player: Player, componentWeights: Array
   return Math.round(clamp(weighted, 0, 100));
 }
 
-function collegeDestinationScore(school: CollegeProgram, player: CollegeRosterPlayer, componentWeights: Array<{ component: string; weight: number }>, rng: Rng): number {
+function levelForSchool(school: CollegeProgram, profile?: SchoolProfile): string {
+  if (profile?.subdivisionLevel) return profile.subdivisionLevel;
+  if (school.subdivision === "FCS") return school.prestige >= 62 ? "FCS_TOP" : "FCS_LOW";
+  return school.prestige >= 80 ? "FBS_POWER" : "FBS_G5";
+}
+
+function collegeDestinationScore(
+  school: CollegeProgram,
+  player: CollegeRosterPlayer,
+  componentWeights: Array<{ component: string; weight: number }>,
+  rng: Rng,
+  fromProfile?: SchoolProfile,
+  toProfile?: SchoolProfile,
+  rosterNeed = 50
+): number {
+  const fromLevel = fromProfile?.subdivisionLevel ?? "FBS_G5";
+  const transitionFit = annualTransferTransitionProbability(fromLevel, levelForSchool(school, toProfile)) * 100;
   const weighted = componentWeights.reduce((sum, component) => {
-    if (component.component === "playing_time_opportunity") return sum + component.weight * rng.float(35, 96);
-    if (component.component === "prestige") return sum + component.weight * school.prestige;
+    if (component.component === "playing_time_opportunity") return sum + component.weight * (rosterNeed * 0.65 + rng.float(20, 96) * 0.35);
+    if (component.component === "nil_offer") return sum + component.weight * (toProfile?.nilPower ?? school.prestige);
+    if (component.component === "prestige") return sum + component.weight * (toProfile?.prestige ?? school.prestige);
+    if (component.component === "distance_fit") return sum + component.weight * geographyFit(fromProfile, toProfile, rng);
     if (component.component === "scheme_fit") return sum + component.weight * rng.float(35, 92);
-    if (component.component === "development") return sum + component.weight * (school.competition * 0.45 + school.prestige * 0.2 + Math.max(0, player.collegePotential - player.collegeOverall));
+    if (component.component === "development") return sum + component.weight * ((toProfile?.competition ?? school.competition) * 0.45 + (toProfile?.prestige ?? school.prestige) * 0.2 + Math.max(0, player.collegePotential - player.collegeOverall));
+    if (component.component === "academic_fit") return sum + component.weight * (100 - Math.abs((toProfile?.academicStrictness ?? 55) - 55));
+    if (component.component === "prior_relationship") return sum + component.weight * transitionFit;
     return sum + component.weight * rng.float(25, 88);
   }, 0);
-  return Math.round(clamp(weighted, 0, 100));
+  const aggression = toProfile?.transferAggression ?? 50;
+  return Math.round(clamp(weighted * 0.86 + transitionFit * 0.08 + aggression * 0.06, 0, 100));
+}
+
+function geographyFit(fromProfile: SchoolProfile | undefined, toProfile: SchoolProfile | undefined, rng: Rng): number {
+  if (!fromProfile || !toProfile) return rng.float(35, 85);
+  if (fromProfile.state === toProfile.state) return 92;
+  if (fromProfile.campusRegion === toProfile.campusRegion) return 76;
+  return 48;
+}
+
+function rosterNeedForDestination(save: GameSave, schoolId: string, position: CollegeRosterPlayer["position"]): number {
+  const active = save.collegeRoster?.players.filter((player) => player.schoolId === schoolId && player.position === position && !player.cutSeason && !player.graduatedSeason && !player.draftDeclaredSeason).length ?? 0;
+  const target = position === "QB" ? 4 : position === "WR" ? 12 : position === "DL" || position === "EDGE" || position === "LB" || position === "CB" ? 8 : 5;
+  return Math.round(clamp(48 + (target - active) * 8, 10, 95));
 }
 
 export function generateAnnualTransferPortalState(save: GameSave, seasonYear = save.seasonYear): AnnualTransferPortalState {
@@ -57,6 +91,7 @@ export function generateAnnualTransferPortalState(save: GameSave, seasonYear = s
   const destinationWeights = annualTransferDestinationWeights();
   if (save.collegeRoster?.players.length) {
     const moraleByPlayerId = new Map((save.collegeMorale?.entries ?? []).map((entry) => [entry.playerId, entry]));
+    const profileBySchool = new Map((save.schoolProfiles?.profiles ?? []).map((profile) => [profile.schoolId, profile]));
     const candidates = save.collegeRoster.players
       .filter((player) => !player.graduatedSeason && !player.draftDeclaredSeason && !player.cutSeason && player.rosterStatus !== "redshirt" && player.rosterStatus !== "cut")
       .map((player) => ({ player, score: collegeTransferEntryScore(player, rng.fork(player.id), moraleByPlayerId.get(player.id)) }))
@@ -66,11 +101,12 @@ export function generateAnnualTransferPortalState(save: GameSave, seasonYear = s
     const entries = candidates.map(({ player }, index) => {
       const entryRng = rng.fork(`college-entry:${player.id}`);
       const reason = weightedPick(reasons, entryRng, (item) => item.weight);
+      const fromProfile = profileBySchool.get(player.schoolId);
       const destinationScores = save.schools
         .filter((school) => school.id !== player.schoolId)
         .map((school) => ({
           teamId: school.id,
-          score: collegeDestinationScore(school, player, destinationWeights, entryRng.fork(school.id))
+          score: collegeDestinationScore(school, player, destinationWeights, entryRng.fork(school.id), fromProfile, profileBySchool.get(school.id), rosterNeedForDestination(save, school.id, player.position))
         }))
         .sort((a, b) => b.score - a.score)
         .slice(0, 8);

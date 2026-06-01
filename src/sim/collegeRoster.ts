@@ -1,5 +1,6 @@
 import { clamp, createRng } from "../lib/rng";
 import type { CollegeRosterPlayer, CollegeRosterState, GameSave, YearZeroBootstrapState } from "../types";
+import { annualRosterPositionTargets, annualRosterTemplate, annualRuntimeDebug, annualSchoolClassSizeRange, annualWalkOnRuleForSubdivision } from "./annualRuntime";
 
 export function createInitialCollegeRosterState(yearZero: YearZeroBootstrapState, seasonYear: number): CollegeRosterState {
   return {
@@ -66,12 +67,17 @@ export function progressAnnualCollegeRoster(save: GameSave, seasonYear: number, 
   let graduatedPlayers = 0;
   let redshirtedPlayers = 0;
   let cutPlayers = 0;
+  const trainingByPlayerId = new Map((save.collegeTraining?.entries ?? []).map((entry) => [entry.playerId, entry]));
   let players = current.players.map((player) => {
     if (player.graduatedSeason) return player;
     const rng = createRng(`${save.seed}:annual-college-progression:${seasonYear}:${player.id}`);
     const declared = shouldDeclare(player, `${save.seed}:annual-college-declare:${draftYear}:${player.id}`);
     if (declared) draftDeclarations += 1;
-    const progressedOverall = Math.round(clamp(player.collegeOverall + rng.int(0, 3) + (player.collegePotential - player.collegeOverall > 8 ? 1 : 0), 35, player.collegePotential));
+    const training = trainingByPlayerId.get(player.id);
+    const bankGain = training
+      ? (training.athleticBank * 0.006 + training.technicalBank * 0.01 + training.mentalBank * 0.006 + training.recoveryBank * 0.004 - training.fatigue * 0.006 - training.regressionPressure * 0.008)
+      : 0;
+    const progressedOverall = Math.round(clamp(player.collegeOverall + rng.int(0, 3) + bankGain + (player.collegePotential - player.collegeOverall > 8 ? 1 : 0), 35, player.collegePotential));
     const graduated = player.classYear === "SR";
     if (graduated) graduatedPlayers += 1;
     return {
@@ -96,11 +102,17 @@ export function progressAnnualCollegeRoster(save: GameSave, seasonYear: number, 
     redshirtedPlayers += 1;
     return { ...player, rosterStatus: "redshirt" as const, redshirted: true };
   });
+  const targets = annualRosterPositionTargets();
   for (const [schoolId, roster] of playersBySchool.entries()) {
-    const excess = roster.length - 105;
+    const school = save.schools.find((candidate) => candidate.id === schoolId);
+    const profile = save.schoolProfiles?.profiles.find((candidate) => candidate.schoolId === schoolId);
+    const template = annualRosterTemplate(profile?.subdivisionLevel ?? (school?.subdivision === "FCS" ? "FCS_LOW" : "FBS_G5"));
+    const excess = roster.length - Math.max(template.rosterSize, template.scholarshipLimit);
     if (excess <= 0) continue;
+    const counts = countActiveByPosition(roster);
     const cutIds = new Set(roster
-      .sort((a, b) => a.collegeOverall - b.collegeOverall || a.id.localeCompare(b.id))
+      .sort((a, b) => cutPriority(a, counts, targets) - cutPriority(b, counts, targets) || a.id.localeCompare(b.id))
+      .filter((player) => (counts.get(player.position) ?? 0) > (targets.get(player.position)?.minCount ?? 1))
       .slice(0, excess)
       .map((player) => player.id));
     players = players.map((player) => {
@@ -111,19 +123,29 @@ export function progressAnnualCollegeRoster(save: GameSave, seasonYear: number, 
   }
   const walkOns = save.schools.flatMap((school) => {
     const count = activeCollegePlayers(players).filter((player) => player.schoolId === school.id).length;
-    const needed = Math.max(0, 105 - count);
-    return Array.from({ length: Math.min(needed, 3) }, (_, index): CollegeRosterPlayer => {
+    const profile = save.schoolProfiles?.profiles.find((candidate) => candidate.schoolId === school.id);
+    const subdivisionLevel = profile?.subdivisionLevel ?? (school.subdivision === "FCS" ? "FCS_LOW" : "FBS_G5");
+    const template = annualRosterTemplate(subdivisionLevel);
+    const classRange = annualSchoolClassSizeRange(subdivisionLevel);
+    const needed = Math.max(0, template.rosterSize + Math.min(template.walkonSoftCap, classRange.walkonTarget) - count);
+    const walkOnRule = annualWalkOnRuleForSubdivision(subdivisionLevel);
+    const positionCounts = countActiveByPosition(activeCollegePlayers(players).filter((player) => player.schoolId === school.id));
+    const priorityPositions = [...targets.values()]
+      .sort((a, b) => ((positionCounts.get(a.position) ?? 0) - a.targetCount) - ((positionCounts.get(b.position) ?? 0) - b.targetCount))
+      .map((target) => target.position);
+    return Array.from({ length: Math.min(needed, Math.max(1, Math.ceil(classRange.walkonTarget / 4))) }, (_, index): CollegeRosterPlayer => {
       const rng = createRng(`${save.seed}:annual-walk-on:${seasonYear}:${school.id}:${index + 1}`);
+      const collegeOverall = Math.round(clamp(rng.normal(walkOnRule.qualityMean, walkOnRule.qualitySigma), 30, 62));
       return {
         id: `walk-on-${seasonYear}-${school.id}-${index + 1}`,
         firstName: `Walk`,
         lastName: `On${index + 1}`,
         schoolId: school.id,
-        position: rng.pick(["LB", "WR", "DL", "CB", "RB"]),
+        position: priorityPositions[index % priorityPositions.length] ?? rng.pick(["LB", "WR", "DL", "CB", "RB"]),
         classYear: "FR",
         age: 18,
-        collegeOverall: rng.int(42, 56),
-        collegePotential: rng.int(50, 64),
+        collegeOverall,
+        collegePotential: Math.round(clamp(collegeOverall + rng.int(4, 12), collegeOverall, 68)),
         ratingScaleContext: "college",
         source: "annual_recruiting",
         rosterStatus: "walk_on",
@@ -136,6 +158,7 @@ export function progressAnnualCollegeRoster(save: GameSave, seasonYear: number, 
     ...current,
     seasonYear,
     players,
+    runtimeCsvs: [...new Set([...current.runtimeCsvs, ...(save.collegeTraining?.runtimeCsvs ?? []), ...annualRuntimeDebug().loadedRuntimeCsvs.filter((path) => path.includes("roster") || path.includes("walk_on") || path.includes("school_class_size"))])],
     lastProgression: {
       seasonYear,
       draftYear,
@@ -147,4 +170,21 @@ export function progressAnnualCollegeRoster(save: GameSave, seasonYear: number, 
       cutPlayers
     }
   };
+}
+
+function countActiveByPosition(players: CollegeRosterPlayer[]): Map<CollegeRosterPlayer["position"], number> {
+  const counts = new Map<CollegeRosterPlayer["position"], number>();
+  for (const player of players) counts.set(player.position, (counts.get(player.position) ?? 0) + 1);
+  return counts;
+}
+
+function cutPriority(
+  player: CollegeRosterPlayer,
+  counts: Map<CollegeRosterPlayer["position"], number>,
+  targets: ReturnType<typeof annualRosterPositionTargets>
+): number {
+  const target = targets.get(player.position);
+  const positionExcess = Math.max(0, (counts.get(player.position) ?? 0) - (target?.targetCount ?? 4));
+  const scholarshipProtection = player.source === "annual_recruiting" && player.rosterStatus !== "walk_on" ? 8 : 0;
+  return player.collegeOverall - positionExcess * 3 + scholarshipProtection;
 }

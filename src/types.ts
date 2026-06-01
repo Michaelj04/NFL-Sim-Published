@@ -1113,6 +1113,7 @@ export interface GameSave {
   annualRosterImportPlan?: AnnualRosterImportPlan;
   schoolProfiles?: SchoolProfileState;
   collegeRoster?: CollegeRosterState;
+  collegeTraining?: CollegeTrainingBankState;
   collegeSeasonResults?: CollegeSeasonResultsState;
   collegeMorale?: CollegeMoraleState;
   draftEvaluation?: DraftEvaluationState;
@@ -1165,6 +1166,8 @@ export interface AnnualPipelineState {
   lastGeneratedDraftYear: number;
   runtimeCsvs: string[];
   rngStreams: string[];
+  schemaValidatedCsvs?: number;
+  schemaValidatedColumns?: number;
   usesYearZeroBundles: false;
 }
 
@@ -1196,11 +1199,14 @@ export interface AnnualRecruitingBoardEntry {
   targetPriority: number;
   positionNeed: number;
   nilScore: number;
+  nilDemand: number;
+  academicFit: number;
+  targetClassSize: number;
   visitImpact: number;
   promiseType?: string;
   debugFactors: string[];
   pipelineType: "primary" | "secondary" | "national";
-  status: "evaluating" | "offered" | "visited" | "committed" | "signed";
+  status: "evaluating" | "offered" | "visited" | "committed" | "decommitted" | "signed";
 }
 
 export interface AnnualRecruitingState {
@@ -1279,12 +1285,16 @@ export interface SchoolProfile {
   timezone: string;
   campusRegion: ScoutingRegion;
   programTier: string;
+  rosterTemplate: string;
   prestige: number;
   competition: number;
+  facilities: number;
+  development: number;
   recruitingPower: number;
   nilPower: number;
   academicStrictness: number;
   transferAggression: number;
+  portalAggression: number;
   primaryPipelineStates: string[];
   secondaryPipelineStates: string[];
   scheme: CollegeProgram["scheme"];
@@ -1296,6 +1306,8 @@ export interface SchoolProfileState {
   profiles: SchoolProfile[];
   csvMatchedProfiles: number;
   repoAdaptedProfiles: number;
+  schemaValidatedCsvs?: number;
+  schemaValidatedColumns?: number;
   runtimeCsvs: string[];
   usesYearZeroBundles: false;
 }
@@ -1314,6 +1326,9 @@ export interface CollegeRosterPlayer {
   source: "year_zero_college_roster" | "annual_recruiting" | "annual_transfer";
   rosterStatus?: "active" | "redshirt" | "walk_on" | "cut" | "graduated" | "declared";
   signedSeason?: number;
+  recruitingPromiseType?: string;
+  recruitingPromiseTarget?: number;
+  recruitingPromiseSeason?: number;
   draftDeclaredSeason?: number;
   graduatedSeason?: number;
   redshirted?: boolean;
@@ -1339,6 +1354,26 @@ export interface CollegeRosterState {
   usesYearZeroBundles: boolean;
 }
 
+export interface CollegeTrainingBankEntry {
+  playerId: string;
+  schoolId: string;
+  seasonYear: number;
+  athleticBank: number;
+  technicalBank: number;
+  mentalBank: number;
+  recoveryBank: number;
+  fatigue: number;
+  regressionPressure: number;
+  debug: string;
+}
+
+export interface CollegeTrainingBankState {
+  seasonYear: number;
+  entries: CollegeTrainingBankEntry[];
+  runtimeCsvs: string[];
+  usesYearZeroBundles: false;
+}
+
 export interface CollegeProductionResult {
   id: string;
   playerId: string;
@@ -1348,6 +1383,7 @@ export interface CollegeProductionResult {
   depthRank: number;
   productionScore: number;
   snapShare: number;
+  stats?: Record<string, number>;
 }
 
 export interface CollegeAwardResult {
@@ -1355,7 +1391,11 @@ export interface CollegeAwardResult {
   playerId: string;
   schoolId: string;
   seasonYear: number;
-  award: "all_conference" | "all_american" | "position_award";
+  award: string;
+  awardGroup: string;
+  draftBoardBonus: number;
+  nilBonusPct: number;
+  mediaBonus: number;
 }
 
 export interface CollegeInjuryResult {
@@ -1363,8 +1403,19 @@ export interface CollegeInjuryResult {
   playerId: string;
   schoolId: string;
   seasonYear: number;
+  injuryFamily: string;
   severity: InjurySeverity;
   missedGames: number;
+  recurrenceRisk: number;
+  longTermWear: number;
+  potentialLoss: number;
+  speedPenalty: number;
+  strengthPenalty: number;
+  awarenessPenalty: number;
+  durabilityPenalty: number;
+  recoveryBankMult: number;
+  draftMedicalPenalty: number;
+  positionSensitive: boolean;
 }
 
 export interface CollegeSeasonResultsState {
@@ -1388,13 +1439,17 @@ export interface CollegeMoraleEntry {
 export interface CollegeMoraleState {
   seasonYear: number;
   entries: CollegeMoraleEntry[];
+  runtimeCsvs: string[];
   usesYearZeroBundles: false;
 }
 
 export interface DraftEvaluationResult {
   prospectId: string;
   allStarInvite: boolean;
+  allStarEvent?: string;
   allStarSignal: number;
+  competitionTier?: string;
+  competitionMultiplier?: number;
   combineScore: number;
   proDayScore: number;
   medicalGrade: number;

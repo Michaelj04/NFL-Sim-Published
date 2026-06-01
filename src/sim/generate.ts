@@ -65,6 +65,7 @@ import { generateAnnualRosterImportPlan } from "./annualRosterImport";
 import { createInitialCollegeRosterState } from "./collegeRoster";
 import { generateCollegeSeasonResults } from "./collegeSeasonResults";
 import { generateCollegeMoraleState } from "./collegeMorale";
+import { generateCollegeTrainingBanks } from "./collegeTraining";
 import { applyDraftEvaluationToProspects, generateDraftEvaluationState } from "./draftEvaluation";
 import { buildSchoolProfileState } from "./schoolProfiles";
 import { createYearZeroBootstrapState } from "./yearZero/yearZeroBootstrap";
@@ -972,7 +973,7 @@ export function generateSeasonDraftAssets(
     ...declaredProspects,
     ...generatedProspects.filter((prospect) => !declaredIds.has(prospect.id)).slice(0, Math.max(0, 460 - declaredProspects.length))
   ], schools, `${seed}:${draftYear}`);
-  const draftEvaluation = generateDraftEvaluationState(seed, draftYear, initialProspects, 1);
+  const draftEvaluation = generateDraftEvaluationState(seed, draftYear, initialProspects, 1, schools);
   const prospects = applyDraftEvaluationToProspects(initialProspects, draftEvaluation, schools, `${seed}:${draftYear}:evaluated`);
   const annualRecruitClass = generateAnnualRecruitClass(seed, draftYear - 1);
   const draftPicks = createDraftPicks(teams, selectedTeamId, neutralScenarioProfile, rng.fork("draft-picks"), draftYear, { includeSeededCompPicks: false });
@@ -987,6 +988,8 @@ export function generateSeasonDraftAssets(
       lastGeneratedDraftYear: draftYear,
       runtimeCsvs: annualDebug.loadedRuntimeCsvs,
       rngStreams: annualDebug.rngStreams,
+      schemaValidatedCsvs: annualDebug.schemaValidatedCsvs,
+      schemaValidatedColumns: annualDebug.schemaValidatedColumns,
       usesYearZeroBundles: annualDebug.usesYearZeroBundles
     },
     annualRecruitClass,
@@ -1121,21 +1124,29 @@ function collegePlayerToDraftProspect(
   seed: string,
   seasonContext?: {
     productionScore?: number;
-    awardCount: number;
+    awards: CollegeAwardResult[];
     injury?: CollegeInjuryResult;
   }
 ): Prospect {
   const rng = createRng(`${seed}:college-roster-draft:${player.id}`);
   const school = schools.find((candidate) => candidate.id === player.schoolId) ?? schools[0];
   const productionSignal = seasonContext?.productionScore ?? player.collegeOverall;
-  const awardBump = Math.min(4, seasonContext?.awardCount ?? 0);
-  const injuryDrag = seasonContext?.injury ? seasonContext.injury.severity === "catastrophic" ? 5 : seasonContext.injury.severity === "major" ? 3 : seasonContext.injury.severity === "moderate" ? 1 : 0 : 0;
+  const awardDraftBonus = Math.min(10, seasonContext?.awards.reduce((sum, award) => sum + award.draftBoardBonus, 0) ?? 0);
+  const awardMediaBonus = Math.min(8, seasonContext?.awards.reduce((sum, award) => sum + award.mediaBonus, 0) ?? 0);
+  const awardBump = Math.min(6, awardDraftBonus * 0.55 + awardMediaBonus * 0.12);
+  const concernProfile = generateConcernProfile(seed, `college-declaration-${player.id}`);
+  const injuryDrag = seasonContext?.injury
+    ? (seasonContext.injury.severity === "catastrophic" ? 5 : seasonContext.injury.severity === "major" ? 3 : seasonContext.injury.severity === "moderate" ? 1 : 0)
+      + seasonContext.injury.potentialLoss * 0.8
+      + seasonContext.injury.longTermWear * 0.08
+    : 0;
+  const medicalPenalty = seasonContext?.injury?.draftMedicalPenalty ?? injuryDrag * 7;
+  const medicalGrade = Math.round(clamp(concernProfile.medical - medicalPenalty, 20, 99));
   const nflOverall = Math.round(clamp(player.collegeOverall - 6 + (productionSignal - 65) * 0.04 + awardBump - injuryDrag + rng.normal(0, 2), 35, 88));
   const nflPotential = calibratePotential(nflOverall, Math.round(clamp(player.collegePotential - 4 + awardBump * 0.5 - injuryDrag * 0.75 + rng.normal(0, 3), nflOverall, 95)));
   const ratings = generateRatings(player.position, nflOverall, rng.fork("ratings"));
   const trueOverall = calculateOverallFromRatings(player.position, ratings);
   const classYear = player.classYear === "RS-SO" ? "RS-SO" : player.classYear === "JR" ? "JR" : "SR";
-  const concernProfile = generateConcernProfile(seed, `college-declaration-${player.id}`);
   const development = generateDevelopmentProfile(player.age, concernProfile.workEthic, rng.fork("development"));
   const production = Math.round(clamp(productionSignal + rng.normal(0, 4), 25, 99));
   const prospectTraits = rng.shuffle(traits).slice(0, rng.int(1, 3));
@@ -1168,9 +1179,9 @@ function collegePlayerToDraftProspect(
     development,
     projectedRound,
     region,
-    stock: Math.round(clamp((trueOverall - 56) * 1.3 + productionTrend * 0.45 + rng.normal(0, 7), -35, 35)),
+    stock: Math.round(clamp((trueOverall - 56) * 1.3 + productionTrend * 0.45 + awardDraftBonus * 0.8 + rng.normal(0, 7), -35, 35)),
     riskFlags: seasonContext?.injury ? [...riskFlagsFor(production, nflPotential, trueOverall, rng, concernProfile), "Medical"] : riskFlagsFor(production, nflPotential, trueOverall, rng, concernProfile),
-    medical: Math.round(clamp(concernProfile.medical - injuryDrag * 7, 20, 99)),
+    medical: medicalGrade,
     character: concernProfile.character,
     workEthic: concernProfile.workEthic,
     concernProfileVersion: CONCERN_PROFILE_VERSION,
@@ -1183,7 +1194,7 @@ function collegePlayerToDraftProspect(
     valuePickLabel: "Fair",
     concernVisibility: { medical: true, character: true, workEthic: true },
     concernDetails: {
-      medical: seasonContext?.injury ? `${seasonContext.injury.severity} college injury history; missed ${seasonContext.injury.missedGames} games.` : concernProfile.medical < 45 ? "Medical red flag; teams may shade availability and recovery." : "Medical range looks stable.",
+      medical: seasonContext?.injury ? `${seasonContext.injury.severity} ${seasonContext.injury.injuryFamily} history; missed ${seasonContext.injury.missedGames} games, recurrence risk ${Math.round(seasonContext.injury.recurrenceRisk * 100)}%, long-term wear ${Math.round(seasonContext.injury.longTermWear)}.` : concernProfile.medical < 45 ? "Medical red flag; teams may shade availability and recovery." : "Medical range looks stable.",
       character: concernProfile.character < 45 ? "Character red flag; teams may shade off-field availability." : "Character range looks stable.",
       workEthic: concernProfile.workEthic < 45 ? "Work ethic red flag; teams may shade development projection." : "Work ethic range looks stable."
     },
@@ -1191,7 +1202,7 @@ function collegePlayerToDraftProspect(
     productionTrend,
     favorite: false,
     hidden: false,
-    scoutReports: [`College roster declaration: ${player.collegeOverall} college scale translated to ${trueOverall} NFL scale. Production ${production}; awards ${awardBump}; injury drag ${injuryDrag}.`],
+    scoutReports: [`College roster declaration: ${player.collegeOverall} college scale translated to ${trueOverall} NFL scale. Production ${production}; award draft bonus ${Math.round(awardDraftBonus * 10) / 10}; injury drag ${Math.round(injuryDrag * 10) / 10}; medical penalty ${Math.round(medicalPenalty)}.`],
     scouted: {
       low: trueOverall,
       high: trueOverall,
@@ -1200,7 +1211,7 @@ function collegePlayerToDraftProspect(
       confidence: progress,
       progress,
       concerns: {
-        medical: [Math.round(clamp(concernProfile.medical - injuryDrag * 7, 20, 99)), Math.round(clamp(concernProfile.medical - injuryDrag * 7, 20, 99))],
+        medical: [medicalGrade, medicalGrade],
         character: [concernProfile.character, concernProfile.character],
         workEthic: [concernProfile.workEthic, concernProfile.workEthic]
       },
@@ -1232,7 +1243,7 @@ function draftProspectsFromCollegeRoster(
     .slice(0, 460);
   return rankProspectBoard(declared.map((player) => collegePlayerToDraftProspect(player, schools, scoutingQuality, seed, {
     productionScore: productionByPlayerId.get(player.id),
-    awardCount: awardsByPlayerId.get(player.id)?.length ?? 0,
+    awards: awardsByPlayerId.get(player.id) ?? [],
     injury: injuryByPlayerId.get(player.id)
   })), schools, seed);
 }
@@ -1357,7 +1368,7 @@ export function createNewSave(
     .filter((member) => member.teamId === selectedTeam.id && member.department === "Scouting")
     .reduce((sum, member) => sum + member.ratings.scouting, 0) / 7;
   const initialProspects = yearZeroDraftClassToLiveProspects(yearZero.draftClass, schools, selectedScouting, seed);
-  const draftEvaluation = generateDraftEvaluationState(seed, 2027, initialProspects, 1);
+  const draftEvaluation = generateDraftEvaluationState(seed, 2027, initialProspects, 1, schools);
   const prospects = applyDraftEvaluationToProspects(initialProspects, draftEvaluation, schools, `${seed}:2027:evaluated`);
   const annualRecruitClass = generateAnnualRecruitClass(seed, 2026);
   const annualDebug = annualRuntimeDebug();
@@ -1367,6 +1378,7 @@ export function createNewSave(
   const draftPicks = createDraftPicks(teams, selectedTeam.id, scenarioProfile, rng.fork("draft-picks"));
   const collegeRoster = createInitialCollegeRosterState(yearZero, 2026);
   const collegeSeasonResults = generateCollegeSeasonResults(seed, collegeRoster, 2026);
+  const collegeTraining = generateCollegeTrainingBanks(seed, 2026, collegeRoster, collegeSeasonResults);
   const schoolProfiles = buildSchoolProfileState(schools, seed, 2026);
   const annualRecruiting = generateAnnualRecruitingState(seed, 2026, schools, annualRecruitClass.recruits, 1, schoolProfiles, collegeRoster);
 
@@ -1374,6 +1386,7 @@ export function createNewSave(
     version: 1,
     yearZero,
     collegeRoster,
+    collegeTraining,
     schoolProfiles,
     collegeSeasonResults,
     collegeMorale: generateCollegeMoraleState(seed, 2026, collegeRoster, collegeSeasonResults, annualRecruiting),
@@ -1400,6 +1413,8 @@ export function createNewSave(
       lastGeneratedDraftYear: 2027,
       runtimeCsvs: annualDebug.loadedRuntimeCsvs,
       rngStreams: annualDebug.rngStreams,
+      schemaValidatedCsvs: annualDebug.schemaValidatedCsvs,
+      schemaValidatedColumns: annualDebug.schemaValidatedColumns,
       usesYearZeroBundles: annualDebug.usesYearZeroBundles
     },
     annualRecruiting,

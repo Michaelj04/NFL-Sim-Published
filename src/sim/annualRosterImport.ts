@@ -1,4 +1,5 @@
 import type { AnnualRecruit, AnnualRosterImportPlan, AnnualRosterImportPlanEntry, CollegeRosterPlayer, GameSave } from "../types";
+import { annualPromiseType } from "./annualRuntime";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -76,7 +77,7 @@ export function applyAnnualRosterImportPlan(save: GameSave): GameSave {
     const prospect = recruitsById.get(entry.prospectId!);
     if (!prospect || existingCollegeIds.has(`college-${entry.targetTeamId}-${prospect.id}`)) return [];
     signedProspectIds.add(prospect.id);
-    return [prospectToCollegeRosterPlayer(prospect, entry.targetTeamId, save.seasonYear)];
+    return [prospectToCollegeRosterPlayer(prospect, entry.targetTeamId, save.seasonYear, findRecruitingPromise(save, entry.prospectId!, entry.targetTeamId))];
   });
   const players = save.players.map((player) => {
     const targetTeamId = nflTargetByPlayerId.get(player.id);
@@ -128,7 +129,13 @@ export function applyAnnualRosterImportPlan(save: GameSave): GameSave {
   };
 }
 
-function prospectToCollegeRosterPlayer(prospect: AnnualRecruit, schoolId: string, seasonYear: number): CollegeRosterPlayer {
+function findRecruitingPromise(save: GameSave, prospectId: string, schoolId: string): { promiseType?: string; target?: number } {
+  const entry = save.annualRecruiting?.board.find((candidate) => candidate.prospectId === prospectId && candidate.schoolId === schoolId);
+  const promise = annualPromiseType(entry?.promiseType);
+  return { promiseType: promise?.promiseType, target: promise?.targetValue };
+}
+
+function prospectToCollegeRosterPlayer(prospect: AnnualRecruit, schoolId: string, seasonYear: number, promise: { promiseType?: string; target?: number }): CollegeRosterPlayer {
   return {
     id: `college-${schoolId}-${prospect.id}`,
     firstName: prospect.firstName,
@@ -142,6 +149,9 @@ function prospectToCollegeRosterPlayer(prospect: AnnualRecruit, schoolId: string
     ratingScaleContext: "college",
     source: "annual_recruiting",
     rosterStatus: "active",
-    signedSeason: seasonYear
+    signedSeason: seasonYear,
+    recruitingPromiseType: promise.promiseType,
+    recruitingPromiseTarget: promise.target,
+    recruitingPromiseSeason: promise.promiseType ? seasonYear : undefined
   };
 }

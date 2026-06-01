@@ -23,6 +23,7 @@ import { versatilityBonus } from "./positionEligibility";
 import { normalizeScoutingRegion, scoutingRegionList } from "./regions";
 import { rosterNeeds, scoutingQuality, staffForTeam } from "./selectors";
 import { scoutSpecialtyTags, staffOverall } from "./staffModel";
+import { annualCompetitionTranslation, annualDraftBoardWeightsForPosition, annualDraftHitRate, annualDraftPositionValue } from "./annualRuntime";
 
 export const scoutingRegions: ScoutingRegion[] = scoutingRegionList;
 export const scoutingSides: ScoutingSide[] = ["Offense", "Defense", "Special Teams"];
@@ -79,13 +80,8 @@ export function sideForPosition(position: Position): ScoutingSide {
 }
 
 export function positionDraftValue(position: Position): number {
-  if (position === "QB") return 10;
-  if (["LT", "EDGE", "CB", "WR"].includes(position)) return 5;
-  if (["RT", "DL"].includes(position)) return 2;
-  if (["LG", "C", "RG", "LB", "S"].includes(position)) return 0;
-  if (position === "TE" || position === "RB") return -1.5;
-  if (position === "K" || position === "P") return -24;
-  return 0;
+  const value = annualDraftPositionValue(position);
+  return Math.round((value.draftPositionValue - 1) * 28 + value.round1Bonus * 18 - value.day3Discount * 8);
 }
 
 function average(values: number[]): number {
@@ -101,6 +97,13 @@ function schoolContextPenalty(school: CollegeProgram | undefined): number {
   const sizePenalty = school.subdivision === "FCS" ? 3 : 0;
   const competitionPenalty = clamp((58 - school.competition) / 10, 0, 4);
   return sizePenalty + competitionPenalty;
+}
+
+function competitionTierForSchool(school: CollegeProgram | undefined): string {
+  if (!school) return "OTHER";
+  if (school.subdivision === "FCS") return school.prestige >= 62 || school.competition >= 62 ? "FCS_TOP" : "FCS_LOW";
+  if (school.prestige >= 80 || school.competition >= 78) return "FBS_POWER";
+  return "FBS_G5";
 }
 
 export function ensureProspectConcerns(prospect: Prospect): Pick<Prospect, "concernVisibility" | "concernDetails"> {
@@ -155,11 +158,27 @@ function consensusGradeFor(prospect: Prospect, school: CollegeProgram | undefine
   const progress = prospect.consensusProgress ?? 45;
   const noise = rng.normal(0, clamp((92 - progress) / 7, 1.8, 10.5));
   const tierBonus = clamp((school?.prestige ?? 50) / 18 + (school?.competition ?? 50) / 26, 2, 8);
+  const weights = annualDraftBoardWeightsForPosition(prospect.position);
+  const hitRate = annualDraftHitRate(starBucketForProspect(prospect), prospect.position);
+  const athletic = (prospect.combine.speed + prospect.combine.strength + prospect.combine.agility + prospect.combine.explosion) / 4;
+  const ageGrade = clamp(90 - Math.max(0, prospect.age - 21) * 8, 35, 95);
+  const allstarSignal = prospect.scoutReports?.some((report) => report.includes("All-star invite")) ? 78 : 55;
+  const characterGrade = (prospect.character + prospect.workEthic) / 2;
+  const competition = annualCompetitionTranslation(competitionTierForSchool(school));
+  const competitionGrade = clamp(((school?.competition ?? 50) + (school?.subdivision === "FBS" ? 8 : -2)) * competition.draftEvalMult, 20, 95);
   const score =
-    (prospect.trueOverall + noise) * 0.54 +
-    (prospect.potential + noise * 0.65) * 0.28 +
-    prospect.production * 0.08 +
-    prospect.stock * 0.08 +
+    prospect.production * weights.filmProdW +
+    athletic * weights.athleticW +
+    ageGrade * weights.ageW +
+    prospect.medical * weights.medicalW +
+    competitionGrade * weights.competitionW +
+    allstarSignal * weights.allstarW +
+    characterGrade * weights.characterW +
+    (prospect.trueOverall + noise) * 0.22 +
+    (prospect.potential + noise * 0.65) * 0.14 +
+    prospect.stock * 0.06 +
+    hitRate.starterHitProb * 12 +
+    hitRate.impactHitProb * 20 +
     positionDraftValue(prospect.position) +
     versatilityBonus(prospect) * 0.25 +
     tierBonus +
@@ -170,19 +189,37 @@ function consensusGradeFor(prospect: Prospect, school: CollegeProgram | undefine
 function teamGradeFor(prospect: Prospect): number {
   const ovrMid = (prospect.scouted.low + prospect.scouted.high) / 2;
   const potMid = (prospect.scouted.potentialLow + prospect.scouted.potentialHigh) / 2;
+  const weights = annualDraftBoardWeightsForPosition(prospect.position);
+  const athletic = (prospect.combine.speed + prospect.combine.strength + prospect.combine.agility + prospect.combine.explosion) / 4;
+  const ageGrade = clamp(90 - Math.max(0, prospect.age - 21) * 8, 35, 95);
+  const allstarSignal = prospect.scoutReports?.some((report) => report.includes("All-star invite")) ? 78 : 55;
+  const characterGrade = (prospect.character + prospect.workEthic) / 2;
   const uncertaintyPenalty =
     (prospect.scouted.high - prospect.scouted.low) * 0.06 +
     (prospect.scouted.potentialHigh - prospect.scouted.potentialLow) * 0.035;
   const score =
-    ovrMid * 0.55 +
-    potMid * 0.31 +
-    prospect.production * 0.07 +
-    prospect.stock * 0.07 +
+    ovrMid * 0.34 +
+    potMid * 0.2 +
+    prospect.production * weights.filmProdW +
+    athletic * weights.athleticW +
+    ageGrade * weights.ageW +
+    prospect.medical * weights.medicalW +
+    allstarSignal * weights.allstarW +
+    characterGrade * weights.characterW +
+    prospect.stock * 0.05 +
     positionDraftValue(prospect.position) +
     versatilityBonus(prospect) * 0.3 +
     teamConcernAdjustment(prospect.scouted.concerns) -
     uncertaintyPenalty;
   return Number(score.toFixed(2));
+}
+
+function starBucketForProspect(prospect: Prospect): string {
+  const grade = prospect.trueOverall * 0.58 + prospect.potential * 0.42;
+  if (grade >= 82) return "5";
+  if (grade >= 74) return "4";
+  if (grade >= 64) return "3";
+  return "2";
 }
 
 function valueLabel(score: number): string {

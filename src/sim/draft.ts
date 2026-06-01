@@ -14,6 +14,7 @@ import { normalizePlayerModel } from "./playerModel";
 import { postseasonDraftRank } from "./postseason";
 import { eligiblePositionsFor, normalizePositionFits, versatilityBonus } from "./positionEligibility";
 import { positionDraftValue } from "./scouting";
+import { annualNflScoutingArchetype, annualNflTeamArchetype, annualPickValue } from "./annualRuntime";
 
 const DRAFT_YEAR = 2027;
 const rosterNeedCache = new WeakMap<GameSave, Map<string, ReturnType<typeof rosterNeeds>>>();
@@ -241,7 +242,7 @@ function positionPremium(position: Position): number {
   return positionDraftValue(position);
 }
 
-function prospectDraftScore(prospect: Prospect, needGrades: Map<Position, number>, rngSeed: string): number {
+function prospectDraftScore(prospect: Prospect, needGrades: Map<Position, number>, rngSeed: string, pick: DraftPick, teamId?: string): number {
   const need = needGrades.get(prospect.position) ?? 60;
   const needBoost = clamp(64 - need, -7, 22);
   const medicalRange = prospect.scouted.concerns?.medical ?? [prospect.medical, prospect.medical];
@@ -249,15 +250,38 @@ function prospectDraftScore(prospect: Prospect, needGrades: Map<Position, number
   const workRange = prospect.scouted.concerns?.workEthic ?? [prospect.workEthic, prospect.workEthic];
   const riskPenalty = prospect.riskFlags.length * 0.55 - teamConcernAdjustment({ medical: medicalRange, character: characterRange, workEthic: workRange });
   const rng = createRng(rngSeed);
+  const archetype = teamId ? annualNflTeamArchetype(teamId) : undefined;
+  const scoutingArchetype = annualNflScoutingArchetype(archetype?.archetype ?? "balanced");
+  const pickValue = annualPickValue(pick.overallPick);
+  const traitsWeight = archetype?.weightTraits ?? 0.28;
+  const productionWeight = archetype?.weightProduction ?? 0.3;
+  const medicalWeight = (archetype?.weightMedical ?? 0.12) * scoutingArchetype.medicalConservatism;
+  const ageWeight = archetype?.weightAge ?? 0.08;
+  const allstarWeight = archetype?.weightAllstar ?? 0.06;
+  const athletic = (prospect.combine.speed + prospect.combine.strength + prospect.combine.agility + prospect.combine.explosion) / 4;
+  const allstarSignal = prospect.scoutReports?.some((report) => report.includes("All-star invite")) ? 76 : 54;
+  const ageGrade = clamp(90 - Math.max(0, prospect.age - 21) * 8, 35, 95);
+  const archetypeSignal =
+    athletic * traitsWeight +
+    prospect.production * productionWeight +
+    prospect.medical * medicalWeight +
+    ageGrade * ageWeight +
+    allstarSignal * allstarWeight +
+    athletic * scoutingArchetype.combineWeight +
+    ((prospect.character + prospect.workEthic) / 2) * scoutingArchetype.interviewWeight;
+  const pickDiscipline = clamp((pickValue.internalValueDefault / 3000) * (1 - scoutingArchetype.riskTolerance), 0.02, 0.5);
+  const boardValue = clamp((pick.overallPick - prospect.consensusRank) * pickDiscipline, -18, 18);
   return (
-    prospect.consensusGrade * 0.52 +
-    prospect.teamGrade * 0.18 +
+    prospect.consensusGrade * 0.42 +
+    prospect.teamGrade * 0.14 +
     prospect.scouted.high * 0.1 +
     (prospect.scouted.potentialHigh ?? prospect.potential) * 0.08 +
-    prospect.stock * 0.1 +
+    prospect.stock * 0.08 +
+    archetypeSignal * 0.22 +
+    boardValue +
     needBoost +
     positionPremium(prospect.position) * 0.4 -
-    riskPenalty +
+    riskPenalty * (1 + medicalWeight) +
     versatilityBonus(prospect) * 0.35 +
     rng.float(-2.2, 2.2)
   );
@@ -271,7 +295,7 @@ function chooseCpuProspect(save: GameSave, teamId: string, pick: DraftPick): Pro
     .slice(0, 180)
     .map((prospect) => ({
       prospect,
-      score: prospectDraftScore(prospect, needGrades, `${save.seed}:${pick.id}:${prospect.id}`)
+      score: prospectDraftScore(prospect, needGrades, `${save.seed}:${pick.id}:${prospect.id}`, pick, teamId)
     }));
   return candidates.sort((a, b) => b.score - a.score)[0]?.prospect;
 }

@@ -15,6 +15,7 @@ import { createDraftState, createRecords, generateSeasonDraftAssets } from "./ge
 import { progressAnnualCollegeRoster } from "./collegeRoster";
 import { generateCollegeSeasonResults } from "./collegeSeasonResults";
 import { generateCollegeMoraleState } from "./collegeMorale";
+import { generateCollegeTrainingBanks } from "./collegeTraining";
 import { buildSchoolProfileState } from "./schoolProfiles";
 import { applyMedicalEvents, dailyPracticeMedicalEvents, tickMedicalRecovery, weeklyPracticeMedicalEvents } from "./medical";
 import { runWeeklyTraining } from "./playerModel";
@@ -734,7 +735,11 @@ export function startNextSeason(save: GameSave): GameSave {
   const previousSeasonRanks = divisionRanksFromRecords(importedSave.teams, importedSave.records);
   const players = importedSave.players.map(resetSeasonStats);
   const previousCollegeResults = importedSave.collegeSeasonResults;
-  const collegeRoster = progressAnnualCollegeRoster(importedSave, seasonYear, draftYear);
+  const trainingReadySave = {
+    ...importedSave,
+    collegeTraining: generateCollegeTrainingBanks(importedSave.seed, currentSeasonYear, importedSave.collegeRoster, importedSave.collegeSeasonResults)
+  };
+  const collegeRoster = progressAnnualCollegeRoster(trainingReadySave, seasonYear, draftYear);
   const schoolProfiles = importedSave.schoolProfiles ? { ...importedSave.schoolProfiles, seasonYear } : buildSchoolProfileState(importedSave.schools, importedSave.seed, seasonYear);
   const assets = generateSeasonDraftAssets(importedSave.teams, importedSave.schools, importedSave.staff, importedSave.selectedTeamId, importedSave.seed, draftYear, collegeRoster, previousCollegeResults, schoolProfiles);
   const carriedCurrentPicks = new Map(
@@ -744,6 +749,7 @@ export function startNextSeason(save: GameSave): GameSave {
   );
   const draftPicks = assets.draftPicks.map((pick) => (pick.draftYear === draftYear ? carriedCurrentPicks.get(pick.id) ?? pick : pick));
   const collegeSeasonResults = generateCollegeSeasonResults(importedSave.seed, collegeRoster, seasonYear);
+  const collegeTraining = generateCollegeTrainingBanks(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults);
   const collegeMorale = generateCollegeMoraleState(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults, assets.annualRecruiting);
   const next: GameSave = {
     ...importedSave,
@@ -759,6 +765,7 @@ export function startNextSeason(save: GameSave): GameSave {
       seasonYear
     } : undefined,
     collegeSeasonResults,
+    collegeTraining,
     collegeMorale,
     previousSeasonRanks,
     currentWeek: 1,
