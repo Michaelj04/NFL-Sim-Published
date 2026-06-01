@@ -750,7 +750,7 @@ export function startNextSeason(save: GameSave): GameSave {
   const draftPicks = assets.draftPicks.map((pick) => (pick.draftYear === draftYear ? carriedCurrentPicks.get(pick.id) ?? pick : pick));
   const collegeSeasonResults = generateCollegeSeasonResults(importedSave.seed, collegeRoster, seasonYear);
   const collegeTraining = generateCollegeTrainingBanks(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults);
-  const collegeMorale = generateCollegeMoraleState(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults, assets.annualRecruiting);
+  const collegeMorale = generateCollegeMoraleState(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults, assets.annualRecruiting, collegeTraining);
   const next: GameSave = {
     ...importedSave,
     ...assets,

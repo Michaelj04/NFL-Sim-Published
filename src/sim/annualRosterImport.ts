@@ -149,6 +149,8 @@ function prospectToCollegeRosterPlayer(prospect: AnnualRecruit, schoolId: string
     ratingScaleContext: "college",
     source: "annual_recruiting",
     rosterStatus: "active",
+    academicRisk: 0,
+    academicEligible: true,
     signedSeason: seasonYear,
     recruitingPromiseType: promise.promiseType,
     recruitingPromiseTarget: promise.target,

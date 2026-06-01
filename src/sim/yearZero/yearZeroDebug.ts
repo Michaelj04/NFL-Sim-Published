@@ -1,5 +1,6 @@
 import type { GameSave } from "../../types";
 import { buildPipelineSchedulerDebug, type PipelineSchedulerDebug } from "../pipelineScheduler";
+import { buildRuntimeGovernanceReport, type RuntimeGovernanceReport } from "../runtimeGovernance";
 import { buildSelfAuditRows, type SelfAuditRow } from "./yearZeroSelfAudit";
 
 export interface YearZeroDebugExport {
@@ -13,6 +14,7 @@ export interface YearZeroDebugExport {
   invariants: Record<string, boolean>;
   selfAudit: SelfAuditRow[];
   pipelineScheduler: PipelineSchedulerDebug;
+  runtimeGovernance: RuntimeGovernanceReport;
   loadedRuntimeBundles: string[];
   collegeRoster?: {
     seasonYear: number;
@@ -31,6 +33,7 @@ export interface YearZeroDebugExport {
       redshirtedPlayers: number;
       walkOnsAdded: number;
       cutPlayers: number;
+      academicIneligiblePlayers: number;
     };
   };
   collegeSeasonResults?: {
@@ -110,6 +113,8 @@ export interface YearZeroDebugExport {
     recruits: number;
     fiveStars: number;
     fourStars: number;
+    ratingInputCoverage: number;
+    convertedBroadPositions: number;
     runtimeCsvs: string[];
     usesYearZeroBundles: false;
   };
@@ -193,12 +198,13 @@ export function buildYearZeroDebugExport(save: Pick<GameSave, "yearZero" | "coll
     && save.schoolProfiles.profiles.every((profile) => Number.isFinite(profile.latitude) && Number.isFinite(profile.longitude) && profile.timezone.length > 0);
   const noBroadPositions = [...finalPlayerPositions, ...(save.collegeRoster?.players.map((player) => player.position) ?? []), ...save.prospects.map((prospect) => prospect.position)].every((position) => !forbiddenPositions.has(position));
   const pipelineScheduler = buildPipelineSchedulerDebug(save as GameSave);
+  const runtimeGovernance = buildRuntimeGovernanceReport();
   const balanceReady = pipelineScheduler.balanceMetrics.length > 0 && pipelineScheduler.balanceMetrics.some((metric) => metric.status === "within_range");
   const selfAudit = buildSelfAuditRows({
     "CSV loader": { status: auditStatus(yearZero.bundleCount === 19), notes: "Year Zero bundle loader imports all active bundle CSVs; annual loaders import selected active runtime CSVs." },
-    "CSV validator": { status: auditStatus(yearZero.bundledRows === 14939), notes: "Bundle row count/schema/category checks run before payload use; annual helper loaders validate manifest presence." },
-    "Active manifest enforcement": { status: auditStatus(yearZero.bundleCount === 19 && annualRuntimeClean), notes: "Year Zero and annual runtime paths enforce manifest separation and avoid Year Zero bundles after bootstrap." },
-    "No R or research extractors": { status: "Implemented", notes: "Runtime code uses package CSV imports only; no R/Rscript/RMarkdown/research extraction pipeline was added." },
+    "CSV validator": { status: auditStatus(yearZero.bundledRows === 14939 && runtimeGovernance.violations.length === 0), notes: "Bundle row count/schema/category checks run before payload use; annual helper loaders validate manifest presence and governance maps." },
+    "Active manifest enforcement": { status: auditStatus(yearZero.bundleCount === 19 && annualRuntimeClean && runtimeGovernance.violations.length === 0), notes: "Year Zero and annual runtime paths enforce manifest separation, supersession blocking, and avoid Year Zero bundles after bootstrap." },
+    "No R or research extractors": { status: auditStatus(runtimeGovernance.removedPatternsBlocked > 0 && runtimeGovernance.violations.length === 0), notes: "Runtime governance validates supersession/removed patterns so R/RMarkdown/research extraction inputs remain blocked." },
     "School profile builder": { status: auditStatus(schoolProfilesReady && (save.schoolProfiles?.profiles.some((profile) => profile.rosterTemplate && Number.isFinite(profile.development) && Number.isFinite(profile.portalAggression)) ?? false)), notes: "School profiles are built from active runtime CSVs with deterministic repo adapters, archetypes, success history, overrides, roster templates, and portal/development fields." },
     "Campus geography precedence": { status: auditStatus(schoolProfilesReady), notes: "Campus CSV rows win when matched; generated repo schools receive explicit deterministic adapter geography." },
     "Fresh universe only": { status: auditStatus(!!save.yearZero), notes: "Year Zero state is created on fresh save and persisted rather than rerun during annual rollover." },
@@ -266,6 +272,7 @@ export function buildYearZeroDebugExport(save: Pick<GameSave, "yearZero" | "coll
     },
     selfAudit,
     pipelineScheduler,
+    runtimeGovernance,
     invariants: {
       freshSaveBootstrapPresent: true,
       all19BundlesLoaded: yearZero.bundleCount === 19,
@@ -306,7 +313,8 @@ export function buildYearZeroDebugExport(save: Pick<GameSave, "yearZero" | "coll
         graduatedPlayers: save.collegeRoster.lastProgression.graduatedPlayers,
         redshirtedPlayers: save.collegeRoster.lastProgression.redshirtedPlayers,
         walkOnsAdded: save.collegeRoster.lastProgression.walkOnsAdded,
-        cutPlayers: save.collegeRoster.lastProgression.cutPlayers
+        cutPlayers: save.collegeRoster.lastProgression.cutPlayers,
+        academicIneligiblePlayers: save.collegeRoster.lastProgression.academicIneligiblePlayers ?? 0
       } : undefined
     } : undefined,
     collegeSeasonResults: save.collegeSeasonResults ? {
@@ -386,6 +394,8 @@ export function buildYearZeroDebugExport(save: Pick<GameSave, "yearZero" | "coll
       recruits: save.annualRecruitClass.recruits.length,
       fiveStars: save.annualRecruitClass.recruits.filter((recruit) => recruit.stars === 5).length,
       fourStars: save.annualRecruitClass.recruits.filter((recruit) => recruit.stars === 4).length,
+      ratingInputCoverage: save.annualRecruitClass.recruits.filter((recruit) => Object.keys(recruit.ratingInputs ?? {}).length > 0).length,
+      convertedBroadPositions: save.annualRecruitClass.recruits.filter((recruit) => recruit.generationPosition !== recruit.position).length,
       runtimeCsvs: save.annualRecruitClass.runtimeCsvs,
       usesYearZeroBundles: save.annualRecruitClass.usesYearZeroBundles
     } : undefined,

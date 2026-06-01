@@ -353,7 +353,7 @@ export function normalizeSave(save: GameSave): GameSave {
     collegeRoster: normalizedCollegeRoster,
     collegeTraining: save.collegeTraining ?? generateCollegeTrainingBanks(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults),
     collegeSeasonResults: normalizedCollegeSeasonResults,
-    collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.annualRecruiting),
+    collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.annualRecruiting, save.collegeTraining),
     draftEvaluation: save.draftEvaluation ?? generateDraftEvaluationState(save.seed, normalizedDraftState.draftYear, save.prospects ?? [], save.currentWeek ?? 1, save.schools),
     previousSeasonRanks: save.previousSeasonRanks,
     scenario: save.scenario ?? "neutral",
@@ -1716,7 +1716,7 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
         ) : null}
         {debug.annualRecruitClass ? (
           <p>
-            Annual recruit class: {debug.annualRecruitClass.recruits.toLocaleString()} recruits, including {debug.annualRecruitClass.fiveStars.toLocaleString()} five-stars and {debug.annualRecruitClass.fourStars.toLocaleString()} four-stars.
+            Annual recruit class: {debug.annualRecruitClass.recruits.toLocaleString()} recruits, including {debug.annualRecruitClass.fiveStars.toLocaleString()} five-stars and {debug.annualRecruitClass.fourStars.toLocaleString()} four-stars; {debug.annualRecruitClass.ratingInputCoverage.toLocaleString()} with rating-input maps and {debug.annualRecruitClass.convertedBroadPositions.toLocaleString()} broad-position conversions.
           </p>
         ) : null}
         {debug.annualRosterImportPlan ? (
@@ -1732,7 +1732,7 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
         {debug.collegeRoster ? (
           <p>
             College roster state: {debug.collegeRoster.players.toLocaleString()} players on the college scale, {debug.collegeRoster.annualSignees.toLocaleString()} annual signees.
-            {debug.collegeRoster.lastProgression ? ` Last progression declared ${debug.collegeRoster.lastProgression.draftDeclarations.toLocaleString()} players for the ${debug.collegeRoster.lastProgression.draftYear} draft, redshirted ${debug.collegeRoster.lastProgression.redshirtedPlayers.toLocaleString()}, added ${debug.collegeRoster.lastProgression.walkOnsAdded.toLocaleString()} walk-ons, cut ${debug.collegeRoster.lastProgression.cutPlayers.toLocaleString()}.` : ""}
+            {debug.collegeRoster.lastProgression ? ` Last progression declared ${debug.collegeRoster.lastProgression.draftDeclarations.toLocaleString()} players for the ${debug.collegeRoster.lastProgression.draftYear} draft, redshirted ${debug.collegeRoster.lastProgression.redshirtedPlayers.toLocaleString()}, added ${debug.collegeRoster.lastProgression.walkOnsAdded.toLocaleString()} walk-ons, cut ${debug.collegeRoster.lastProgression.cutPlayers.toLocaleString()}, and marked ${(debug.collegeRoster.lastProgression.academicIneligiblePlayers ?? 0).toLocaleString()} academically ineligible.` : ""}
           </p>
         ) : null}
         {debug.collegeSeasonResults ? (
@@ -1773,6 +1773,13 @@ function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof bu
         {debug.pipelineScheduler.phaseGates.map((gate) => (
           <span key={gate.eventId} className={gate.status === "complete" ? "ok" : gate.status === "ready" ? "warn" : "danger"} title={`${gate.phase} week ${gate.weekHint} | ${gate.engineEffect}`}>{gate.status} {gate.eventId}</span>
         ))}
+      </div>
+      <div className="year-zero-invariants">
+        <strong>Runtime governance: {debug.runtimeGovernance.violations.length === 0 ? "clean" : `${debug.runtimeGovernance.violations.length} violation(s)`}</strong>
+        <span className={debug.runtimeGovernance.violations.length === 0 ? "ok" : "danger"} title={debug.runtimeGovernance.runtimeCsvs.join(", ")}>superseded blocked {debug.runtimeGovernance.supersededFilesBlocked}</span>
+        <span className="ok">removed patterns {debug.runtimeGovernance.removedPatternsBlocked}</span>
+        <span className="ok">precedence rules {debug.runtimeGovernance.precedenceRules}</span>
+        <span className="ok">provenance {debug.runtimeGovernance.provenanceCoveredActiveCsvs}/{debug.runtimeGovernance.activeRuntimeCsvs}</span>
       </div>
       <div className="year-zero-invariants">
         <strong>Balance metrics: {debug.pipelineScheduler.balanceMetrics.filter((metric) => metric.status === "within_range").length}/{debug.pipelineScheduler.balanceMetrics.length} in range</strong>

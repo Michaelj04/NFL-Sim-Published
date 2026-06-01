@@ -308,6 +308,10 @@ export interface Player {
   previousTeamId?: string;
   teamStartSeason?: number;
   draftYear?: number;
+  draftRound?: number;
+  draftOverallPick?: number;
+  draftOriginalTeamId?: string;
+  acquisitionSource?: "draft" | "udfa" | "generated" | "free-agent" | "trade" | "year-zero";
   collegeId: string;
   age: number;
   overall: number;
@@ -1060,6 +1064,8 @@ export interface RookieAcquisitionResult {
   costLabel: string;
   overallPick?: number;
   round?: number;
+  acquisitionTeamId?: string;
+  originalDraftTeamId?: string;
   firstName: string;
   lastName: string;
   position: Position;
@@ -1233,6 +1239,7 @@ export interface AnnualRecruit {
   truePotential: number;
   visibleOverallRange: [number, number];
   visiblePotentialRange: [number, number];
+  ratingInputs: Record<string, number>;
   nationalRank: number;
   stateRank: number;
   positionRank: number;
@@ -1246,6 +1253,7 @@ export interface AnnualRecruitClassState {
   recruits: AnnualRecruit[];
   classSize: number;
   starCounts: Record<string, number>;
+  positionMinimumsSatisfied?: boolean;
   runtimeCsvs: string[];
   usesYearZeroBundles: false;
 }
@@ -1325,6 +1333,8 @@ export interface CollegeRosterPlayer {
   ratingScaleContext: "college";
   source: "year_zero_college_roster" | "annual_recruiting" | "annual_transfer";
   rosterStatus?: "active" | "redshirt" | "walk_on" | "cut" | "graduated" | "declared";
+  academicRisk?: number;
+  academicEligible?: boolean;
   signedSeason?: number;
   recruitingPromiseType?: string;
   recruitingPromiseTarget?: number;
@@ -1344,6 +1354,7 @@ export interface CollegeRosterProgressionSummary {
   redshirtedPlayers: number;
   walkOnsAdded: number;
   cutPlayers: number;
+  academicIneligiblePlayers?: number;
 }
 
 export interface CollegeRosterState {
@@ -1358,6 +1369,14 @@ export interface CollegeTrainingBankEntry {
   playerId: string;
   schoolId: string;
   seasonYear: number;
+  personality: string;
+  nilSensitivity: number;
+  playingTimeSensitivity: number;
+  distanceSensitivity: number;
+  loyaltyMult: number;
+  decommitRiskMult: number;
+  portalRiskMult: number;
+  earlyDeclareAggression: number;
   athleticBank: number;
   technicalBank: number;
   mentalBank: number;

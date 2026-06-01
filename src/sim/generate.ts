@@ -1389,7 +1389,7 @@ export function createNewSave(
     collegeTraining,
     schoolProfiles,
     collegeSeasonResults,
-    collegeMorale: generateCollegeMoraleState(seed, 2026, collegeRoster, collegeSeasonResults, annualRecruiting),
+    collegeMorale: generateCollegeMoraleState(seed, 2026, collegeRoster, collegeSeasonResults, annualRecruiting, collegeTraining),
     draftEvaluation,
     seed,
     seasonYear: 2026,

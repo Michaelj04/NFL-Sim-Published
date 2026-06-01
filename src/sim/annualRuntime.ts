@@ -12,6 +12,7 @@ import calendarEventsText from "../../sports_sim_player_pipeline/data/active_run
 import collegeProductionWeightsText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/college_production_weights.csv?raw";
 import combineEventWeightsText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/combine_event_weights.csv?raw";
 import competitionTranslationText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/competition_translation.csv?raw";
+import csvParserRulesText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/csv_parser_rules.csv?raw";
 import draftStockComponentWeightsText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/draft_stock_component_weights.csv?raw";
 import draftBoardWeightsText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/draft_board_weights.csv?raw";
 import draftHitRatesText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/draft_hit_rates.csv?raw";
@@ -62,6 +63,7 @@ export interface AnnualRuntimeDebug {
   recruitClassSizes: number[];
   schemaValidatedCsvs: number;
   schemaValidatedColumns: number;
+  parserRulesApplied: number;
 }
 
 const ANNUAL_RUNTIME_FILES = [
@@ -77,6 +79,7 @@ const ANNUAL_RUNTIME_FILES = [
   "data/active_runtime_csvs/college_production_weights.csv",
   "data/active_runtime_csvs/combine_event_weights.csv",
   "data/active_runtime_csvs/competition_translation.csv",
+  "data/active_runtime_csvs/csv_parser_rules.csv",
   "data/active_runtime_csvs/draft_stock_component_weights.csv",
   "data/active_runtime_csvs/draft_board_weights.csv",
   "data/active_runtime_csvs/draft_hit_rates.csv",
@@ -129,6 +132,7 @@ const ANNUAL_RUNTIME_TEXT: Record<(typeof ANNUAL_RUNTIME_FILES)[number], string>
   "data/active_runtime_csvs/college_production_weights.csv": collegeProductionWeightsText,
   "data/active_runtime_csvs/combine_event_weights.csv": combineEventWeightsText,
   "data/active_runtime_csvs/competition_translation.csv": competitionTranslationText,
+  "data/active_runtime_csvs/csv_parser_rules.csv": csvParserRulesText,
   "data/active_runtime_csvs/draft_stock_component_weights.csv": draftStockComponentWeightsText,
   "data/active_runtime_csvs/draft_board_weights.csv": draftBoardWeightsText,
   "data/active_runtime_csvs/draft_hit_rates.csv": draftHitRatesText,
@@ -213,7 +217,7 @@ let cachedNflScoutingArchetypes: Map<string, AnnualNflScoutingArchetype> | undef
 let cachedPickValues: Map<number, AnnualPickValue> | undefined;
 let cachedCombineWeights: Map<string, number> | undefined;
 let cachedProDayAdjustment: AnnualProDayAdjustment | undefined;
-let cachedValidationSummary: { csvs: number; columns: number } | undefined;
+let cachedValidationSummary: { csvs: number; columns: number; parserRulesApplied: number } | undefined;
 
 export interface AnnualDevelopmentCurve {
   positionGroup: string;
@@ -249,6 +253,14 @@ export interface AnnualBalanceTarget {
   lowerBound: number;
   upperBound: number;
   notes: string;
+}
+
+interface AnnualParserRule {
+  ruleType: string;
+  appliesTo: string[];
+  acceptedValues: string;
+  normalization: string;
+  hardFail: boolean;
 }
 
 export interface AnnualAwardImpact {
@@ -542,7 +554,8 @@ export function annualRuntimeDebug(): AnnualRuntimeDebug {
     rngStreams: rngRows.slice(1).map((row) => row[streamIndex]).filter(Boolean),
     recruitClassSizes: starRows.slice(1).map((row) => Number(row[classSizeIndex])).filter(Number.isFinite),
     schemaValidatedCsvs: annualRuntimeValidationSummary().csvs,
-    schemaValidatedColumns: annualRuntimeValidationSummary().columns
+    schemaValidatedColumns: annualRuntimeValidationSummary().columns,
+    parserRulesApplied: annualRuntimeValidationSummary().parserRulesApplied
   };
   return cachedDebug;
 }
@@ -1065,7 +1078,7 @@ function validateAnnualRuntimeFiles(): void {
   annualRuntimeValidationSummary();
 }
 
-function annualRuntimeValidationSummary(): { csvs: number; columns: number } {
+function annualRuntimeValidationSummary(): { csvs: number; columns: number; parserRulesApplied: number } {
   if (cachedValidationSummary) return cachedValidationSummary;
   const registryRows = parseCsv(csvSchemaRegistryText);
   const registryHeader = registryRows[0] ?? [];
@@ -1079,6 +1092,9 @@ function annualRuntimeValidationSummary(): { csvs: number; columns: number } {
   if ([csvIndex, columnIndex, typeIndex, requiredIndex].some((index) => index < 0)) {
     throw new Error("csv_schema_registry.csv missing required schema columns.");
   }
+  const parserRules = loadCsvParserRules();
+  const parserRuleTypes = new Set(parserRules.map((rule) => rule.ruleType));
+  let parserRulesApplied = 0;
   let validatedColumns = 0;
   for (const path of ANNUAL_RUNTIME_FILES) {
     const basename = path.split("/").pop() ?? path;
@@ -1091,16 +1107,23 @@ function annualRuntimeValidationSummary(): { csvs: number; columns: number } {
       const index = header.indexOf(columnName);
       if (rule[requiredIndex] === "1" && index < 0) throw new Error(`${basename} missing required column ${columnName}.`);
       if (index < 0) continue;
+      const schemaType = rule[typeIndex];
+      if (!parserRuleTypes.has(schemaType) && schemaType !== "string") throw new Error(`${basename}.${columnName} schema type ${schemaType} has no csv_parser_rules row.`);
+      const parserRule = parserRules.find((candidate) => parserRuleAppliesToColumn(candidate, columnName));
+      if (parserRule) {
+        parserRulesApplied += 1;
+        assertParserRuleMatchesSchema(basename, columnName, schemaType, parserRule);
+      }
       validatedColumns += 1;
       for (const row of rows.slice(1)) {
         const value = row[index] ?? "";
         if (rule[requiredIndex] === "1" && value.trim() === "") throw new Error(`${basename}.${columnName} has blank required value.`);
         if (value.trim() === "") continue;
-        validateSchemaValue(basename, columnName, value, rule[typeIndex], rule[minIndex], rule[maxIndex], rule[allowedIndex]);
+        validateSchemaValue(basename, columnName, value, schemaType, rule[minIndex], rule[maxIndex], rule[allowedIndex]);
       }
     }
   }
-  cachedValidationSummary = { csvs: ANNUAL_RUNTIME_FILES.length, columns: validatedColumns };
+  cachedValidationSummary = { csvs: ANNUAL_RUNTIME_FILES.length, columns: validatedColumns, parserRulesApplied };
   return cachedValidationSummary;
 }
 
@@ -1115,9 +1138,62 @@ function validateSchemaValue(csvName: string, columnName: string, value: string,
   if (type === "boolean" && !["0", "1", "true", "false", "yes", "no"].includes(value.toLowerCase())) {
     throw new Error(`${csvName}.${columnName} expected boolean, got ${value}.`);
   }
+  if (type === "json") {
+    try {
+      JSON.parse(value);
+    } catch {
+      throw new Error(`${csvName}.${columnName} expected valid JSON.`);
+    }
+  }
   if (allowedValues) {
     const allowed = allowedValues.split("|").filter(Boolean);
     if (allowed.length > 0 && !allowed.includes(value)) throw new Error(`${csvName}.${columnName} invalid enum value ${value}.`);
+  }
+}
+
+function loadCsvParserRules(): AnnualParserRule[] {
+  const rows = parseCsv(csvParserRulesText);
+  const header = rows[0] ?? [];
+  const ruleTypeIndex = header.indexOf("rule_type");
+  const appliesToIndex = header.indexOf("applies_to");
+  const acceptedValuesIndex = header.indexOf("accepted_values");
+  const normalizationIndex = header.indexOf("normalization");
+  const hardFailIndex = header.indexOf("hard_fail");
+  if ([ruleTypeIndex, appliesToIndex, acceptedValuesIndex, normalizationIndex, hardFailIndex].some((index) => index < 0)) {
+    throw new Error("csv_parser_rules.csv missing required parser contract columns.");
+  }
+  return rows.slice(1).map((row) => ({
+    ruleType: row[ruleTypeIndex],
+    appliesTo: (row[appliesToIndex] ?? "").split("|").filter(Boolean),
+    acceptedValues: row[acceptedValuesIndex],
+    normalization: row[normalizationIndex],
+    hardFail: row[hardFailIndex] === "1"
+  })).filter((row) => row.ruleType);
+}
+
+function parserRuleAppliesToColumn(rule: AnnualParserRule, columnName: string): boolean {
+  return rule.appliesTo.some((pattern) => wildcardMatches(pattern, columnName));
+}
+
+function wildcardMatches(pattern: string, value: string): boolean {
+  if (pattern === value) return true;
+  if (!pattern.includes("*")) return false;
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`).test(value);
+}
+
+function assertParserRuleMatchesSchema(csvName: string, columnName: string, schemaType: string, parserRule: AnnualParserRule): void {
+  const allowed: Record<string, string[]> = {
+    boolean: ["boolean"],
+    number: ["number", "integer"],
+    integer: ["integer", "number"],
+    json: ["json"],
+    pipe_list: ["string"],
+    blank_optional: ["string", "number", "integer"]
+  };
+  const compatible = allowed[parserRule.ruleType] ?? [parserRule.ruleType];
+  if (parserRule.hardFail && !compatible.includes(schemaType)) {
+    throw new Error(`${csvName}.${columnName} parser rule ${parserRule.ruleType} conflicts with schema type ${schemaType}.`);
   }
 }
 

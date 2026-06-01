@@ -1,5 +1,5 @@
 import { clamp, createRng, type Rng } from "../lib/rng";
-import type { AnnualTransferPortalState, CollegeProgram, CollegeRosterPlayer, GameSave, NFLTeam, Player, SchoolProfile } from "../types";
+import type { AnnualTransferPortalState, CollegeProgram, CollegeRosterPlayer, CollegeTrainingBankEntry, GameSave, NFLTeam, Player, SchoolProfile } from "../types";
 import { annualRuntimeDebug, annualTransferDestinationWeights, annualTransferReasons, annualTransferTransitionProbability } from "./annualRuntime";
 import { isPracticeSquadPlayer } from "./practiceSquad";
 
@@ -21,12 +21,13 @@ function transferEntryScore(player: Player, rng: Rng): number {
   return depthFrustration + ageWindow + potentialGap + rng.normal(0, 8);
 }
 
-function collegeTransferEntryScore(player: CollegeRosterPlayer, rng: Rng, morale?: { morale: number; promisePressure: number; transferRisk: number }): number {
+function collegeTransferEntryScore(player: CollegeRosterPlayer, rng: Rng, morale?: { morale: number; promisePressure: number; transferRisk: number }, training?: CollegeTrainingBankEntry): number {
   const classWindow = player.classYear === "FR" ? 2 : player.classYear === "SO" || player.classYear === "RS-SO" ? 9 : player.classYear === "JR" ? 7 : -12;
   const potentialGap = Math.max(0, player.collegePotential - player.collegeOverall) * 0.48;
   const rolePressure = player.collegeOverall < 66 ? 12 : player.collegeOverall > 82 ? 5 : 2;
   const moralePressure = morale ? (100 - morale.morale) * 0.18 + morale.promisePressure * 0.12 + morale.transferRisk * 0.2 : 0;
-  return classWindow + potentialGap + rolePressure + moralePressure + rng.normal(0, 8);
+  const personalityPressure = training ? (training.portalRiskMult - 1) * 12 + training.playingTimeSensitivity * 4 - (training.loyaltyMult - 1) * 8 : 0;
+  return classWindow + potentialGap + rolePressure + moralePressure + personalityPressure + rng.normal(0, 8);
 }
 
 function destinationScore(team: NFLTeam, player: Player, componentWeights: Array<{ component: string; weight: number }>, rng: Rng): number {
@@ -85,22 +86,59 @@ function rosterNeedForDestination(save: GameSave, schoolId: string, position: Co
   return Math.round(clamp(48 + (target - active) * 8, 10, 95));
 }
 
+function selectCollegeTransferReason(
+  reasons: Array<{ reason: string; weight: number; threshold: string }>,
+  player: CollegeRosterPlayer,
+  morale: { morale: number; promisePressure: number; transferRisk: number; reasons: string[] } | undefined,
+  training: CollegeTrainingBankEntry | undefined,
+  rng: Rng
+): { reason: string; signal: number } {
+  const scored = reasons.map((reason) => {
+    const signal = collegeReasonSignal(reason.threshold, reason.reason, player, morale, training);
+    return {
+      ...reason,
+      signal,
+      adjustedWeight: reason.weight * (0.2 + signal / 100)
+    };
+  });
+  const selected = weightedPick(scored, rng, (item) => item.adjustedWeight);
+  return { reason: selected.reason, signal: Math.round(selected.signal) };
+}
+
+function collegeReasonSignal(
+  threshold: string,
+  reason: string,
+  player: CollegeRosterPlayer,
+  morale: { morale: number; promisePressure: number; transferRisk: number; reasons: string[] } | undefined,
+  training: CollegeTrainingBankEntry | undefined
+): number {
+  if (threshold === "low_snap_share" || reason === "playing_time") return morale?.reasons.includes("playing_time") ? 95 : clamp((training?.playingTimeSensitivity ?? 0.5) * 60 + (morale?.promisePressure ?? 0) * 0.35, 0, 100);
+  if (threshold === "promise_status_broken" || reason === "broken_promise") return morale?.reasons.includes("broken_promise") ? 100 : clamp((morale?.promisePressure ?? 0) * 0.85, 0, 100);
+  if (threshold === "nil_below_expected" || reason === "nil") return clamp((training?.nilSensitivity ?? 0.5) * 75 + Math.max(0, player.collegeOverall - 76) * 2, 0, 100);
+  if (threshold === "distance_sensitivity_high" || reason === "homesick") return clamp((training?.distanceSensitivity ?? 0.5) * 100, 0, 100);
+  if (threshold === "staff_change" || reason === "coaching_change") return clamp((100 - (morale?.morale ?? 65)) * 0.55 + (training?.decommitRiskMult ?? 1) * 18, 0, 100);
+  if (threshold === "team_success_low" || reason === "team_quality") return clamp((100 - (morale?.morale ?? 60)) * 0.65, 0, 100);
+  if (threshold === "draft_signal_needs_boost" || reason === "draft_showcase") return clamp(Math.max(0, player.collegeOverall - 78) * 4 + (training?.earlyDeclareAggression ?? 0.5) * 35, 0, 100);
+  return clamp(morale?.transferRisk ?? 50, 0, 100);
+}
+
 export function generateAnnualTransferPortalState(save: GameSave, seasonYear = save.seasonYear): AnnualTransferPortalState {
   const rng = createRng(`${save.seed}:annual-transfer-portal:${seasonYear}`);
   const reasons = annualTransferReasons();
   const destinationWeights = annualTransferDestinationWeights();
   if (save.collegeRoster?.players.length) {
     const moraleByPlayerId = new Map((save.collegeMorale?.entries ?? []).map((entry) => [entry.playerId, entry]));
+    const trainingByPlayerId = new Map((save.collegeTraining?.entries ?? []).map((entry) => [entry.playerId, entry]));
     const profileBySchool = new Map((save.schoolProfiles?.profiles ?? []).map((profile) => [profile.schoolId, profile]));
     const candidates = save.collegeRoster.players
       .filter((player) => !player.graduatedSeason && !player.draftDeclaredSeason && !player.cutSeason && player.rosterStatus !== "redshirt" && player.rosterStatus !== "cut")
-      .map((player) => ({ player, score: collegeTransferEntryScore(player, rng.fork(player.id), moraleByPlayerId.get(player.id)) }))
+      .map((player) => ({ player, score: collegeTransferEntryScore(player, rng.fork(player.id), moraleByPlayerId.get(player.id), trainingByPlayerId.get(player.id)) }))
       .filter((item) => item.score > 17)
       .sort((a, b) => b.score - a.score)
       .slice(0, Math.max(40, Math.round(save.schools.length * 0.18)));
     const entries = candidates.map(({ player }, index) => {
       const entryRng = rng.fork(`college-entry:${player.id}`);
-      const reason = weightedPick(reasons, entryRng, (item) => item.weight);
+      const reason = selectCollegeTransferReason(reasons, player, moraleByPlayerId.get(player.id), trainingByPlayerId.get(player.id), entryRng.fork("reason"));
       const fromProfile = profileBySchool.get(player.schoolId);
       const destinationScores = save.schools
         .filter((school) => school.id !== player.schoolId)
@@ -117,7 +155,7 @@ export function generateAnnualTransferPortalState(save: GameSave, seasonYear = s
         playerName: `${player.firstName} ${player.lastName}`,
         fromTeamId: player.schoolId,
         position: player.position,
-        reason: reason.reason,
+        reason: `${reason.reason}:${reason.signal}`,
         destinationScores,
         status: destinationScores[0]?.score >= 86 ? "committed" as const : "open" as const
       };
@@ -126,7 +164,7 @@ export function generateAnnualTransferPortalState(save: GameSave, seasonYear = s
       seasonYear,
       generatedWeek: save.currentWeek,
       entries,
-      runtimeCsvs: annualRuntimeDebug().loadedRuntimeCsvs.filter((path) => path.includes("transfer_")),
+      runtimeCsvs: [...new Set([...annualRuntimeDebug().loadedRuntimeCsvs.filter((path) => path.includes("transfer_")), ...(save.collegeTraining?.runtimeCsvs ?? [])])],
       usesYearZeroBundles: false
     };
   }

@@ -31,7 +31,7 @@ function mapCsvSeverity(severity: string): InjurySeverity {
 export function generateCollegeSeasonResults(seed: string, collegeRoster: CollegeRosterState | undefined, seasonYear: number): CollegeSeasonResultsState | undefined {
   if (!collegeRoster) return undefined;
   const rng = createRng(`${seed}:annual-college-season-results:${seasonYear}`);
-  const activePlayers = collegeRoster.players.filter((player) => !player.graduatedSeason && !player.draftDeclaredSeason && !player.cutSeason && player.rosterStatus !== "redshirt" && player.rosterStatus !== "cut");
+  const activePlayers = collegeRoster.players.filter((player) => !player.graduatedSeason && !player.draftDeclaredSeason && !player.cutSeason && player.rosterStatus !== "redshirt" && player.rosterStatus !== "cut" && player.academicEligible !== false);
   const depthRankByPlayer = new Map<string, number>();
   const bySchoolPosition = new Map<string, typeof activePlayers>();
   for (const player of activePlayers) {

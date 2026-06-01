@@ -1,5 +1,5 @@
 import { clamp, createRng } from "../lib/rng";
-import type { AnnualRecruitingState, CollegeMoraleState, CollegeRosterState, CollegeSeasonResultsState } from "../types";
+import type { AnnualRecruitingState, CollegeMoraleState, CollegeRosterState, CollegeSeasonResultsState, CollegeTrainingBankState } from "../types";
 import { annualMoraleWeight, annualPromiseParams, annualPromiseType, annualRuntimeDebug } from "./annualRuntime";
 
 export function generateCollegeMoraleState(
@@ -7,10 +7,12 @@ export function generateCollegeMoraleState(
   seasonYear: number,
   collegeRoster: CollegeRosterState | undefined,
   results: CollegeSeasonResultsState | undefined,
-  recruiting: AnnualRecruitingState | undefined
+  recruiting: AnnualRecruitingState | undefined,
+  training?: CollegeTrainingBankState
 ): CollegeMoraleState | undefined {
   if (!collegeRoster || !results) return undefined;
   const productionByPlayerId = new Map(results.production.map((row) => [row.playerId, row]));
+  const trainingByPlayerId = new Map((training?.entries ?? []).map((row) => [row.playerId, row]));
   const injuryIds = new Set(results.injuries.map((row) => row.playerId));
   const promisedSchoolIds = new Set((recruiting?.board ?? []).filter((entry) => entry.status === "signed" || entry.status === "committed").map((entry) => entry.schoolId));
   const entries = collegeRoster.players
@@ -18,6 +20,7 @@ export function generateCollegeMoraleState(
     .map((player) => {
       const rng = createRng(`${seed}:annual-college-morale:${seasonYear}:${player.id}`);
       const production = productionByPlayerId.get(player.id);
+      const trainingEntry = trainingByPlayerId.get(player.id);
       const snapShare = production?.snapShare ?? 0;
       const depthRank = production?.depthRank ?? 99;
       const reasons: string[] = [];
@@ -32,13 +35,16 @@ export function generateCollegeMoraleState(
       const promises = annualMoraleWeight("promises");
       const development = annualMoraleWeight("development");
       const coachTrust = annualMoraleWeight("coach_trust");
-      const playingTimeEffect = clamp((snapShare - 0.32) * 100, playingTime.minEffect, playingTime.maxEffect) * playingTime.weight;
+      const playingSensitivity = trainingEntry?.playingTimeSensitivity ?? 0.5;
+      const portalRiskMult = trainingEntry?.portalRiskMult ?? 1;
+      const loyaltyMult = trainingEntry?.loyaltyMult ?? 1;
+      const playingTimeEffect = clamp((snapShare - 0.32) * 100 * (0.75 + playingSensitivity * 0.5), playingTime.minEffect, playingTime.maxEffect) * playingTime.weight;
       const promiseEffect = promiseEvaluation.impact + (promisedSchoolIds.has(player.schoolId) && depthRank > 2 ? promises.minEffect * promises.weight * 0.5 : promises.maxEffect * promises.weight * 0.2);
       const developmentEffect = clamp((player.collegePotential - player.collegeOverall) * 0.8, development.minEffect, development.maxEffect) * development.weight;
       const coachTrustEffect = clamp((production?.productionScore ?? player.collegeOverall) - 58, coachTrust.minEffect, coachTrust.maxEffect) * coachTrust.weight;
-      const promisePressure = Math.round(clamp((promiseEvaluation.active ? 18 : promisedSchoolIds.has(player.schoolId) ? 10 : 4) + Math.max(0, depthRank - 2) * 4 - promiseEffect + rng.normal(0, 3), 0, 100));
-      const morale = Math.round(clamp(70 + playingTimeEffect + developmentEffect + coachTrustEffect - promisePressure * 0.32 - (injuryIds.has(player.id) ? 7 : 0) + rng.normal(0, 6), 1, 100));
-      const transferRisk = Math.round(clamp(100 - morale + promisePressure * 0.34 + promiseEvaluation.portalBonus + (snapShare < 0.18 ? 14 : 0), 1, 100));
+      const promisePressure = Math.round(clamp((promiseEvaluation.active ? 18 : promisedSchoolIds.has(player.schoolId) ? 10 : 4) + Math.max(0, depthRank - 2) * (3 + playingSensitivity * 2) - promiseEffect + rng.normal(0, 3), 0, 100));
+      const morale = Math.round(clamp(70 + playingTimeEffect + developmentEffect + coachTrustEffect - promisePressure * 0.32 - (injuryIds.has(player.id) ? 7 : 0) + (loyaltyMult - 1) * 6 + rng.normal(0, 6), 1, 100));
+      const transferRisk = Math.round(clamp((100 - morale + promisePressure * 0.34 + promiseEvaluation.portalBonus + (snapShare < 0.18 ? 14 * (0.7 + playingSensitivity) : 0)) * portalRiskMult / Math.max(0.65, loyaltyMult), 1, 100));
       return {
         playerId: player.id,
         schoolId: player.schoolId,
@@ -51,7 +57,7 @@ export function generateCollegeMoraleState(
   return {
     seasonYear,
     entries,
-    runtimeCsvs: annualRuntimeDebug().loadedRuntimeCsvs.filter((path) => path.includes("morale") || path.includes("promise")),
+    runtimeCsvs: [...new Set([...annualRuntimeDebug().loadedRuntimeCsvs.filter((path) => path.includes("morale") || path.includes("promise")), ...(training?.runtimeCsvs ?? [])])],
     usesYearZeroBundles: false
   };
 }
