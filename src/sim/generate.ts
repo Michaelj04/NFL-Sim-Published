@@ -7,6 +7,8 @@ import {
   POSITIONS,
   type Attributes,
   type CareerScenario,
+  type CareerType,
+  type CollegeManagementState,
   type CollegeProgram,
   type CollegeAwardResult,
   type CollegeInjuryResult,
@@ -1370,15 +1372,22 @@ function yearZeroNflPlayersToLivePlayers(sources: YearZeroNflPlayer[], teams: NF
   });
 }
 
+type NormalizedCareerOptions = Required<Pick<NewCareerOptions, "selectedTeamId" | "mode" | "seed" | "scenario">> & {
+  careerType: CareerType;
+  selectedSchoolId?: string;
+};
+
 function normalizeCareerOptions(
   selectedTeamOrOptions: string | NewCareerOptions = "chi",
   legacyMode: SaveMode = "goals",
   legacySeed?: string
-): Required<NewCareerOptions> {
+): NormalizedCareerOptions {
   if (typeof selectedTeamOrOptions === "object") {
     const selectedTeamId = selectedTeamOrOptions.selectedTeamId ?? "chi";
     return {
+      careerType: selectedTeamOrOptions.careerType ?? "nfl",
       selectedTeamId,
+      selectedSchoolId: selectedTeamOrOptions.selectedSchoolId,
       mode: selectedTeamOrOptions.mode ?? "goals",
       seed: selectedTeamOrOptions.seed?.trim() || `2026-${selectedTeamId}`,
       scenario: selectedTeamOrOptions.scenario ?? "neutral"
@@ -1386,10 +1395,24 @@ function normalizeCareerOptions(
   }
 
   return {
+    careerType: "nfl",
     selectedTeamId: selectedTeamOrOptions,
     mode: legacyMode,
     seed: legacySeed ?? `2026-${selectedTeamOrOptions}`,
     scenario: "neutral"
+  };
+}
+
+function createCollegeManagementState(schools: CollegeProgram[]): CollegeManagementState {
+  return {
+    recruitingPriorities: {},
+    hiddenRecruitIds: [],
+    depthOverrides: Object.fromEntries(schools.map((school) => [school.id, {}])),
+    trainingFocus: Object.fromEntries(schools.map((school) => [school.id, "balanced"])),
+    fatiguePosture: Object.fromEntries(schools.map((school) => [school.id, "standard"])),
+    nilAllocationByPosition: Object.fromEntries(schools.map((school) => [school.id, {}])),
+    transferWatchlist: [],
+    jobMarketOpen: false
   };
 }
 
@@ -1407,6 +1430,7 @@ export function createNewSave(
   const teams = nflTeams;
   const schools = collegePrograms;
   const selectedTeam = teams.find((team) => team.id === options.selectedTeamId) ?? teams[0];
+  const selectedSchool = schools.find((school) => school.id === options.selectedSchoolId) ?? schools[0];
   const scenario = options.scenario;
   const mode = options.mode;
   const scenarioProfile = scenarioProfileFor(scenario, seed, selectedTeam.id);
@@ -1491,6 +1515,23 @@ export function createNewSave(
     seed,
     seasonYear: 2026,
     previousSeasonRanks,
+    careerType: options.careerType,
+    selectedSchoolId: options.careerType === "college" ? selectedSchool.id : undefined,
+    careerEmployment: {
+      level: options.careerType,
+      organizationId: options.careerType === "college" ? selectedSchool.id : selectedTeam.id,
+      contractStartSeason: 2026,
+      contractEndSeason: 2029,
+      status: "active",
+      history: [{
+        level: options.careerType,
+        organizationId: options.careerType === "college" ? selectedSchool.id : selectedTeam.id,
+        startSeason: 2026,
+        status: "active",
+        summary: options.careerType === "college" ? `Hired by ${selectedSchool.name}.` : `Hired by ${selectedTeam.fullName}.`
+      }]
+    },
+    collegeManagement: createCollegeManagementState(schools),
     selectedTeamId: selectedTeam.id,
     mode,
     scenario,

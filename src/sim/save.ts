@@ -12,6 +12,8 @@ export interface CareerSlot {
   createdAt: string;
   updatedAt: string;
   selectedTeamId: string;
+  selectedSchoolId?: string;
+  careerType?: GameSave["careerType"];
   teamName: string;
   mode: GameSave["mode"];
   scenario: GameSave["scenario"];
@@ -100,10 +102,18 @@ function activeStorage(): Storage | undefined {
 
 function slotName(save: GameSave): string {
   const team = save.teams.find((candidate) => candidate.id === save.selectedTeamId);
-  return `${team?.fullName ?? "Franchise"} 2026`;
+  const school = save.schools.find((candidate) => candidate.id === save.selectedSchoolId);
+  return `${save.careerType === "college" ? school?.name : team?.fullName ?? "Franchise"} 2026`;
 }
 
 function recordSummary(save: GameSave): string {
+  if (save.careerType === "college") {
+    const schoolId = save.selectedSchoolId;
+    const production = save.collegeSeasonResults?.production.filter((row) => row.schoolId === schoolId) ?? [];
+    if (!production.length) return "College";
+    const top = [...production].sort((a, b) => b.productionScore - a.productionScore)[0];
+    return `Top prod ${top.productionScore}`;
+  }
   const record = save.records[save.selectedTeamId];
   if (!record) return "0-0";
   return `${record.wins}-${record.losses}${record.ties ? `-${record.ties}` : ""}`;
@@ -111,6 +121,7 @@ function recordSummary(save: GameSave): string {
 
 function careerSlotFromSave(save: GameSave, id: string, name?: string, previous?: CareerSlot): CareerSlot {
   const team = save.teams.find((candidate) => candidate.id === save.selectedTeamId);
+  const school = save.schools.find((candidate) => candidate.id === save.selectedSchoolId);
   const timestamp = nowIso();
   return {
     id,
@@ -118,7 +129,9 @@ function careerSlotFromSave(save: GameSave, id: string, name?: string, previous?
     createdAt: previous?.createdAt ?? timestamp,
     updatedAt: timestamp,
     selectedTeamId: save.selectedTeamId,
-    teamName: team?.fullName ?? save.selectedTeamId,
+    selectedSchoolId: save.selectedSchoolId,
+    careerType: save.careerType ?? "nfl",
+    teamName: save.careerType === "college" ? school?.name ?? save.selectedSchoolId ?? "College Program" : team?.fullName ?? save.selectedTeamId,
     mode: save.mode,
     scenario: save.scenario,
     seed: save.seed,
@@ -598,7 +611,7 @@ export function downloadSave(save: GameSave): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `franchise-war-room-${save.selectedTeamId}-${save.currentDate ?? `week-${save.currentWeek}`}.json`;
+  link.download = `franchise-war-room-${save.careerType === "college" ? save.selectedSchoolId ?? "college" : save.selectedTeamId}-${save.currentDate ?? `week-${save.currentWeek}`}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }

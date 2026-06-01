@@ -23,6 +23,9 @@ export type Conference = "AFC" | "NFC";
 export type Division = "East" | "North" | "South" | "West";
 export type SaveMode = "sandbox" | "goals";
 export type CareerScenario = "worst" | "neutral" | "contender" | "random";
+export type CareerType = "nfl" | "college";
+export type CareerEmploymentLevel = "nfl" | "college";
+export type CareerEmploymentStatus = "active" | "expired" | "fired";
 export type SeasonPhase =
   | "preseason"
   | "regular"
@@ -69,7 +72,10 @@ export type CalendarEventType =
   | "game"
   | "training"
   | "scouting"
-  | "postseason";
+  | "postseason"
+  | "recruiting"
+  | "transfer"
+  | "jobs";
 export type KickoffSlot = "WED" | "THU" | "FRI" | "SAT" | "SUN-EARLY" | "SUN-LATE" | "SNF" | "MNF" | "HOLIDAY" | "TBD";
 export type InjuryPracticeStatus = "full" | "limited" | "did-not-practice";
 export type InjuryGameStatus = "available" | "questionable" | "doubtful" | "out";
@@ -82,10 +88,44 @@ export interface PlayerMakeupProfile {
 }
 
 export interface NewCareerOptions {
+  careerType?: CareerType;
   selectedTeamId?: string;
+  selectedSchoolId?: string;
   mode?: SaveMode;
   seed?: string;
   scenario?: CareerScenario;
+}
+
+export interface CareerEmploymentHistoryEntry {
+  level: CareerEmploymentLevel;
+  organizationId: string;
+  startSeason: number;
+  endSeason?: number;
+  status: CareerEmploymentStatus;
+  summary: string;
+}
+
+export interface CareerEmployment {
+  level: CareerEmploymentLevel;
+  organizationId: string;
+  contractStartSeason: number;
+  contractEndSeason: number;
+  status: CareerEmploymentStatus;
+  history: CareerEmploymentHistoryEntry[];
+}
+
+export type CollegeDevelopmentFocus = "balanced" | "athletic" | "technical" | "mental" | "recovery";
+export type CollegeFatiguePosture = "conservative" | "standard" | "aggressive";
+
+export interface CollegeManagementState {
+  recruitingPriorities: Record<string, number>;
+  hiddenRecruitIds: string[];
+  depthOverrides: Record<string, Partial<Record<Position, string[]>>>;
+  trainingFocus: Record<string, CollegeDevelopmentFocus>;
+  fatiguePosture: Record<string, CollegeFatiguePosture>;
+  nilAllocationByPosition: Record<string, Partial<Record<Position, number>>>;
+  transferWatchlist: string[];
+  jobMarketOpen: boolean;
 }
 
 export type AttributeKey =
@@ -1126,6 +1166,10 @@ export interface GameSave {
   seed: string;
   seasonYear: number;
   previousSeasonRanks?: Record<string, number>;
+  careerType?: CareerType;
+  selectedSchoolId?: string;
+  careerEmployment?: CareerEmployment;
+  collegeManagement?: CollegeManagementState;
   selectedTeamId: string;
   mode: SaveMode;
   scenario: CareerScenario;
@@ -1212,7 +1256,7 @@ export interface AnnualRecruitingBoardEntry {
   promiseType?: string;
   debugFactors: string[];
   pipelineType: "primary" | "secondary" | "national";
-  status: "evaluating" | "offered" | "visited" | "committed" | "decommitted" | "signed";
+  status: "evaluating" | "offered" | "visited" | "committed" | "decommitted" | "signed" | "withdrawn";
 }
 
 export interface AnnualRecruitingState {
@@ -1700,11 +1744,15 @@ export interface CalendarEvent {
   title: string;
   description?: string;
   phase?: CalendarPhase;
+  source?: "nfl" | "college" | "career";
+  eventLevel?: "league" | "managed";
   teamId?: string;
+  schoolId?: string;
   gameId?: string;
   actionTab?: string;
   footballWeek?: number;
   important?: boolean;
+  modalDetail?: string;
 }
 
 export type WaiverClaimStatus = "submitted" | "awarded" | "failed" | "expired";

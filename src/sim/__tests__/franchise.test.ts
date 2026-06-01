@@ -67,7 +67,7 @@ import {
 } from "../ratings";
 import { FREE_AGENT_TEAM_ID, MAX_ROSTER_SIZE, freeAgentPlayers, releasePlayerToFreeAgency, signFreeAgent } from "../freeAgents";
 import { expectedFreeAgentAsk, projectedPendingFreeAgents, resolveFreeAgencyWave, submitFreeAgentOffer } from "../freeAgentMarket";
-import { gamesOnDate, leagueYearStartDate, regularSeasonStartDate } from "../calendar";
+import { buildSeasonCalendar, gamesOnDate, leagueYearStartDate, refreshCalendar, regularSeasonStartDate } from "../calendar";
 import {
   PRACTICE_SQUAD_PLAYER_ELEVATION_LIMIT,
   PRACTICE_SQUAD_PROTECTION_LIMIT,
@@ -745,6 +745,52 @@ describe("franchise generator", () => {
     expect(save.schools.some((school) => school.subdivision === "FCS")).toBe(true);
   });
 
+  it("creates college careers with a managed school while preserving NFL context", () => {
+    const school = collegePrograms.find((program) => program.name === "Alabama") ?? collegePrograms[0];
+    const save = createNewSave({
+      careerType: "college",
+      selectedTeamId: "chi",
+      selectedSchoolId: school.id,
+      mode: "goals",
+      seed: "college-career-seed",
+      scenario: "neutral"
+    });
+
+    expect(save.careerType).toBe("college");
+    expect(save.selectedTeamId).toBe("chi");
+    expect(save.selectedSchoolId).toBe(school.id);
+    expect(save.careerEmployment).toMatchObject({
+      level: "college",
+      organizationId: school.id,
+      status: "active"
+    });
+    expect(save.collegeManagement?.depthOverrides[school.id]).toEqual({});
+    expect(save.collegeRoster?.players.some((player) => player.schoolId === school.id)).toBe(true);
+    expect(save.players.some((player) => player.teamId === "chi")).toBe(true);
+  });
+
+  it("normalizes legacy saves as NFL careers with college management defaults", () => {
+    const save = createNewSave("chi", "goals", "legacy-career-scope-seed");
+    const legacy = {
+      ...save,
+      careerType: undefined,
+      careerEmployment: undefined,
+      collegeManagement: undefined,
+      selectedSchoolId: undefined
+    } as GameSave;
+
+    const normalized = normalizeSave(legacy);
+
+    expect(normalized.careerType).toBe("nfl");
+    expect(normalized.selectedSchoolId).toBeUndefined();
+    expect(normalized.careerEmployment).toMatchObject({
+      level: "nfl",
+      organizationId: "chi",
+      status: "active"
+    });
+    expect(normalized.collegeManagement?.trainingFocus[normalized.schools[0].id]).toBe("balanced");
+  });
+
   it("resolves college image metadata for every seeded school", () => {
     expect(collegePrograms.length).toBeGreaterThan(180);
     expect(
@@ -981,6 +1027,45 @@ describe("franchise generator", () => {
     expect(regularGames).toHaveLength(272);
     expect(regularGames.every((game) => game.date && game.kickoffSlot)).toBe(true);
     expect(save.seasonCalendar.some((event) => event.date === regularSeasonStartDate(2026) && event.type === "game")).toBe(true);
+  });
+
+  it("tags NFL calendar events with source and managed scope metadata", () => {
+    const save = createNewSave("phi", "sandbox", "calendar-metadata-seed");
+    const calendar = buildSeasonCalendar(save);
+    const userGame = calendar.find((event) => event.gameId && event.important);
+    const draftEvent = calendar.find((event) => event.type === "draft" && event.title === "NFL Draft begins");
+
+    expect(draftEvent).toMatchObject({
+      source: "nfl",
+      eventLevel: "league",
+      actionTab: "draft"
+    });
+    expect(userGame).toMatchObject({
+      source: "nfl",
+      eventLevel: "managed",
+      teamId: "phi"
+    });
+  });
+
+  it("builds one combined calendar with college and career events for college saves", () => {
+    const school = collegePrograms.find((program) => program.name === "Alabama") ?? collegePrograms[0];
+    const save = createNewSave({
+      careerType: "college",
+      selectedTeamId: "chi",
+      selectedSchoolId: school.id,
+      mode: "goals",
+      seed: "college-calendar-seed",
+      scenario: "neutral"
+    });
+    const refreshed = refreshCalendar(save);
+
+    expect(refreshed.seasonCalendar.some((event) => event.source === "nfl" && event.type === "game")).toBe(true);
+    expect(refreshed.seasonCalendar.some((event) => event.source === "college" && event.type === "recruiting" && event.actionTab === "college-recruiting")).toBe(true);
+    expect(refreshed.seasonCalendar.some((event) => event.source === "college" && event.type === "transfer" && event.actionTab === "college-transfer")).toBe(true);
+    expect(refreshed.seasonCalendar.some((event) => event.source === "college" && event.type === "roster" && event.actionTab === "college-roster")).toBe(true);
+    expect(refreshed.seasonCalendar.some((event) => event.source === "college" && event.type === "draft" && event.actionTab === "college-draft")).toBe(true);
+    expect(refreshed.seasonCalendar.some((event) => event.source === "career" && event.type === "jobs")).toBe(true);
+    expect(refreshed.seasonCalendar.some((event) => event.schoolId === school.id && event.eventLevel === "managed")).toBe(true);
   });
 
   it("advances one calendar day without simming future games, then sims games on their exact date", () => {

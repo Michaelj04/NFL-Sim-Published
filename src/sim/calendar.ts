@@ -143,28 +143,32 @@ export function generatePreseasonSchedule(teamIds: string[], seed: string, seaso
   return games;
 }
 
-export function buildSeasonCalendar(save: Pick<GameSave, "seasonYear" | "schedule" | "selectedTeamId">): CalendarEvent[] {
+type CalendarSaveContext = Pick<GameSave, "seasonYear" | "schedule" | "selectedTeamId"> &
+  Partial<Pick<GameSave, "careerType" | "selectedSchoolId" | "schools" | "careerEmployment">>;
+
+export function buildSeasonCalendar(save: CalendarSaveContext): CalendarEvent[] {
   const seasonYear = save.seasonYear;
   const events: CalendarEvent[] = [
     milestone(seasonYear, `${seasonYear}-03-09`, "free-agency", "Legal negotiating window opens", "Teams can begin negotiating with pending UFAs.", "free-agency", "free-agents"),
-    milestone(seasonYear, `${seasonYear}-03-11`, "free-agency", "League year and free agency open", "Contracts expire, free agency opens, and trades can begin.", "league-year", "free-agents", true),
+    milestone(seasonYear, `${seasonYear}-03-11`, "free-agency", "League year and free agency open", "Contracts expire, free agency opens, and trades can begin.", "league-year", "free-agents", { important: true }),
     milestone(seasonYear, `${seasonYear}-04-17`, "deadline", "RFA offer-sheet deadline", "Restricted free agents must sign offer sheets by this deadline.", "free-agency", "budget"),
-    milestone(seasonYear, `${seasonYear}-04-23`, "draft", "NFL Draft begins", "Draft room opens for Round 1.", "draft", "draft", true),
+    milestone(seasonYear, `${seasonYear}-04-23`, "draft", "NFL Draft begins", "Draft room opens for Round 1.", "draft", "draft", { important: true }),
     milestone(seasonYear, `${seasonYear}-04-25`, "draft", "NFL Draft concludes", "Late rounds finish and UDFA prep begins.", "draft", "draft"),
     milestone(seasonYear, `${seasonYear}-05-01`, "deadline", "Fifth-year option deadline", "Teams finalize first-round option decisions.", "rookie-development", "budget"),
     milestone(seasonYear, `${seasonYear}-05-08`, "draft", "Rookie minicamp window", "Rookie minicamp and onboarding work begin.", "rookie-development", "draft"),
     milestone(seasonYear, `${seasonYear}-05-11`, "training", "Rookie development program begins", "Rookies enter the development program.", "rookie-development", "training"),
     milestone(seasonYear, `${seasonYear}-06-08`, "training", "Mandatory minicamp window", "Veteran minicamp work and medical reviews intensify.", "offseason-workouts", "training"),
-    milestone(seasonYear, `${seasonYear}-07-15`, "deadline", "Franchise-tag extension deadline", "Tagged players can no longer sign multiyear extensions after this deadline.", "training-camp", "budget", true),
+    milestone(seasonYear, `${seasonYear}-07-15`, "deadline", "Franchise-tag extension deadline", "Tagged players can no longer sign multiyear extensions after this deadline.", "training-camp", "budget", { important: true }),
     milestone(seasonYear, `${seasonYear}-07-22`, "deadline", "UFA tender signing deadline", "Tendered UFAs hit the late-summer rights deadline.", "training-camp", "free-agents"),
-    milestone(seasonYear, `${seasonYear}-07-25`, "training", "Training camp opens", "Camp roster work, conditioning, and position battles begin.", "training-camp", "training", true),
-    milestone(seasonYear, `${seasonYear}-08-30`, "roster", "Final roster cutdown", "Active rosters must reach 53 before waiver processing.", "preseason", "roster", true),
-    milestone(seasonYear, `${seasonYear}-08-31`, "waivers", "Cutdown waivers process", "Waiver claims process before practice squads form.", "preseason", "roster", true),
+    milestone(seasonYear, `${seasonYear}-07-25`, "training", "Training camp opens", "Camp roster work, conditioning, and position battles begin.", "training-camp", "training", { important: true }),
+    milestone(seasonYear, `${seasonYear}-08-30`, "roster", "Final roster cutdown", "Active rosters must reach 53 before waiver processing.", "preseason", "roster", { important: true }),
+    milestone(seasonYear, `${seasonYear}-08-31`, "waivers", "Cutdown waivers process", "Waiver claims process before practice squads form.", "preseason", "roster", { important: true }),
     milestone(seasonYear, `${seasonYear}-09-01`, "practice-squad", "Practice squads form", "Teams can fill 16-player practice squads.", "preseason", "roster"),
-    milestone(seasonYear, regularSeasonStartDate(seasonYear), "game", "Regular season kicks off", "The regular season begins.", "regular-season", "schedule", true),
-    milestone(seasonYear, addDays(regularWeekSunday(seasonYear, 18), 1), "postseason", "Regular season complete", "Playoff bracket locks after Week 18.", "regular-season", "standings", true),
-    milestone(seasonYear, superBowlDate(seasonYear), "postseason", "Super Bowl", "The league champion is crowned.", "postseason", "standings", true)
+    milestone(seasonYear, regularSeasonStartDate(seasonYear), "game", "Regular season kicks off", "The regular season begins.", "regular-season", "schedule", { important: true }),
+    milestone(seasonYear, addDays(regularWeekSunday(seasonYear, 18), 1), "postseason", "Regular season complete", "Playoff bracket locks after Week 18.", "regular-season", "standings", { important: true }),
+    milestone(seasonYear, superBowlDate(seasonYear), "postseason", "Super Bowl", "The league champion is crowned.", "postseason", "standings", { important: true })
   ];
+  events.push(...collegeCalendarEvents(save));
 
   const gameEvents = save.schedule.flatMap((game) => {
     if (!game.date) return [];
@@ -178,7 +182,13 @@ export function buildSeasonCalendar(save: Pick<GameSave, "seasonYear" | "schedul
       gameId: game.id,
       actionTab: "schedule",
       footballWeek: game.week,
-      important: teamGame
+      important: teamGame,
+      source: "nfl" as const,
+      teamId: teamGame ? save.selectedTeamId : undefined,
+      eventLevel: teamGame ? "managed" as const : "league" as const,
+      modalDetail: game.status === "final"
+        ? `Final: ${game.awayTeamId.toUpperCase()} ${game.awayScore}, ${game.homeTeamId.toUpperCase()} ${game.homeScore}.`
+        : `Kickoff slot ${game.kickoffSlot ?? "TBD"}. Open the game log or schedule for matchup details.`
     }];
   });
   return [...events, ...gameEvents].sort((a, b) => compareDates(a.date, b.date) || a.title.localeCompare(b.title));
@@ -201,7 +211,14 @@ function milestone(
   description: string,
   phase: CalendarPhase,
   actionTab: string,
-  important = false
+  options: {
+    important?: boolean;
+    source?: CalendarEvent["source"];
+    eventLevel?: CalendarEvent["eventLevel"];
+    teamId?: string;
+    schoolId?: string;
+    modalDetail?: string;
+  } = {}
 ): CalendarEvent {
   return {
     id: `cal-${seasonYear}-${date}-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
@@ -211,8 +228,92 @@ function milestone(
     description,
     phase,
     actionTab,
-    important
+    important: options.important ?? false,
+    source: options.source ?? "nfl",
+    eventLevel: options.eventLevel ?? "league",
+    teamId: options.teamId,
+    schoolId: options.schoolId,
+    modalDetail: options.modalDetail
   };
+}
+
+function collegeCalendarEvents(save: CalendarSaveContext): CalendarEvent[] {
+  const seasonYear = save.seasonYear;
+  const selectedSchoolId = save.selectedSchoolId;
+  const school = save.schools?.find((candidate) => candidate.id === selectedSchoolId);
+  const schoolName = school?.name ?? "Managed program";
+  const managed = save.careerType === "college" && Boolean(selectedSchoolId);
+  const managedOptions = {
+    source: "college" as const,
+    eventLevel: managed ? "managed" as const : "league" as const,
+    schoolId: selectedSchoolId,
+    important: managed
+  };
+  const events: CalendarEvent[] = [
+    milestone(seasonYear, `${seasonYear}-03-18`, "recruiting", "College board setup", "Annual recruiting boards open across the college world.", "free-agency", "college-recruiting", {
+      source: "college",
+      eventLevel: "league",
+      modalDetail: "Recruiting boards are generated from the annual class, school profiles, NIL, academics, and roster needs."
+    }),
+    milestone(seasonYear, `${seasonYear}-04-15`, "recruiting", "Spring evaluation window", "Programs refine offers and priority targets.", "free-agency", "college-recruiting", {
+      source: "college",
+      eventLevel: "league"
+    }),
+    milestone(seasonYear, `${seasonYear}-05-01`, "transfer", "Transfer portal window", "College transfers can be watched and pursued.", "rookie-development", "college-transfer", {
+      source: "college",
+      eventLevel: "league",
+      modalDetail: "Portal entries include destination scores and status for college-sourced movement."
+    }),
+    milestone(seasonYear, `${seasonYear}-06-01`, "training", "College training bank checkpoint", "Development, fatigue, NIL sensitivity, and morale inputs are reviewed.", "offseason-workouts", "college-training", {
+      source: "college",
+      eventLevel: "league"
+    }),
+    milestone(seasonYear, `${seasonYear}-08-20`, "roster", "College depth chart lock", "Programs settle depth charts before season production is generated.", "preseason", "college-depth", {
+      source: "college",
+      eventLevel: "league"
+    }),
+    milestone(seasonYear, `${seasonYear}-09-01`, "recruiting", "Official visit push", "Visit impact becomes a larger part of recruiting decisions.", "preseason", "college-recruiting", {
+      source: "college",
+      eventLevel: "league"
+    }),
+    milestone(seasonYear, `${seasonYear}-12-07`, "game", "College season results", "Production, awards, injuries, morale, and draft signals are summarized.", "regular-season", "college-season", {
+      source: "college",
+      eventLevel: "league"
+    }),
+    milestone(seasonYear, `${seasonYear}-12-18`, "recruiting", "Signing day", "Annual recruiting commitments finalize into the roster import plan.", "regular-season", "college-recruiting", {
+      source: "college",
+      eventLevel: "league",
+      important: true
+    }),
+    milestone(seasonYear, `${seasonYear + 1}-01-12`, "draft", "Draft declarations", "College juniors, seniors, and RS-SO draft declarations feed the NFL draft bridge.", "postseason", "college-draft", {
+      source: "college",
+      eventLevel: "league"
+    }),
+    milestone(seasonYear, `${seasonYear + 1}-01-20`, "roster", "College roster progression", "Graduation, declarations, redshirts, walk-ons, and academic eligibility process.", "postseason", "college-roster", {
+      source: "college",
+      eventLevel: "league"
+    }),
+    milestone(seasonYear, `${seasonYear + 1}-02-16`, "jobs", "Football job market opens", "Expired or fired contracts can move between college and NFL opportunities.", "offseason", "college-jobs", {
+      source: "career",
+      eventLevel: "league",
+      important: save.careerEmployment?.status !== "active"
+    })
+  ];
+  if (managed && selectedSchoolId) {
+    events.push(
+      milestone(seasonYear, `${seasonYear}-03-20`, "recruiting", `${schoolName} board review`, "Set offers, priorities, visits, and promises for your managed program.", "free-agency", "college-recruiting", managedOptions),
+      milestone(seasonYear, `${seasonYear}-07-10`, "training", `${schoolName} NIL allocation review`, "Tune development focus, fatigue posture, and NIL allocation by position.", "offseason-workouts", "college-training", managedOptions),
+      milestone(seasonYear, `${seasonYear}-08-24`, "roster", `${schoolName} roster decisions`, "Review redshirts, cuts, walk-ons, and depth before the season snapshot.", "preseason", "college-roster", managedOptions),
+      milestone(seasonYear, `${seasonYear}-12-19`, "recruiting", `${schoolName} signing class review`, "Inspect signed recruits and roster import needs after signing day.", "regular-season", "college-recruiting", managedOptions),
+      milestone(seasonYear, `${seasonYear + 1}-02-10`, "jobs", `${schoolName} contract review`, "Review contract status, performance goals, and possible job market movement.", "postseason", "college-jobs", {
+        source: "career",
+        eventLevel: "managed",
+        schoolId: selectedSchoolId,
+        important: true
+      })
+    );
+  }
+  return events;
 }
 
 function regularSlotForIndex(seasonYear: number, week: number, index: number): { date: string; slot: KickoffSlot } {

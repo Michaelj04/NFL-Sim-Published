@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { collegeImageFor } from "./data/collegeImages";
+import { collegePrograms } from "./data/collegePrograms";
 import { nflTeams } from "./data/nflTeams";
 import { careerScenarioLabels, createNewSave, generateFreeAgentPool } from "./sim/generate";
 import { createInitialCollegeRosterState } from "./sim/collegeRoster";
@@ -50,7 +51,7 @@ import {
   withdrawUdfaOffer
 } from "./sim/udfa";
 import { markInboxRead, advanceDay, advancePostseasonRound, startNextSeason } from "./sim/season";
-import { formatDateLong, gamesOnDate, leagueYearStartDate, nextDateWithGames, refreshCalendar } from "./sim/calendar";
+import { addDays, calendarPhaseForDate, formatDateLong, leagueYearStartDate, nextDateWithGames, parseDate, refreshCalendar } from "./sim/calendar";
 import {
   advanceToDraftPrep,
   advanceToFreeAgency,
@@ -215,13 +216,39 @@ import {
   staffValueScore,
   slotDefinitionFor
 } from "./sim/staff";
-import type { CareerScenario, CollegeProgram, Conference, DraftPick, DraftTradeAsset, DraftTradeOffer, FreeAgentOffer, FreeAgentRolePromise, FreeAgentSecurityLevel, GameSave, Player, Position, Prospect, ProspectBoardLens, ProspectConcernKey, RookieAcquisitionResult, RookieClassResults, RosterMoveRecommendation, SaveMode, ScoutingAssignmentType, ScoutingRecapEntry, ScoutingRegion, StaffCandidate, StaffMember, StaffSlotId, TrainingBodyPlan, TrainingSkillPlan, UdfaOffer } from "./types";
+import type { AnnualRecruitingBoardEntry, CareerScenario, CareerType, CollegeDevelopmentFocus, CollegeFatiguePosture, CollegeProgram, CollegeRosterPlayer, Conference, DraftPick, DraftTradeAsset, DraftTradeOffer, FreeAgentOffer, FreeAgentRolePromise, FreeAgentSecurityLevel, GameSave, Player, Position, Prospect, ProspectBoardLens, ProspectConcernKey, RookieAcquisitionResult, RookieClassResults, RosterMoveRecommendation, SaveMode, ScoutingAssignmentType, ScoutingRecapEntry, ScoutingRegion, StaffCandidate, StaffMember, StaffSlotId, TrainingBodyPlan, TrainingSkillPlan, UdfaOffer } from "./types";
 import { POSITIONS } from "./types";
 
-type Tab = "inbox" | "roster" | "training" | "free-agents" | "depth" | "medical" | "staff" | "scouting" | "comp-picks" | "calendar" | "schedule" | "standings" | "power" | "game" | "budget" | "draft" | "stats";
+type Tab =
+  | "inbox"
+  | "roster"
+  | "training"
+  | "free-agents"
+  | "depth"
+  | "medical"
+  | "staff"
+  | "scouting"
+  | "comp-picks"
+  | "calendar"
+  | "schedule"
+  | "standings"
+  | "power"
+  | "game"
+  | "budget"
+  | "draft"
+  | "stats"
+  | "college-hub"
+  | "college-recruiting"
+  | "college-roster"
+  | "college-depth"
+  | "college-training"
+  | "college-transfer"
+  | "college-season"
+  | "college-draft"
+  | "college-jobs";
 type SaveStatus = "Saved" | "Saving" | "Unsaved" | "Save failed";
 
-const navGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: string }> }> = [
+const nflNavGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: string }> }> = [
   {
     label: "Team",
     tabs: [
@@ -261,6 +288,37 @@ const navGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: string }> 
   }
 ];
 
+const collegeNavGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: string }> }> = [
+  {
+    label: "Program",
+    tabs: [
+      { id: "inbox", label: "Inbox" },
+      { id: "college-hub", label: "College Hub" },
+      { id: "college-roster", label: "Roster" },
+      { id: "college-depth", label: "Depth" },
+      { id: "college-training", label: "Training / NIL" }
+    ]
+  },
+  {
+    label: "Talent",
+    tabs: [
+      { id: "college-recruiting", label: "Recruiting" },
+      { id: "college-transfer", label: "Transfer Portal" },
+      { id: "college-draft", label: "Draft Pipeline" }
+    ]
+  },
+  {
+    label: "World",
+    tabs: [
+      { id: "college-season", label: "Season" },
+      { id: "college-jobs", label: "Jobs" },
+      { id: "calendar", label: "Calendar" },
+      { id: "schedule", label: "NFL Schedule" },
+      { id: "stats", label: "NFL Stats" }
+    ]
+  }
+];
+
 const scenarioCards: Array<{ id: CareerScenario; description: string }> = [
   { id: "worst", description: "Rebuild from the bottom." },
   { id: "neutral", description: "Balanced starting point." },
@@ -270,6 +328,31 @@ const scenarioCards: Array<{ id: CareerScenario; description: string }> = [
 
 function randomCareerSeed(): string {
   return `career-${Math.random().toString(36).slice(2, 7)}-${Date.now().toString(36)}`;
+}
+
+function managementStateForSchools(schools: CollegeProgram[]): NonNullable<GameSave["collegeManagement"]> {
+  return {
+    recruitingPriorities: {},
+    hiddenRecruitIds: [],
+    depthOverrides: Object.fromEntries(schools.map((school) => [school.id, {}])),
+    trainingFocus: Object.fromEntries(schools.map((school) => [school.id, "balanced"])),
+    fatiguePosture: Object.fromEntries(schools.map((school) => [school.id, "standard"])),
+    nilAllocationByPosition: Object.fromEntries(schools.map((school) => [school.id, {}])),
+    transferWatchlist: [],
+    jobMarketOpen: false
+  };
+}
+
+function schoolForSave(save: GameSave): CollegeProgram | undefined {
+  return save.schools.find((school) => school.id === save.selectedSchoolId);
+}
+
+function managedSchoolId(save: GameSave): string {
+  return save.selectedSchoolId ?? save.schools[0]?.id ?? "";
+}
+
+function isCollegeCareer(save: GameSave): boolean {
+  return save.careerType === "college";
 }
 
 function projectedOverallForPosition(entity: Pick<Player | Prospect, "position" | "ratings" | "traits"> & { positionFits?: Partial<Record<Position, number>> }, position: Position): number {
@@ -319,6 +402,9 @@ export function normalizeSave(save: GameSave): GameSave {
     ...school,
     ...collegeImageFor(school)
   }));
+  const careerType = save.careerType ?? "nfl";
+  const selectedSchoolId = careerType === "college" ? save.selectedSchoolId ?? normalizedSchools[0]?.id : save.selectedSchoolId;
+  const selectedSchool = normalizedSchools.find((school) => school.id === selectedSchoolId) ?? normalizedSchools[0];
   const schoolById = new Map(normalizedSchools.map((school) => [school.id, school]));
   const normalizedCollegeRoster = save.collegeRoster ?? (save.yearZero ? createInitialCollegeRosterState(save.yearZero, seasonYear) : undefined);
   const normalizedCollegeSeasonResults = save.collegeSeasonResults ?? generateCollegeSeasonResults(save.seed, normalizedCollegeRoster, seasonYear);
@@ -349,6 +435,42 @@ export function normalizeSave(save: GameSave): GameSave {
     calendarPhase: save.calendarPhase ?? "league-year",
     seasonCalendar: save.seasonCalendar ?? [],
     schoolProfiles: save.schoolProfiles ?? buildSchoolProfileState(normalizedSchools, save.seed, seasonYear),
+    careerType,
+    selectedSchoolId,
+    careerEmployment: save.careerEmployment ?? {
+      level: careerType,
+      organizationId: careerType === "college" ? selectedSchool?.id ?? "college" : save.selectedTeamId,
+      contractStartSeason: seasonYear,
+      contractEndSeason: seasonYear + 3,
+      status: "active",
+      history: [{
+        level: careerType,
+        organizationId: careerType === "college" ? selectedSchool?.id ?? "college" : save.selectedTeamId,
+        startSeason: seasonYear,
+        status: "active",
+        summary: careerType === "college" ? `Hired by ${selectedSchool?.name ?? "college program"}.` : "Hired by franchise."
+      }]
+    },
+    collegeManagement: {
+      ...managementStateForSchools(normalizedSchools),
+      ...(save.collegeManagement ?? {}),
+      depthOverrides: {
+        ...managementStateForSchools(normalizedSchools).depthOverrides,
+        ...(save.collegeManagement?.depthOverrides ?? {})
+      },
+      trainingFocus: {
+        ...managementStateForSchools(normalizedSchools).trainingFocus,
+        ...(save.collegeManagement?.trainingFocus ?? {})
+      },
+      fatiguePosture: {
+        ...managementStateForSchools(normalizedSchools).fatiguePosture,
+        ...(save.collegeManagement?.fatiguePosture ?? {})
+      },
+      nilAllocationByPosition: {
+        ...managementStateForSchools(normalizedSchools).nilAllocationByPosition,
+        ...(save.collegeManagement?.nilAllocationByPosition ?? {})
+      }
+    },
     annualRecruitClass: save.annualRecruitClass ?? generateAnnualRecruitClass(save.seed, seasonYear),
     collegeRoster: normalizedCollegeRoster,
     collegeTraining: save.collegeTraining ?? generateCollegeTrainingBanks(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults),
@@ -598,7 +720,9 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("Unsaved");
   const [saveFailure, setSaveFailure] = useState<string | undefined>();
   const [isBooting, setIsBooting] = useState(true);
+  const [setupCareerType, setSetupCareerType] = useState<CareerType>("nfl");
   const [setupTeamId, setSetupTeamId] = useState("chi");
+  const [setupSchoolId, setSetupSchoolId] = useState(() => collegePrograms[0]?.id ?? "");
   const [setupMode, setSetupMode] = useState<SaveMode>("goals");
   const [setupScenario, setSetupScenario] = useState<CareerScenario>("neutral");
   const [setupSeed, setSetupSeed] = useState(() => randomCareerSeed());
@@ -606,6 +730,8 @@ export default function App() {
   const [yearZeroProgress, setYearZeroProgress] = useState(() => loadYearZeroProgressTemplate());
   const [teamSearch, setTeamSearch] = useState("");
   const [teamConference, setTeamConference] = useState<Conference | "all">("all");
+  const [schoolSearch, setSchoolSearch] = useState("");
+  const [schoolSubdivision, setSchoolSubdivision] = useState<"all" | "FBS" | "FCS">("all");
   const [activeTab, setActiveTab] = useState<Tab>("inbox");
   const [pendingRosterRecommendations, setPendingRosterRecommendations] = useState<RosterMoveRecommendation[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -677,16 +803,28 @@ export default function App() {
   const activeTeam = save ? selectedTeam(save) : undefined;
 
   const appStyle = useMemo(() => {
+    if (save?.careerType === "college") {
+      const school = schoolForSave(save);
+      return {
+        "--team-primary": school?.primaryColor ?? "#176b87",
+        "--team-secondary": school?.secondaryColor ?? "#c7d3dd"
+      } as CSSProperties & Record<string, string>;
+    }
     if (!activeTeam) return {};
     return {
       "--team-primary": activeTeam.colors.primary,
       "--team-secondary": activeTeam.colors.secondary
     } as CSSProperties & Record<string, string>;
-  }, [activeTeam]);
+  }, [activeTeam, save]);
 
   const selectedSetupTeam = useMemo(
     () => nflTeams.find((team) => team.id === setupTeamId) ?? nflTeams[0],
     [setupTeamId]
+  );
+  const setupSchools = useMemo(() => collegePrograms.map((school) => ({ ...school, ...collegeImageFor(school) })), []);
+  const selectedSetupSchool = useMemo(
+    () => setupSchools.find((school) => school.id === setupSchoolId) ?? setupSchools[0],
+    [setupSchoolId, setupSchools]
   );
 
   const filteredSetupTeams = useMemo(() => {
@@ -703,6 +841,21 @@ export default function App() {
     });
   }, [teamConference, teamSearch]);
 
+  const filteredSetupSchools = useMemo(() => {
+    const query = schoolSearch.trim().toLowerCase();
+    return setupSchools
+      .filter((school) => {
+        const matchesSubdivision = schoolSubdivision === "all" || school.subdivision === schoolSubdivision;
+        const matchesQuery =
+          !query ||
+          school.name.toLowerCase().includes(query) ||
+          school.mascot.toLowerCase().includes(query) ||
+          school.conference.toLowerCase().includes(query);
+        return matchesSubdivision && matchesQuery;
+      })
+      .sort((a, b) => b.prestige - a.prestige || a.name.localeCompare(b.name));
+  }, [schoolSearch, schoolSubdivision, setupSchools]);
+
   async function refreshCareerSlots() {
     setCareerSlots(await listCareers());
   }
@@ -712,12 +865,13 @@ export default function App() {
     if (!record) return;
     await setActiveCareer(slotId);
     skipNextAutosaveRef.current = true;
-    setSave(normalizeSave(record.save));
+    const normalized = normalizeSave(record.save);
+    setSave(normalized);
     setActiveCareerId(record.id);
     setActiveCareerName(record.slot.name);
     setSaveStatus("Saved");
     setSaveFailure(undefined);
-    setActiveTab("inbox");
+    setActiveTab(normalized.careerType === "college" ? "college-hub" : "inbox");
     await refreshCareerSlots();
   }
 
@@ -727,7 +881,14 @@ export default function App() {
     setYearZeroProgress(loadYearZeroProgressTemplate());
     setIsCreatingYearZero(true);
     await new Promise((resolve) => window.requestAnimationFrame(resolve));
-    const newSave = normalizeSave(createNewSave({ selectedTeamId: setupTeamId, mode: setupMode, seed, scenario: setupScenario }));
+    const newSave = normalizeSave(createNewSave({
+      careerType: setupCareerType,
+      selectedTeamId: setupTeamId,
+      selectedSchoolId: setupCareerType === "college" ? setupSchoolId : undefined,
+      mode: setupMode,
+      seed,
+      scenario: setupScenario
+    }));
     try {
       const record = await createCareer(newSave);
       skipNextAutosaveRef.current = true;
@@ -745,7 +906,7 @@ export default function App() {
       setSaveFailure(error instanceof Error ? error.message : "New career could not be saved. Export is still available.");
     }
     setIsCreatingYearZero(false);
-    setActiveTab("inbox");
+    setActiveTab(setupCareerType === "college" ? "college-hub" : "inbox");
   }
 
   function newCareer() {
@@ -1098,7 +1259,192 @@ export default function App() {
 
   function beginNextSeason() {
     setSave((current) => (current ? startNextSeason(current) : current));
-    setActiveTab("inbox");
+    setActiveTab(save?.careerType === "college" ? "college-hub" : "inbox");
+  }
+
+  function updateCollegeRecruit(entryId: string, updates: Partial<AnnualRecruitingBoardEntry>) {
+    setSave((current) => current?.annualRecruiting ? {
+      ...current,
+      annualRecruiting: {
+        ...current.annualRecruiting,
+        board: current.annualRecruiting.board.map((entry) => entry.id === entryId ? { ...entry, ...updates } : entry)
+      }
+    } : current);
+  }
+
+  function setCollegeRecruitPriority(entryId: string, priority: number) {
+    setSave((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        collegeManagement: {
+          ...managementStateForSchools(current.schools),
+          ...(current.collegeManagement ?? {}),
+          recruitingPriorities: {
+            ...(current.collegeManagement?.recruitingPriorities ?? {}),
+            [entryId]: priority
+          }
+        }
+      };
+    });
+  }
+
+  function updateCollegeRosterPlayer(playerId: string, updates: Partial<CollegeRosterPlayer>) {
+    setSave((current) => current?.collegeRoster ? {
+      ...current,
+      collegeRoster: {
+        ...current.collegeRoster,
+        players: current.collegeRoster.players.map((player) => player.id === playerId ? { ...player, ...updates } : player)
+      }
+    } : current);
+  }
+
+  function moveCollegeDepthPlayer(position: Position, playerId: string, direction: -1 | 1) {
+    setSave((current) => {
+      if (!current?.collegeRoster) return current;
+      const schoolId = managedSchoolId(current);
+      const eligible = current.collegeRoster.players
+        .filter((player) => player.schoolId === schoolId && player.position === position && !["cut", "graduated", "declared", "redshirt"].includes(player.rosterStatus ?? "active"))
+        .sort((a, b) => b.collegeOverall - a.collegeOverall || a.id.localeCompare(b.id));
+      const existing = current.collegeManagement?.depthOverrides?.[schoolId]?.[position];
+      const order = existing?.length ? [...existing, ...eligible.map((player) => player.id).filter((id) => !existing.includes(id))] : eligible.map((player) => player.id);
+      const index = order.indexOf(playerId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return current;
+      [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+      return {
+        ...current,
+        collegeManagement: {
+          ...managementStateForSchools(current.schools),
+          ...(current.collegeManagement ?? {}),
+          depthOverrides: {
+            ...(current.collegeManagement?.depthOverrides ?? {}),
+            [schoolId]: {
+              ...(current.collegeManagement?.depthOverrides?.[schoolId] ?? {}),
+              [position]: order
+            }
+          }
+        }
+      };
+    });
+  }
+
+  function autoCollegeDepth(position?: Position) {
+    setSave((current) => {
+      if (!current) return current;
+      const schoolId = managedSchoolId(current);
+      const schoolOverrides = { ...(current.collegeManagement?.depthOverrides?.[schoolId] ?? {}) };
+      if (position) delete schoolOverrides[position];
+      else POSITIONS.forEach((candidate) => delete schoolOverrides[candidate]);
+      return {
+        ...current,
+        collegeManagement: {
+          ...managementStateForSchools(current.schools),
+          ...(current.collegeManagement ?? {}),
+          depthOverrides: {
+            ...(current.collegeManagement?.depthOverrides ?? {}),
+            [schoolId]: schoolOverrides
+          }
+        }
+      };
+    });
+  }
+
+  function updateCollegeTraining(focus: CollegeDevelopmentFocus, posture: CollegeFatiguePosture) {
+    setSave((current) => {
+      if (!current) return current;
+      const schoolId = managedSchoolId(current);
+      return {
+        ...current,
+        collegeManagement: {
+          ...managementStateForSchools(current.schools),
+          ...(current.collegeManagement ?? {}),
+          trainingFocus: {
+            ...(current.collegeManagement?.trainingFocus ?? {}),
+            [schoolId]: focus
+          },
+          fatiguePosture: {
+            ...(current.collegeManagement?.fatiguePosture ?? {}),
+            [schoolId]: posture
+          }
+        }
+      };
+    });
+  }
+
+  function updateCollegeNil(position: Position, value: number) {
+    setSave((current) => {
+      if (!current) return current;
+      const schoolId = managedSchoolId(current);
+      return {
+        ...current,
+        collegeManagement: {
+          ...managementStateForSchools(current.schools),
+          ...(current.collegeManagement ?? {}),
+          nilAllocationByPosition: {
+            ...(current.collegeManagement?.nilAllocationByPosition ?? {}),
+            [schoolId]: {
+              ...(current.collegeManagement?.nilAllocationByPosition?.[schoolId] ?? {}),
+              [position]: value
+            }
+          }
+        }
+      };
+    });
+  }
+
+  function toggleTransferWatch(entryId: string) {
+    setSave((current) => {
+      if (!current) return current;
+      const currentList = current.collegeManagement?.transferWatchlist ?? [];
+      const transferWatchlist = currentList.includes(entryId) ? currentList.filter((id) => id !== entryId) : [...currentList, entryId];
+      return {
+        ...current,
+        collegeManagement: {
+          ...managementStateForSchools(current.schools),
+          ...(current.collegeManagement ?? {}),
+          transferWatchlist
+        }
+      };
+    });
+  }
+
+  function switchCareerJob(level: CareerType, organizationId: string) {
+    setSave((current) => {
+      if (!current) return current;
+      const organizationName = level === "college"
+        ? current.schools.find((school) => school.id === organizationId)?.name ?? organizationId
+        : current.teams.find((team) => team.id === organizationId)?.fullName ?? organizationId;
+      return {
+        ...current,
+        careerType: level,
+        selectedTeamId: level === "nfl" ? organizationId : current.selectedTeamId,
+        selectedSchoolId: level === "college" ? organizationId : current.selectedSchoolId,
+        careerEmployment: {
+          level,
+          organizationId,
+          contractStartSeason: current.seasonYear,
+          contractEndSeason: current.seasonYear + 3,
+          status: "active",
+          history: [
+            ...(current.careerEmployment?.history ?? []),
+            {
+              level,
+              organizationId,
+              startSeason: current.seasonYear,
+              status: "active",
+              summary: `Accepted job with ${organizationName}.`
+            }
+          ]
+        },
+        collegeManagement: {
+          ...managementStateForSchools(current.schools),
+          ...(current.collegeManagement ?? {}),
+          jobMarketOpen: false
+        }
+      };
+    });
+    setActiveTab(level === "college" ? "college-hub" : "inbox");
   }
 
   async function importSave(file?: File) {
@@ -1132,7 +1478,7 @@ export default function App() {
       setSaveStatus("Save failed");
       setSaveFailure(error instanceof Error ? error.message : "Imported save could not be stored. Export is still available.");
     }
-    setActiveTab("inbox");
+    setActiveTab(normalized.careerType === "college" ? "college-hub" : "inbox");
   }
 
   if (isBooting) {
@@ -1182,19 +1528,22 @@ export default function App() {
         <section className="setup-panel">
           <div className="setup-hero">
             <div>
-              <p className="eyebrow">2026 NFL GM sim</p>
-              <h1>New Career Setup</h1>
+              <p className="eyebrow">2026 football career hub</p>
+              <h1>Opening Menu</h1>
               <p className="setup-copy">
-                Choose the pressure level, mode, franchise, and visible seed. Rosters, staff, prospects, schedules, budgets, and draft
-                state are generated fresh when the career begins.
+                Load an existing save or build a fresh Year Zero universe for one managed NFL franchise or one college program.
               </p>
             </div>
             <div className="setup-summary">
-              <TeamLogo save={{ teams: nflTeams } as GameSave} teamId={selectedSetupTeam.id} size={58} />
+              {setupCareerType === "college" ? (
+                <CollegeLogo school={selectedSetupSchool} size={58} />
+              ) : (
+                <TeamLogo save={{ teams: nflTeams } as GameSave} teamId={selectedSetupTeam.id} size={58} />
+              )}
               <div>
-                <strong>{selectedSetupTeam.fullName}</strong>
+                <strong>{setupCareerType === "college" ? selectedSetupSchool?.name : selectedSetupTeam.fullName}</strong>
                 <span>
-                  {careerScenarioLabels[setupScenario]} | {setupMode === "goals" ? "Goals" : "Sandbox"}
+                  {setupCareerType === "college" ? "College Program" : "NFL Franchise"} | {careerScenarioLabels[setupScenario]} | {setupMode === "goals" ? "Goals" : "Sandbox"}
                 </span>
               </div>
             </div>
@@ -1250,8 +1599,26 @@ export default function App() {
               <div className="setup-step-heading">
                 <span>1</span>
                 <div>
+                  <h2>Career Type</h2>
+                  <p>Manage exactly one organization at a time. The other football world keeps simulating in the background.</p>
+                </div>
+              </div>
+              <div className="mode-row setup-mode-row" role="group" aria-label="Career type">
+                <button className={setupCareerType === "nfl" ? "selected" : ""} onClick={() => setSetupCareerType("nfl")}>
+                  NFL Team
+                </button>
+                <button className={setupCareerType === "college" ? "selected" : ""} onClick={() => setSetupCareerType("college")}>
+                  College Program
+                </button>
+              </div>
+            </section>
+
+            <section className="setup-step">
+              <div className="setup-step-heading">
+                <span>2</span>
+                <div>
                   <h2>Scenario</h2>
-                  <p>Shape only your selected franchise. The actual roster and staff stay hidden until kickoff.</p>
+                  <p>Shape the pressure around your first job. The full universe is generated fresh at kickoff.</p>
                 </div>
               </div>
               <div className="scenario-grid">
@@ -1270,7 +1637,7 @@ export default function App() {
 
             <section className="setup-step">
               <div className="setup-step-heading">
-                <span>2</span>
+                <span>3</span>
                 <div>
                   <h2>Mode</h2>
                   <p>Goals mode tracks owner pressure. Sandbox keeps the front office loose.</p>
@@ -1288,51 +1655,92 @@ export default function App() {
 
             <section className="setup-step team-browser-step">
               <div className="setup-step-heading">
-                <span>3</span>
+                <span>4</span>
                 <div>
-                  <h2>Team</h2>
-                  <p>Real NFL identities, generated career data.</p>
+                  <h2>{setupCareerType === "college" ? "College Program" : "NFL Team"}</h2>
+                  <p>{setupCareerType === "college" ? "Choose the school you manage; NFL teams remain available as background league context." : "Real NFL identities, generated career data."}</p>
                 </div>
               </div>
-              <div className="team-browser-tools">
-                <input
-                  type="search"
-                  value={teamSearch}
-                  onChange={(event) => setTeamSearch(event.target.value)}
-                  placeholder="Search teams"
-                  aria-label="Search teams"
-                />
-                <select
-                  value={teamConference}
-                  onChange={(event) => setTeamConference(event.target.value as Conference | "all")}
-                  aria-label="Filter conference"
-                >
-                  <option value="all">All Conferences</option>
-                  <option value="AFC">AFC</option>
-                  <option value="NFC">NFC</option>
-                </select>
-              </div>
-              <div className="team-grid">
-                {filteredSetupTeams.map((team) => (
-                  <button
-                    key={team.id}
-                    className={`team-tile ${setupTeamId === team.id ? "selected" : ""}`}
-                    style={{ "--tile-color": team.colors.primary } as CSSProperties & Record<string, string>}
-                    onClick={() => setSetupTeamId(team.id)}
-                  >
-                    <img src={team.logoUrl} alt="" onError={(event) => (event.currentTarget.style.display = "none")} />
-                    <span>{team.fullName}</span>
-                    <small>
-                      {team.conference} {team.division} | {careerScenarioLabels[setupScenario]}
-                    </small>
-                  </button>
-                ))}
-              </div>
+              {setupCareerType === "college" ? (
+                <>
+                  <div className="team-browser-tools">
+                    <input
+                      type="search"
+                      value={schoolSearch}
+                      onChange={(event) => setSchoolSearch(event.target.value)}
+                      placeholder="Search schools"
+                      aria-label="Search schools"
+                    />
+                    <select
+                      value={schoolSubdivision}
+                      onChange={(event) => setSchoolSubdivision(event.target.value as "all" | "FBS" | "FCS")}
+                      aria-label="Filter subdivision"
+                    >
+                      <option value="all">All Subdivisions</option>
+                      <option value="FBS">FBS</option>
+                      <option value="FCS">FCS</option>
+                    </select>
+                  </div>
+                  <div className="team-grid college-program-grid">
+                    {filteredSetupSchools.slice(0, 96).map((school) => (
+                      <button
+                        key={school.id}
+                        className={`team-tile college-program-tile ${setupSchoolId === school.id ? "selected" : ""}`}
+                        style={{ "--tile-color": school.primaryColor } as CSSProperties & Record<string, string>}
+                        onClick={() => setSetupSchoolId(school.id)}
+                      >
+                        <CollegeLogo school={school} size={44} />
+                        <span>{school.name}</span>
+                        <small>
+                          {school.conference} | {school.subdivision} | Prestige {school.prestige}
+                        </small>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="team-browser-tools">
+                    <input
+                      type="search"
+                      value={teamSearch}
+                      onChange={(event) => setTeamSearch(event.target.value)}
+                      placeholder="Search teams"
+                      aria-label="Search teams"
+                    />
+                    <select
+                      value={teamConference}
+                      onChange={(event) => setTeamConference(event.target.value as Conference | "all")}
+                      aria-label="Filter conference"
+                    >
+                      <option value="all">All Conferences</option>
+                      <option value="AFC">AFC</option>
+                      <option value="NFC">NFC</option>
+                    </select>
+                  </div>
+                  <div className="team-grid">
+                    {filteredSetupTeams.map((team) => (
+                      <button
+                        key={team.id}
+                        className={`team-tile ${setupTeamId === team.id ? "selected" : ""}`}
+                        style={{ "--tile-color": team.colors.primary } as CSSProperties & Record<string, string>}
+                        onClick={() => setSetupTeamId(team.id)}
+                      >
+                        <img src={team.logoUrl} alt="" onError={(event) => (event.currentTarget.style.display = "none")} />
+                        <span>{team.fullName}</span>
+                        <small>
+                          {team.conference} {team.division} | {careerScenarioLabels[setupScenario]}
+                        </small>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </section>
 
             <section className="setup-step">
               <div className="setup-step-heading">
-                <span>4</span>
+                <span>5</span>
                 <div>
                   <h2>Seed</h2>
                   <p>Use the same seed and options to recreate the same career.</p>
@@ -1356,22 +1764,28 @@ export default function App() {
 
   const unread = save.inbox.filter((item) => !item.read).length;
   const blockingInbox = save.inbox.filter((item) => item.blocking && !item.read).length;
+  const activeSchool = schoolForSave(save);
+  const currentNavGroups = save.careerType === "college" ? collegeNavGroups : nflNavGroups;
 
   return (
     <div className="app-shell" style={appStyle}>
       <aside className="side-nav">
         <div className="club-block">
-          <TeamLogo save={save} teamId={save.selectedTeamId} size={58} />
+          {save.careerType === "college" ? (
+            <CollegeLogo school={activeSchool} size={58} />
+          ) : (
+            <TeamLogo save={save} teamId={save.selectedTeamId} size={58} />
+          )}
           <div>
-            <p className="eyebrow">{formatDateLong(save.currentDate)}</p>
-            <h1>{activeTeam?.name}</h1>
+            <p className="eyebrow">{save.careerType === "college" ? "College desk" : formatDateLong(save.currentDate)}</p>
+            <h1>{save.careerType === "college" ? activeSchool?.name : activeTeam?.name}</h1>
             <p>
-              <RecordLine save={save} teamId={save.selectedTeamId} /> | {save.calendarPhase}
+              {save.careerType === "college" ? `${activeSchool?.conference ?? "Independent"} | ${activeSchool?.subdivision ?? "College"}` : <RecordLine save={save} teamId={save.selectedTeamId} />} | {save.calendarPhase}
             </p>
           </div>
         </div>
         <nav>
-          {navGroups.map((group) => (
+          {currentNavGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               <span className="nav-group-label">{group.label}</span>
               {group.tabs.map((tab) => (
@@ -1389,7 +1803,7 @@ export default function App() {
         <header className="top-bar">
           <div>
             <p className="eyebrow">GM desk</p>
-            <h2>{activeTeam?.fullName}</h2>
+            <h2>{save.careerType === "college" ? activeSchool?.name : activeTeam?.fullName}</h2>
             <small className="career-name">{activeCareerName}</small>
           </div>
           <div className="action-row">
@@ -1426,6 +1840,19 @@ export default function App() {
         </header>
 
         {activeTab === "inbox" && <InboxView save={save} markRead={markRead} />}
+        {activeTab === "college-hub" && <CollegeHubView save={save} openTab={setActiveTab} />}
+        {activeTab === "college-recruiting" && (
+          <CollegeRecruitingView save={save} updateRecruit={updateCollegeRecruit} setPriority={setCollegeRecruitPriority} />
+        )}
+        {activeTab === "college-roster" && <CollegeRosterView save={save} updatePlayer={updateCollegeRosterPlayer} />}
+        {activeTab === "college-depth" && <CollegeDepthView save={save} movePlayer={moveCollegeDepthPlayer} autoSort={autoCollegeDepth} />}
+        {activeTab === "college-training" && (
+          <CollegeTrainingNilView save={save} updateTraining={updateCollegeTraining} updateNil={updateCollegeNil} />
+        )}
+        {activeTab === "college-transfer" && <CollegeTransferView save={save} toggleWatch={toggleTransferWatch} />}
+        {activeTab === "college-season" && <CollegeSeasonView save={save} beginNextSeason={beginNextSeason} />}
+        {activeTab === "college-draft" && <CollegeDraftPipelineView save={save} />}
+        {activeTab === "college-jobs" && <CollegeJobsView save={save} switchJob={switchCareerJob} />}
         {activeTab === "roster" && (
           <RosterView
             save={save}
@@ -1521,6 +1948,371 @@ export default function App() {
         />
       ) : null}
     </div>
+  );
+}
+
+function CollegeEmptyState({ title }: { title: string }) {
+  return (
+    <section className="panel-card">
+      <p className="eyebrow">College</p>
+      <h2>{title}</h2>
+      <p className="muted">This save does not have the required college state loaded.</p>
+    </section>
+  );
+}
+
+function selectedSchoolContext(save: GameSave) {
+  const schoolId = managedSchoolId(save);
+  const school = save.schools.find((candidate) => candidate.id === schoolId);
+  const players = save.collegeRoster?.players.filter((player) => player.schoolId === schoolId) ?? [];
+  const activePlayers = players.filter((player) => !["cut", "graduated", "declared"].includes(player.rosterStatus ?? "active"));
+  const production = save.collegeSeasonResults?.production.filter((row) => row.schoolId === schoolId) ?? [];
+  const awards = save.collegeSeasonResults?.awards.filter((row) => row.schoolId === schoolId) ?? [];
+  const morale = save.collegeMorale?.entries.filter((row) => row.schoolId === schoolId) ?? [];
+  const recruiting = save.annualRecruiting?.board.filter((row) => row.schoolId === schoolId) ?? [];
+  return { schoolId, school, players, activePlayers, production, awards, morale, recruiting };
+}
+
+function CollegeHubView({ save, openTab }: { save: GameSave; openTab: (tab: Tab) => void }) {
+  const { school, activePlayers, production, awards, morale, recruiting } = selectedSchoolContext(save);
+  if (!school) return <CollegeEmptyState title="No managed school" />;
+  const signed = recruiting.filter((entry) => entry.status === "signed").length;
+  const offered = recruiting.filter((entry) => entry.status === "offered" || entry.status === "visited").length;
+  const avgMorale = morale.length ? Math.round(morale.reduce((sum, row) => sum + row.morale, 0) / morale.length) : 0;
+  const topProduction = [...production].sort((a, b) => b.productionScore - a.productionScore).slice(0, 5);
+  const profile = save.schoolProfiles?.profiles.find((row) => row.schoolId === school.id);
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header">
+        <div>
+          <p className="eyebrow">College Hub</p>
+          <h2>{school.name}</h2>
+          <p>{school.conference} | {school.subdivision} | {school.scheme} scheme</p>
+        </div>
+        <CollegeLogo school={school} size={76} />
+      </div>
+      <div className="metric-grid">
+        <article><span>Roster</span><strong>{activePlayers.length}</strong><small>active players</small></article>
+        <article><span>Recruiting</span><strong>{signed}/{offered}</strong><small>signed / active offers</small></article>
+        <article><span>Morale</span><strong>{avgMorale || "--"}</strong><small>team average</small></article>
+        <article><span>Program</span><strong>{profile?.programTier ?? "Tier"}</strong><small>NIL {profile?.nilPower ?? school.prestige}</small></article>
+      </div>
+      <div className="college-command-grid">
+        {[
+          ["college-recruiting", "Recruiting", `${recruiting.length} board targets`],
+          ["college-roster", "Roster", `${activePlayers.filter((player) => player.rosterStatus === "redshirt").length} redshirts`],
+          ["college-depth", "Depth", "Set starters and rotations"],
+          ["college-training", "Training / NIL", "Set development posture"],
+          ["college-transfer", "Transfer Portal", `${save.annualTransferPortal?.entries.filter((entry) => entry.playerPool === "college").length ?? 0} entries`],
+          ["college-season", "Season", `${awards.length} award results`]
+        ].map(([tab, title, detail]) => (
+          <button key={tab} className="college-command" onClick={() => openTab(tab as Tab)}>
+            <strong>{title}</strong>
+            <span>{detail}</span>
+          </button>
+        ))}
+      </div>
+      <section className="table-card">
+        <div className="table-card-header"><h3>Top Production</h3></div>
+        <DataTable>
+          <thead><tr><th>Player</th><th>Pos</th><th>Depth</th><th>Production</th><th>Snaps</th></tr></thead>
+          <tbody>
+            {topProduction.map((row) => {
+              const player = activePlayers.find((candidate) => candidate.id === row.playerId);
+              return <tr key={row.id}><td>{player ? `${player.firstName} ${player.lastName}` : row.playerId}</td><td>{row.position}</td><td>{row.depthRank}</td><td>{row.productionScore}</td><td>{Math.round(row.snapShare * 100)}%</td></tr>;
+            })}
+          </tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeRecruitingView({
+  save,
+  updateRecruit,
+  setPriority
+}: {
+  save: GameSave;
+  updateRecruit: (entryId: string, updates: Partial<AnnualRecruitingBoardEntry>) => void;
+  setPriority: (entryId: string, priority: number) => void;
+}) {
+  const { school, recruiting } = selectedSchoolContext(save);
+  const [position, setPosition] = useState<Position | "all">("all");
+  const [status, setStatus] = useState<AnnualRecruitingBoardEntry["status"] | "all">("all");
+  if (!school || !save.annualRecruitClass) return <CollegeEmptyState title="No recruiting board" />;
+  const recruitById = new Map(save.annualRecruitClass.recruits.map((recruit) => [recruit.id, recruit]));
+  const hidden = new Set(save.collegeManagement?.hiddenRecruitIds ?? []);
+  const rows = recruiting
+    .filter((entry) => !hidden.has(entry.id))
+    .filter((entry) => status === "all" || entry.status === status)
+    .filter((entry) => {
+      const recruit = recruitById.get(entry.prospectId);
+      return position === "all" || recruit?.position === position;
+    })
+    .sort((a, b) => (save.collegeManagement?.recruitingPriorities?.[b.id] ?? b.targetPriority) - (save.collegeManagement?.recruitingPriorities?.[a.id] ?? a.targetPriority))
+    .slice(0, 120);
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header"><div><p className="eyebrow">Recruiting</p><h2>{school.name} Board</h2></div></div>
+      <div className="board-toolbar">
+        <select value={position} onChange={(event) => setPosition(event.target.value as Position | "all")}><option value="all">All Positions</option>{POSITIONS.map((pos) => <option key={pos} value={pos}>{pos}</option>)}</select>
+        <select value={status} onChange={(event) => setStatus(event.target.value as AnnualRecruitingBoardEntry["status"] | "all")}><option value="all">All Statuses</option>{["evaluating", "offered", "visited", "committed", "signed", "decommitted", "withdrawn"].map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      </div>
+      <section className="table-card">
+        <DataTable>
+          <thead><tr><th>Recruit</th><th>Pos</th><th>Stars</th><th>Interest</th><th>Need</th><th>NIL</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            {rows.map((entry) => {
+              const recruit = recruitById.get(entry.prospectId);
+              return (
+                <tr key={entry.id}>
+                  <td><strong>{recruit ? `${recruit.firstName} ${recruit.lastName}` : entry.prospectId}</strong><small>{recruit?.homeState} | #{recruit?.nationalRank}</small></td>
+                  <td>{recruit?.position}</td>
+                  <td>{recruit?.stars}</td>
+                  <td>{entry.interestScore}</td>
+                  <td>{entry.positionNeed}</td>
+                  <td>{entry.nilDemand}</td>
+                  <td>{entry.status}</td>
+                  <td className="button-cell">
+                    <button onClick={() => updateRecruit(entry.id, { status: "offered", interestScore: Math.min(100, entry.interestScore + 4) })}>Offer</button>
+                    <button onClick={() => updateRecruit(entry.id, { status: "visited", visitImpact: Math.min(20, entry.visitImpact + 6), interestScore: Math.min(100, entry.interestScore + 7) })}>Visit</button>
+                    <button onClick={() => updateRecruit(entry.id, { promiseType: "early_playing_time", interestScore: Math.min(100, entry.interestScore + 3) })}>Promise</button>
+                    <button onClick={() => setPriority(entry.id, 100)}>Priority</button>
+                    <button onClick={() => updateRecruit(entry.id, { status: "withdrawn" })}>Drop</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeRosterView({ save, updatePlayer }: { save: GameSave; updatePlayer: (playerId: string, updates: Partial<CollegeRosterPlayer>) => void }) {
+  const { school, players } = selectedSchoolContext(save);
+  const [position, setPosition] = useState<Position | "all">("all");
+  const [status, setStatus] = useState<string>("active");
+  if (!school) return <CollegeEmptyState title="No college roster" />;
+  const rows = players
+    .filter((player) => position === "all" || player.position === position)
+    .filter((player) => status === "all" || (player.rosterStatus ?? "active") === status)
+    .sort((a, b) => b.collegeOverall - a.collegeOverall || a.lastName.localeCompare(b.lastName));
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header"><div><p className="eyebrow">Roster</p><h2>{school.name}</h2></div></div>
+      <div className="board-toolbar">
+        <select value={position} onChange={(event) => setPosition(event.target.value as Position | "all")}><option value="all">All Positions</option>{POSITIONS.map((pos) => <option key={pos} value={pos}>{pos}</option>)}</select>
+        <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="active">Active</option><option value="redshirt">Redshirt</option><option value="walk_on">Walk-on</option><option value="cut">Cut</option><option value="graduated">Graduated</option><option value="declared">Declared</option><option value="all">All Statuses</option></select>
+      </div>
+      <section className="table-card">
+        <DataTable>
+          <thead><tr><th>Player</th><th>Pos</th><th>Class</th><th>OVR</th><th>Pot</th><th>Academic</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            {rows.map((player) => (
+              <tr key={player.id}>
+                <td><strong>{player.firstName} {player.lastName}</strong><small>{player.source}</small></td>
+                <td>{player.position}</td>
+                <td>{player.classYear}</td>
+                <td>{player.collegeOverall}</td>
+                <td>{player.collegePotential}</td>
+                <td>{player.academicEligible === false ? "Ineligible" : `Risk ${player.academicRisk ?? 0}`}</td>
+                <td>{player.rosterStatus ?? "active"}</td>
+                <td className="button-cell">
+                  <button onClick={() => updatePlayer(player.id, { rosterStatus: player.rosterStatus === "redshirt" ? "active" : "redshirt", redshirted: player.rosterStatus !== "redshirt" })}>Redshirt</button>
+                  <button onClick={() => updatePlayer(player.id, { rosterStatus: "active", cutSeason: undefined })}>Active</button>
+                  <button onClick={() => updatePlayer(player.id, { rosterStatus: "cut", cutSeason: save.seasonYear })}>Cut</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeDepthView({ save, movePlayer, autoSort }: { save: GameSave; movePlayer: (position: Position, playerId: string, direction: -1 | 1) => void; autoSort: (position?: Position) => void }) {
+  const { schoolId, school, activePlayers } = selectedSchoolContext(save);
+  if (!school) return <CollegeEmptyState title="No depth chart" />;
+  const overrides = save.collegeManagement?.depthOverrides?.[schoolId] ?? {};
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header"><div><p className="eyebrow">Depth</p><h2>{school.name} Depth Chart</h2></div><button onClick={() => autoSort()}>Auto All</button></div>
+      <div className="college-depth-grid">
+        {POSITIONS.map((position) => {
+          const candidates = activePlayers.filter((player) => player.position === position && player.rosterStatus !== "redshirt");
+          const override = overrides[position] ?? [];
+          const ordered = [...override.map((id) => candidates.find((player) => player.id === id)).filter(Boolean) as CollegeRosterPlayer[], ...candidates.filter((player) => !override.includes(player.id)).sort((a, b) => b.collegeOverall - a.collegeOverall)].slice(0, 5);
+          return (
+            <article className="depth-card" key={position}>
+              <header><strong>{position}</strong><button onClick={() => autoSort(position)}>Auto</button></header>
+              {ordered.map((player, index) => (
+                <div className="college-depth-row" key={player.id}>
+                  <span>{index + 1}</span>
+                  <strong>{player.firstName} {player.lastName}</strong>
+                  <small>{player.collegeOverall}</small>
+                  <button onClick={() => movePlayer(position, player.id, -1)}>Up</button>
+                  <button onClick={() => movePlayer(position, player.id, 1)}>Down</button>
+                </div>
+              ))}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function CollegeTrainingNilView({
+  save,
+  updateTraining,
+  updateNil
+}: {
+  save: GameSave;
+  updateTraining: (focus: CollegeDevelopmentFocus, posture: CollegeFatiguePosture) => void;
+  updateNil: (position: Position, value: number) => void;
+}) {
+  const { schoolId, school, activePlayers } = selectedSchoolContext(save);
+  if (!school) return <CollegeEmptyState title="No training state" />;
+  const focus = save.collegeManagement?.trainingFocus?.[schoolId] ?? "balanced";
+  const posture = save.collegeManagement?.fatiguePosture?.[schoolId] ?? "standard";
+  const nil = save.collegeManagement?.nilAllocationByPosition?.[schoolId] ?? {};
+  const trainingRows = (save.collegeTraining?.entries ?? []).filter((entry) => entry.schoolId === schoolId).slice(0, 80);
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header"><div><p className="eyebrow">Training / NIL</p><h2>{school.name}</h2></div></div>
+      <section className="setup-step">
+        <div className="board-toolbar">
+          <select value={focus} onChange={(event) => updateTraining(event.target.value as CollegeDevelopmentFocus, posture)}>
+            {["balanced", "athletic", "technical", "mental", "recovery"].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+          <select value={posture} onChange={(event) => updateTraining(focus, event.target.value as CollegeFatiguePosture)}>
+            {["conservative", "standard", "aggressive"].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </div>
+        <div className="nil-grid">
+          {POSITIONS.map((position) => (
+            <label key={position}>
+              <span>{position}</span>
+              <input type="number" min={0} max={100} value={nil[position] ?? 0} onChange={(event) => updateNil(position, Number(event.target.value))} />
+            </label>
+          ))}
+        </div>
+      </section>
+      <section className="table-card">
+        <DataTable>
+          <thead><tr><th>Player</th><th>Pos</th><th>Athletic</th><th>Technical</th><th>Mental</th><th>Fatigue</th><th>Portal Risk</th></tr></thead>
+          <tbody>
+            {trainingRows.map((entry) => {
+              const player = activePlayers.find((candidate) => candidate.id === entry.playerId);
+              return <tr key={entry.playerId}><td>{player ? `${player.firstName} ${player.lastName}` : entry.playerId}</td><td>{player?.position}</td><td>{Math.round(entry.athleticBank)}</td><td>{Math.round(entry.technicalBank)}</td><td>{Math.round(entry.mentalBank)}</td><td>{Math.round(entry.fatigue)}</td><td>{Math.round(entry.portalRiskMult * 100)}%</td></tr>;
+            })}
+          </tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeTransferView({ save, toggleWatch }: { save: GameSave; toggleWatch: (entryId: string) => void }) {
+  const { school } = selectedSchoolContext(save);
+  const watchlist = new Set(save.collegeManagement?.transferWatchlist ?? []);
+  const entries = (save.annualTransferPortal?.entries ?? []).filter((entry) => entry.playerPool === "college").slice(0, 160);
+  if (!school) return <CollegeEmptyState title="No transfer portal" />;
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header"><div><p className="eyebrow">Transfer Portal</p><h2>{school.name} Targets</h2></div></div>
+      <section className="table-card">
+        <DataTable>
+          <thead><tr><th>Player</th><th>Pos</th><th>From</th><th>Reason</th><th>Status</th><th>Best Fits</th><th>Action</th></tr></thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={entry.id}>
+                <td><strong>{entry.playerName}</strong></td>
+                <td>{entry.position}</td>
+                <td>{save.schools.find((candidate) => candidate.id === entry.fromTeamId)?.name ?? entry.fromTeamId}</td>
+                <td>{entry.reason}</td>
+                <td>{entry.status}</td>
+                <td>{entry.destinationScores.slice(0, 3).map((score) => save.schools.find((candidate) => candidate.id === score.teamId)?.name ?? score.teamId).join(", ")}</td>
+                <td><button className={watchlist.has(entry.id) ? "selected" : ""} onClick={() => toggleWatch(entry.id)}>{watchlist.has(entry.id) ? "Watching" : "Watch"}</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeSeasonView({ save, beginNextSeason }: { save: GameSave; beginNextSeason: () => void }) {
+  const { school, production, awards } = selectedSchoolContext(save);
+  if (!school) return <CollegeEmptyState title="No season results" />;
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header">
+        <div><p className="eyebrow">Season</p><h2>{school.name} {save.seasonYear}</h2></div>
+        {save.phase === "offseason-complete" ? <button onClick={beginNextSeason}>Start Next Season</button> : null}
+      </div>
+      <div className="metric-grid">
+        <article><span>Production Rows</span><strong>{production.length}</strong><small>selected school</small></article>
+        <article><span>Awards</span><strong>{awards.length}</strong><small>award results</small></article>
+        <article><span>Recruiting Phase</span><strong>{save.annualRecruiting?.currentPhase ?? "--"}</strong><small>annual pipeline</small></article>
+        <article><span>Draft Year</span><strong>{save.draftState.draftYear}</strong><small>NFL bridge</small></article>
+      </div>
+      <section className="table-card">
+        <DataTable>
+          <thead><tr><th>Player</th><th>Pos</th><th>Production</th><th>Snap Share</th><th>Stats</th></tr></thead>
+          <tbody>{production.slice(0, 80).map((row) => <tr key={row.id}><td>{save.collegeRoster?.players.find((player) => player.id === row.playerId)?.lastName ?? row.playerId}</td><td>{row.position}</td><td>{row.productionScore}</td><td>{Math.round(row.snapShare * 100)}%</td><td>{Object.entries(row.stats ?? {}).slice(0, 3).map(([key, value]) => `${key} ${value}`).join(", ")}</td></tr>)}</tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeDraftPipelineView({ save }: { save: GameSave }) {
+  const { school } = selectedSchoolContext(save);
+  if (!school) return <CollegeEmptyState title="No draft pipeline" />;
+  const prospects = save.prospects.filter((prospect) => prospect.schoolId === school.id).slice(0, 120);
+  const evalById = new Map(save.draftEvaluation?.results.map((row) => [row.prospectId, row]) ?? []);
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header"><div><p className="eyebrow">Draft Pipeline</p><h2>{school.name} NFL Prospects</h2></div></div>
+      <section className="table-card">
+        <DataTable>
+          <thead><tr><th>Prospect</th><th>Pos</th><th>Class</th><th>Round</th><th>Grade</th><th>Evaluation</th></tr></thead>
+          <tbody>{prospects.map((prospect) => <tr key={prospect.id}><td><strong>{prospect.firstName} {prospect.lastName}</strong></td><td>{prospect.position}</td><td>{prospect.classYear}</td><td>{prospect.projectedRound}</td><td>{prospect.consensusGrade}</td><td>{evalById.get(prospect.id)?.evaluationSummary ?? prospect.scouted.note}</td></tr>)}</tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeJobsView({ save, switchJob }: { save: GameSave; switchJob: (level: CareerType, organizationId: string) => void }) {
+  const employment = save.careerEmployment;
+  const canSwitch = employment?.status !== "active" || save.collegeManagement?.jobMarketOpen;
+  const collegeOffers = [...save.schools].sort((a, b) => b.prestige - a.prestige || a.name.localeCompare(b.name)).slice(0, 12);
+  const nflOffers = [...save.teams].sort((a, b) => a.fullName.localeCompare(b.fullName)).slice(0, 8);
+  return (
+    <section className="view-stack college-view">
+      <div className="view-header"><div><p className="eyebrow">Jobs</p><h2>Career Employment</h2><p>{employment?.status ?? "active"} through {employment?.contractEndSeason ?? save.seasonYear + 3}</p></div></div>
+      <section className="table-card">
+        <div className="table-card-header"><h3>College Offers</h3></div>
+        <DataTable>
+          <thead><tr><th>School</th><th>Conference</th><th>Prestige</th><th>Scheme</th><th>Action</th></tr></thead>
+          <tbody>{collegeOffers.map((school) => <tr key={school.id}><td><SchoolCell school={school} /></td><td>{school.conference}</td><td>{school.prestige}</td><td>{school.scheme}</td><td><button disabled={!canSwitch} onClick={() => switchJob("college", school.id)}>Accept</button></td></tr>)}</tbody>
+        </DataTable>
+      </section>
+      <section className="table-card">
+        <div className="table-card-header"><h3>NFL Offers</h3></div>
+        <DataTable>
+          <thead><tr><th>Team</th><th>Division</th><th>Record</th><th>Action</th></tr></thead>
+          <tbody>{nflOffers.map((team) => <tr key={team.id}><td>{team.fullName}</td><td>{team.conference} {team.division}</td><td><RecordLine save={save} teamId={team.id} /></td><td><button disabled={!canSwitch} onClick={() => switchJob("nfl", team.id)}>Accept</button></td></tr>)}</tbody>
+        </DataTable>
+      </section>
+    </section>
   );
 }
 
@@ -5679,15 +6471,36 @@ function ScoutingView({
   );
 }
 
+type CalendarFilter = "all" | "nfl" | "college" | "managed" | "games" | "deadlines" | "recruiting" | "roster" | "draft" | "important";
+
+const calendarFilters: Array<{ id: CalendarFilter; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "nfl", label: "NFL" },
+  { id: "college", label: "College" },
+  { id: "managed", label: "Managed Only" },
+  { id: "games", label: "Games" },
+  { id: "deadlines", label: "Deadlines" },
+  { id: "recruiting", label: "Recruiting" },
+  { id: "roster", label: "Roster" },
+  { id: "draft", label: "Draft" },
+  { id: "important", label: "Important" }
+];
+
 function CalendarView({ save, openTab, openGame }: { save: GameSave; openTab: (tab: Tab) => void; openGame: (gameId: string) => void }) {
-  const [view, setView] = useState<"today" | "month" | "league" | "team">("today");
-  const todayEvents = save.seasonCalendar.filter((event) => event.date === save.currentDate);
-  const upcoming = save.seasonCalendar.filter((event) => event.date > save.currentDate).slice(0, 12);
-  const teamGames = teamSchedule(save, save.selectedTeamId).filter((game) => game.date);
-  const month = save.currentDate.slice(0, 7);
-  const monthEvents = save.seasonCalendar.filter((event) => event.date.startsWith(month));
+  const [calendarMonth, setCalendarMonth] = useState(save.currentDate.slice(0, 7));
+  const [filter, setFilter] = useState<CalendarFilter>("all");
+  const [selectedDate, setSelectedDate] = useState<string | undefined>(save.currentDate);
   const nextGameDate = nextDateWithGames(save);
-  const todaysGames = gamesOnDate(save);
+  const activeSchool = schoolForSave(save);
+  const activeTeam = selectedTeam(save);
+  const filteredEvents = save.seasonCalendar.filter((event) => calendarEventMatchesFilter(event, filter));
+  const eventsByDate = new Map<string, GameSave["seasonCalendar"]>();
+  for (const event of filteredEvents) {
+    eventsByDate.set(event.date, [...(eventsByDate.get(event.date) ?? []), event]);
+  }
+  const monthDays = calendarMonthDays(calendarMonth);
+  const selectedEvents = selectedDate ? eventsByDate.get(selectedDate) ?? [] : [];
+  const nextNotable = filteredEvents.find((event) => event.date >= save.currentDate && (event.important || event.eventLevel === "managed")) ?? filteredEvents.find((event) => event.date >= save.currentDate);
 
   function openEvent(event: NonNullable<GameSave["seasonCalendar"]>[number]) {
     if (event.gameId) {
@@ -5698,82 +6511,190 @@ function CalendarView({ save, openTab, openGame }: { save: GameSave; openTab: (t
   }
 
   return (
-    <section className="panel calendar-page">
-      <div className="section-title-row">
-        <div>
-          <p className="eyebrow">League calendar</p>
-          <h2>{formatDateLong(save.currentDate)}</h2>
-          <p>{save.calendarPhase.replace(/-/g, " ")} | Football Week {save.currentWeek}</p>
+    <section className="panel calendar-page calendar-grid-page">
+      <div className="calendar-console-header">
+        <div className="calendar-identity">
+          {save.careerType === "college" ? <CollegeLogo school={activeSchool} size={52} /> : <TeamLogo save={save} teamId={save.selectedTeamId} size={52} />}
+          <div>
+            <p className="eyebrow">Calendar</p>
+            <h2>{save.careerType === "college" ? activeSchool?.name ?? "College Program" : activeTeam.fullName}</h2>
+            <p>{save.calendarPhase.replace(/-/g, " ")} | Football Week {save.currentWeek}</p>
+          </div>
         </div>
-        <span className="read-only-chip">{nextGameDate ? `Next games ${formatDateLong(nextGameDate)}` : "No scheduled games"}</span>
+        <div className="calendar-header-summary">
+          <span>{nextNotable ? `Next: ${nextNotable.title} (${formatDateLong(nextNotable.date)})` : nextGameDate ? `Next games ${formatDateLong(nextGameDate)}` : "No upcoming events"}</span>
+          <div className="calendar-month-controls">
+            <button type="button" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, -1))}>Prev</button>
+            <strong>{monthLabel(calendarMonth)}</strong>
+            <button type="button" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, 1))}>Next</button>
+            <button type="button" onClick={() => { setCalendarMonth(save.currentDate.slice(0, 7)); setSelectedDate(save.currentDate); }}>Today</button>
+          </div>
+        </div>
       </div>
-      <div className="segmented-tabs compact-tabs">
-        {(["today", "month", "league", "team"] as const).map((candidate) => (
-          <button key={candidate} type="button" className={view === candidate ? "selected" : ""} onClick={() => setView(candidate)}>
-            {candidate === "today" ? "Today" : candidate === "month" ? "Month" : candidate === "league" ? "League Year" : "Team Schedule"}
+
+      <div className="calendar-filter-bar" role="group" aria-label="Calendar filters">
+        {calendarFilters.map((candidate) => (
+          <button key={candidate.id} type="button" className={filter === candidate.id ? "selected" : ""} onClick={() => setFilter(candidate.id)}>
+            {candidate.label}
           </button>
         ))}
       </div>
 
-      {view === "today" ? (
-        <div className="calendar-today-grid">
-          <section className="calendar-card">
-            <h3>Today</h3>
-            {todayEvents.length ? todayEvents.map((event) => <CalendarEventRow key={event.id} event={event} openEvent={openEvent} />) : <p>No major league events today. Daily recovery, scouting, training, roster AI, waivers, and offer timers still process.</p>}
-          </section>
-          <section className="calendar-card">
-            <h3>Games Today</h3>
-            {todaysGames.length ? todaysGames.map((game) => (
-              <button key={game.id} className="calendar-event-row" type="button" onClick={() => openGame(game.id)}>
-                <span>{game.awayTeamId.toUpperCase()} at {game.homeTeamId.toUpperCase()}</span>
-                <strong>{game.kickoffSlot ?? "TBD"}</strong>
-              </button>
-            )) : <p>No games today.</p>}
-          </section>
-          <section className="calendar-card">
-            <h3>Upcoming</h3>
-            {upcoming.slice(0, 8).map((event) => <CalendarEventRow key={event.id} event={event} openEvent={openEvent} />)}
-          </section>
-        </div>
-      ) : null}
-
-      {view === "month" ? (
-        <div className="calendar-list">
-          {monthEvents.length ? monthEvents.map((event) => <CalendarEventRow key={event.id} event={event} openEvent={openEvent} />) : <p>No major events this month.</p>}
-        </div>
-      ) : null}
-
-      {view === "league" ? (
-        <div className="calendar-list">
-          {save.seasonCalendar.filter((event) => event.important || event.type !== "game").map((event) => <CalendarEventRow key={event.id} event={event} openEvent={openEvent} />)}
-        </div>
-      ) : null}
-
-      {view === "team" ? (
-        <div className="calendar-list">
-          {teamGames.map((game) => (
-            <button key={game.id} className="calendar-event-row" type="button" onClick={() => openGame(game.id)}>
-              <span>{game.date ? formatDateLong(game.date) : `Week ${game.week}`} | {game.awayTeamId.toUpperCase()} at {game.homeTeamId.toUpperCase()}</span>
-              <strong>{game.status === "final" ? `${game.awayScore}-${game.homeScore}` : game.kickoffSlot ?? "TBD"}</strong>
+      <div className="month-calendar" data-testid="month-calendar">
+        {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
+          <div className="calendar-weekday" key={day}>{day}</div>
+        ))}
+        {monthDays.map((date) => {
+          const dayEvents = eventsByDate.get(date) ?? [];
+          const inMonth = date.startsWith(calendarMonth);
+          const isToday = date === save.currentDate;
+          const isSelected = date === selectedDate;
+          return (
+            <button
+              key={date}
+              type="button"
+              className={`calendar-day-cell ${inMonth ? "" : "outside-month"} ${isToday ? "today" : ""} ${isSelected ? "selected" : ""}`}
+              onClick={() => setSelectedDate(date)}
+            >
+              <span className="calendar-day-number">{Number(date.slice(8, 10))}</span>
+              <span className="calendar-day-events">
+                {dayEvents.slice(0, 4).map((event) => (
+                  <em key={event.id} className={`calendar-chip source-${event.source ?? "nfl"} type-${event.type} ${event.eventLevel === "managed" ? "managed" : ""}`}>
+                    {event.eventLevel === "managed" ? "Managed: " : ""}{event.title}
+                  </em>
+                ))}
+                {dayEvents.length > 4 ? <em className="calendar-chip more">+{dayEvents.length - 4} more</em> : null}
+              </span>
             </button>
-          ))}
-        </div>
+          );
+        })}
+      </div>
+
+      {selectedDate ? (
+        <CalendarDateModal
+          date={selectedDate}
+          events={selectedEvents}
+          save={save}
+          close={() => setSelectedDate(undefined)}
+          openEvent={openEvent}
+        />
       ) : null}
     </section>
   );
 }
 
-function CalendarEventRow({ event, openEvent }: { event: GameSave["seasonCalendar"][number]; openEvent: (event: GameSave["seasonCalendar"][number]) => void }) {
+function CalendarDateModal({
+  date,
+  events,
+  save,
+  close,
+  openEvent
+}: {
+  date: string;
+  events: GameSave["seasonCalendar"];
+  save: GameSave;
+  close: () => void;
+  openEvent: (event: GameSave["seasonCalendar"][number]) => void;
+}) {
+  const grouped = calendarModalGroups(events);
   return (
-    <button className={`calendar-event-row calendar-event-${event.type}`} type="button" onClick={() => openEvent(event)}>
-      <span>
-        <strong>{formatDateLong(event.date)}</strong>
-        {event.title}
-        {event.description ? <small>{event.description}</small> : null}
-      </span>
-      <em>{event.type.replace(/-/g, " ")}</em>
-    </button>
+    <div className="modal-backdrop calendar-modal-backdrop" role="dialog" aria-modal="true" aria-label={`Events for ${formatDateLong(date)}`}>
+      <div className="trade-modal calendar-date-modal">
+        <div className="calendar-modal-header">
+          <div>
+            <p className="eyebrow">{date === save.currentDate ? "Today" : "Calendar date"}</p>
+            <h3>{formatDateLong(date)}</h3>
+            <p>{calendarPhaseForDisplay(save, date)}</p>
+          </div>
+          <button type="button" onClick={close}>Close</button>
+        </div>
+        {grouped.length ? grouped.map((group) => (
+          <section className="calendar-modal-group" key={group.label}>
+            <h4>{group.label}</h4>
+            {group.events.map((event) => (
+              <article className={`calendar-modal-event source-${event.source ?? "nfl"}`} key={event.id}>
+                <div>
+                  <strong>{event.title}</strong>
+                  <span>{event.description}</span>
+                  {event.modalDetail ? <small>{event.modalDetail}</small> : null}
+                  <em>{eventSourceLabel(event)} | {event.type.replace(/-/g, " ")}{event.phase ? ` | ${event.phase.replace(/-/g, " ")}` : ""}</em>
+                </div>
+                {event.gameId || event.actionTab ? <button type="button" onClick={() => openEvent(event)}>{event.gameId ? "Open Game" : "Open"}</button> : null}
+              </article>
+            ))}
+          </section>
+        )) : (
+          <section className="calendar-modal-empty">
+            <h4>No filtered events</h4>
+            <p>Daily recovery, scouting, training, roster AI, waivers, offers, and college pipeline timers can still process on this date.</p>
+          </section>
+        )}
+      </div>
+    </div>
   );
+}
+
+function calendarEventMatchesFilter(event: GameSave["seasonCalendar"][number], filter: CalendarFilter): boolean {
+  const source = event.source ?? "nfl";
+  if (filter === "all") return true;
+  if (filter === "nfl") return source === "nfl";
+  if (filter === "college") return source === "college" || source === "career";
+  if (filter === "managed") return event.eventLevel === "managed" || event.important === true;
+  if (filter === "games") return event.type === "game" || Boolean(event.gameId);
+  if (filter === "deadlines") return event.type === "deadline" || event.type === "waivers" || event.type === "practice-squad";
+  if (filter === "recruiting") return event.type === "recruiting" || event.actionTab === "college-recruiting";
+  if (filter === "roster") return event.type === "roster" || event.actionTab === "roster" || event.actionTab === "college-roster" || event.actionTab === "college-depth";
+  if (filter === "draft") return event.type === "draft" || event.actionTab === "draft" || event.actionTab === "college-draft";
+  if (filter === "important") return event.important === true;
+  return true;
+}
+
+function calendarMonthDays(month: string): string[] {
+  const first = parseDate(`${month}-01`);
+  const start = addDays(`${month}-01`, -first.getUTCDay());
+  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
+}
+
+function shiftMonth(month: string, delta: number): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, monthNumber - 1 + delta, 1, 12));
+  return shifted.toISOString().slice(0, 7);
+}
+
+function monthLabel(month: string): string {
+  return parseDate(`${month}-01`).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function calendarModalGroups(events: GameSave["seasonCalendar"]): Array<{ label: string; events: GameSave["seasonCalendar"] }> {
+  const sorted = [...events].sort((a, b) => {
+    const levelGap = (a.eventLevel === "managed" ? 0 : 1) - (b.eventLevel === "managed" ? 0 : 1);
+    if (levelGap) return levelGap;
+    const sourceOrder = { career: 0, nfl: 1, college: 2 };
+    const sourceGap = sourceOrder[a.source ?? "nfl"] - sourceOrder[b.source ?? "nfl"];
+    if (sourceGap) return sourceGap;
+    return a.title.localeCompare(b.title);
+  });
+  const groups: Array<{ label: string; events: GameSave["seasonCalendar"] }> = [];
+  for (const event of sorted) {
+    const label = event.eventLevel === "managed" ? "Managed Organization" : event.source === "college" ? "College World" : event.source === "career" ? "Career" : "NFL";
+    const group = groups.find((candidate) => candidate.label === label);
+    if (group) group.events.push(event);
+    else groups.push({ label, events: [event] });
+  }
+  return groups;
+}
+
+function eventSourceLabel(event: GameSave["seasonCalendar"][number]): string {
+  if (event.eventLevel === "managed") return "Managed";
+  if (event.source === "college") return "College";
+  if (event.source === "career") return "Career";
+  return "NFL";
+}
+
+function calendarPhaseForDisplay(save: GameSave, date: string): string {
+  const phase = calendarPhaseForDate(save.seasonYear, date);
+  const dayLabel = date === save.currentDate ? "Current date" : date < save.currentDate ? "Past date" : "Future date";
+  return `${dayLabel} | ${phase.replace(/-/g, " ")}`;
 }
 
 function ScheduleView({ save, openGame }: { save: GameSave; openGame: (gameId: string) => void }) {
