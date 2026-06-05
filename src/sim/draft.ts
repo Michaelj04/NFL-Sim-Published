@@ -13,8 +13,9 @@ import { isPlayablePlayer } from "./personnel";
 import { normalizePlayerModel } from "./playerModel";
 import { postseasonDraftRank } from "./postseason";
 import { eligiblePositionsFor, normalizePositionFits, versatilityBonus } from "./positionEligibility";
-import { positionDraftValue } from "./scouting";
+import { prospectAbilityGrade, prospectPositionPremium } from "./scouting";
 import { annualNflScoutingArchetype, annualNflTeamArchetype, annualPickValue } from "./annualRuntime";
+import { emptyPlayerStats } from "./stats";
 
 const DRAFT_YEAR = 2027;
 const rosterNeedCache = new WeakMap<GameSave, Map<string, ReturnType<typeof rosterNeeds>>>();
@@ -196,18 +197,7 @@ export function enterDraft(save: GameSave): GameSave {
   return {
     ...next,
     phase: "draft",
-    inbox: [
-      {
-        id: `draft-open-${next.currentWeek}-${next.inbox.length}`,
-        week: next.currentWeek,
-        category: "draft",
-        title: "Draft room is live",
-        body: "The board is locked, phones are open, and the draft can now move pick by pick.",
-        priority: "high",
-        read: false
-      },
-      ...next.inbox
-    ]
+    inbox: []
   };
 }
 
@@ -238,8 +228,8 @@ function availableProspects(save: GameSave): Prospect[] {
   return save.prospects.filter((prospect) => !selected.has(prospect.id));
 }
 
-function positionPremium(position: Position): number {
-  return positionDraftValue(position);
+function positionPremium(prospect: Prospect): number {
+  return prospectPositionPremium(prospect.position, prospectAbilityGrade(prospect));
 }
 
 function prospectDraftScore(prospect: Prospect, needGrades: Map<Position, number>, rngSeed: string, pick: DraftPick, teamId?: string): number {
@@ -280,7 +270,7 @@ function prospectDraftScore(prospect: Prospect, needGrades: Map<Position, number
     archetypeSignal * 0.22 +
     boardValue +
     needBoost +
-    positionPremium(prospect.position) * 0.4 -
+    positionPremium(prospect) * 0.4 -
     riskPenalty * (1 + medicalWeight) +
     versatilityBonus(prospect) * 0.35 +
     rng.float(-2.2, 2.2)
@@ -322,27 +312,14 @@ export function draftRoomNeeds(save: GameSave, teamId: string): Array<{ position
     return {
       position,
       grade,
-      urgency: Math.round(clamp(78 - grade + positionDraftValue(position) * 1.5, 0, 60)),
+      urgency: Math.round(clamp(78 - grade + prospectPositionPremium(position, 60) * 1.5, 0, 60)),
       drafted: credit.count
     };
   }).sort((a, b) => b.urgency - a.urgency || a.position.localeCompare(b.position));
 }
 
 function emptyStats(): PlayerStats {
-  return {
-    games: 0,
-    snaps: 0,
-    offenseSnaps: 0,
-    defenseSnaps: 0,
-    specialTeamsSnaps: 0,
-    passYards: 0,
-    rushYards: 0,
-    receivingYards: 0,
-    tackles: 0,
-    sacks: 0,
-    interceptions: 0,
-    touchdowns: 0
-  };
+  return emptyPlayerStats();
 }
 
 function rookieSalary(pick: DraftPick, position: Position): number {
@@ -436,18 +413,7 @@ function completeDraftIfNeeded(save: GameSave): GameSave {
       currentPickIndex: save.draftState.order.length,
       pendingEvent: undefined
     },
-    inbox: [
-      {
-        id: `draft-complete-${save.currentWeek}-${save.inbox.length}`,
-        week: save.currentWeek,
-        category: "draft",
-        title: "Draft complete",
-        body: `${rookies.length} drafted rookies have joined league rosters. The undrafted market is now open.`,
-        priority: "high",
-        read: false
-      },
-      ...save.inbox
-    ]
+    inbox: []
   });
 }
 
@@ -633,7 +599,7 @@ export function buildTradeOfferForPick(save: GameSave, targetPickId: string): Dr
   const outgoingValue = assetsValue(next, next.selectedTeamId, receives);
   const verdict = tradeVerdict(incomingValue, outgoingValue);
   return {
-    id: `offer-${targetPick.id}-${next.inbox.length}`,
+    id: `offer-${targetPick.id}-${next.draftState.tradeOffers.length}`,
     fromTeamId: next.selectedTeamId,
     toTeamId: targetPick.currentTeamId,
     gives,
@@ -679,7 +645,7 @@ function tradeDownWillingness(save: GameSave, teamId: string, pick: DraftPick): 
 function tradeTargetScore(save: GameSave, teamId: string, prospect: Prospect, pick: DraftPick): number {
   const needScore = teamDraftNeedScore(save, teamId, prospect.position);
   const boardValue = Math.max(0, 45 - prospect.consensusRank + pick.overallPick) * 0.18;
-  const premium = positionDraftValue(prospect.position) * 0.45;
+  const premium = positionPremium(prospect) * 0.45;
   const tier = prospect.consensusGrade * 0.2 + prospect.scouted.high * 0.08 + prospect.scouted.potentialHigh * 0.05;
   return needScore + boardValue + premium + tier;
 }
@@ -938,7 +904,6 @@ export function applyDraftTradeOffer(save: GameSave, offer: DraftTradeOffer): Ga
     Boolean(offer.userFacing && offer.status === "proposed"),
     { offerId: offer.id }
   );
-  const userInvolved = offer.fromTeamId === next.selectedTeamId || offer.toTeamId === next.selectedTeamId || Boolean(offer.userFacing);
   return {
     ...next,
     draftState: {
@@ -947,18 +912,7 @@ export function applyDraftTradeOffer(save: GameSave, offer: DraftTradeOffer): Ga
       tradeLog: [`${from}-${to}: ${offer.status} (${offer.incomingValue}-${offer.outgoingValue})`, ...next.draftState.tradeLog],
       eventLog: keepDraftEvents([event, ...(next.draftState.eventLog ?? [])])
     },
-    inbox: userInvolved ? [
-      {
-        id: `draft-trade-${offer.id}`,
-        week: next.currentWeek,
-        category: "draft",
-        title: `Draft trade ${offer.status}`,
-        body: offer.message,
-        priority: offer.status === "accepted" ? "normal" : "low",
-        read: false
-      },
-      ...next.inbox
-    ] : next.inbox
+    inbox: []
   };
 }
 
@@ -1013,36 +967,7 @@ export function runRookieOnboarding(save: GameSave): GameSave {
     ...save,
     phase: "offseason-complete",
     players,
-    inbox: [
-      {
-        id: `rookie-onboarding-${save.currentWeek}-${save.inbox.length}`,
-        week: save.currentWeek,
-        category: "draft",
-        title: "Rookie onboarding complete",
-        body: "Position coaches shaped the rookie class before offseason planning.",
-        priority: "normal",
-        read: false
-      },
-      ...save.inbox
-    ]
+    inbox: []
   };
-  const developed = runAnnualDevelopment(onboarded);
-  const selectedReports = (developed.developmentReports ?? []).filter((report) => report.teamId === developed.selectedTeamId);
-  const breakouts = selectedReports.filter((report) => report.category === "breakout").length;
-  const declines = selectedReports.filter((report) => report.category === "decline" || report.category === "injury").length;
-  return {
-    ...developed,
-    inbox: [
-      {
-        id: `annual-development-${save.currentWeek}-${save.inbox.length}`,
-        week: save.currentWeek,
-        category: "staff",
-        title: "Offseason development report filed",
-        body: `Staff logged ${selectedReports.length} player development notes, including ${breakouts} breakout watch and ${declines} decline or injury flags.`,
-        priority: breakouts || declines ? "normal" : "low",
-        read: false
-      },
-      ...developed.inbox
-    ]
-  };
+  return runAnnualDevelopment(onboarded);
 }

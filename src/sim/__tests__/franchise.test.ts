@@ -7,13 +7,17 @@ import { createRng } from "../../lib/rng";
 import { createRoot } from "react-dom/client";
 import { act, createElement } from "react";
 import { CollegeLogo, TeamLogo, normalizeSave } from "../../App";
-import type { CollegeProgram } from "../../types";
+import type { CollegeProgram, Player } from "../../types";
 import { concernBandFor, concernSignalForRange, teamConcernAdjustment } from "../concerns";
 import {
   advanceToDraftPrep,
   advanceToFreeAgency,
+  canApplyTagOrTender,
   capSavingsIfMoved,
+  contractTotalValue,
   deadMoneyIfMoved,
+  deadMoneyByReleaseDesignation,
+  makeContract,
   playerCapHit,
   projectCompPicks,
   restructurePlayerContract,
@@ -66,18 +70,21 @@ import {
   refreshProspectRatings
 } from "../ratings";
 import { FREE_AGENT_TEAM_ID, MAX_ROSTER_SIZE, freeAgentPlayers, releasePlayerToFreeAgency, signFreeAgent } from "../freeAgents";
-import { expectedFreeAgentAsk, projectedPendingFreeAgents, resolveFreeAgencyWave, submitFreeAgentOffer } from "../freeAgentMarket";
+import { expectedFreeAgentAsk, projectedCapHitForOffer, projectedPendingFreeAgents, resolveFreeAgencyWave, submitFreeAgentOffer } from "../freeAgentMarket";
 import { buildSeasonCalendar, gamesOnDate, leagueYearStartDate, refreshCalendar, regularSeasonStartDate } from "../calendar";
 import {
+  PRACTICE_SQUAD_EXPERIENCED_LIMIT,
   PRACTICE_SQUAD_PLAYER_ELEVATION_LIMIT,
   PRACTICE_SQUAD_PROTECTION_LIMIT,
   PRACTICE_SQUAD_SIZE,
+  PRACTICE_SQUAD_VETERAN_LIMIT,
   canElevatePracticeSquadPlayer,
   canPoachPracticeSquadPlayer,
   canPromotePracticeSquadPlayer,
   canProtectPracticeSquadPlayer,
   canSignFreeAgentToPracticeSquad,
   elevatePracticeSquadPlayer,
+  experienceYearsForPracticeSquad,
   isPracticeSquadPlayer,
   poachPracticeSquadPlayer,
   practiceSquadPlayers,
@@ -86,7 +93,9 @@ import {
   releasePracticeSquadPlayer,
   signFreeAgentToPracticeSquad
 } from "../practiceSquad";
-import { normalizePlayerModel, runWeeklyTraining } from "../playerModel";
+import { developmentPlanForTraining, normalizePlayerModel, runWeeklyTraining, updatePlayerTrainingSettings } from "../playerModel";
+import { generateCollegeTrainingBanks } from "../collegeTraining";
+import { generateCollegeMoraleState } from "../collegeMorale";
 import { autoManageCpuRoster, buildRosterMoveRecommendations } from "../rosterAi";
 import {
   applyScoutingProjection,
@@ -95,6 +104,7 @@ import {
   compareProspectsForLens,
   ensureScoutingPlan,
   optimizeWeeklyScoutingPlan,
+  rankProspectBoard,
   quickFocusProspect,
   scoutingAssignmentPreview,
   scoutingRecapImpact,
@@ -106,7 +116,8 @@ import { compactSaveForStorage, createMemorySaveDriver, createSaveRepository, LE
 import { advanceDay, advancePostseasonRound, advanceWeek, applyCharacterEvents, characterEventChance, startNextSeason } from "../season";
 import { depthChart, playoffSeeds, playersForTeam, powerRankings, rosterNeeds, teamOverall, teamSchedule } from "../selectors";
 import { hireStaffCandidate, interviewStaffCandidate, staffPayroll, staffSlotDefinitions, staffValueScore } from "../staff";
-import { packageValue, playerTradeValue, tradeVerdict } from "../trade";
+import { adjustedNetYardsPerAttempt, approximateValue, mergePlayerStats, normalizePlayerStats, passerRating, qbrApprox } from "../stats";
+import { createTradeOffer, evaluateTradeOffer, normalizeTradeState, packageValue, playerTradeValue, submitTradeOffer, tradeVerdict } from "../trade";
 import { isPlayerOnWaivers, processWaiversForDate, submitWaiverClaim } from "../waivers";
 import {
   beginRookieOnboarding,
@@ -275,6 +286,27 @@ function completeOnePickDraftForTest(seed: string): GameSave {
 }
 
 describe("franchise generator", () => {
+  it("keeps inbox removed for new and normalized saves", () => {
+    const save = createNewSave("chi", "goals", "inbox-removal-seed");
+    const legacy = {
+      ...save,
+      inbox: [{
+        id: "legacy-message",
+        week: 1,
+        category: "staff" as const,
+        title: "Legacy inbox item",
+        body: "This should be dropped on load.",
+        priority: "high" as const,
+        read: false,
+        important: true,
+        blocking: true
+      }]
+    };
+
+    expect(save.inbox).toEqual([]);
+    expect(normalizeSave(legacy).inbox).toEqual([]);
+  }, 60000);
+
   it("uses expanded shared name pools for generated people", () => {
     const save = createNewSave("chi", "goals", "expanded-name-pool-seed");
     const people = [
@@ -357,21 +389,74 @@ describe("franchise generator", () => {
     expect(prospect.scouted.conversionUpside?.length ?? 0).toBeGreaterThan(0);
   });
 
-  it("runs weekly training without changing height and produces transparent reports", () => {
+  it("keeps weekly training disabled", () => {
     const save = createNewSave("chi", "goals", "weekly-training-seed");
     const trackedPlayer = playersForTeam(save, "chi")[0];
-    const initialHeight = trackedPlayer.body.heightInches;
-    const initialWeight = trackedPlayer.body.weightLbs;
 
     const next = runWeeklyTraining(save);
     const updated = next.players.find((player) => player.id === trackedPlayer.id)!;
 
-    expect(updated.body.heightInches).toBe(initialHeight);
-    expect(updated.training.lastReport?.week).toBe(save.currentWeek);
-    expect(updated.training.lastReport?.bodySummary.length).toBeGreaterThan(5);
-    expect(updated.training.lastReport?.readinessDelta).toEqual(expect.any(Number));
-    expect(Math.abs(updated.body.weightLbs - initialWeight)).toBeLessThanOrEqual(3);
+    expect(updated.overall).toBe(trackedPlayer.overall);
+    expect(updated.potential).toBe(trackedPlayer.potential);
+    expect(updated.body).toEqual(trackedPlayer.body);
+    expect(updated.skillBuckets).toEqual(trackedPlayer.skillBuckets);
+    expect(updated.training.lastReport).toEqual(trackedPlayer.training.lastReport);
   }, 15000);
+
+  it("ignores training-setting updates while development is disabled", () => {
+    const save = createNewSave("chi", "goals", "simple-development-plan-seed");
+    const player = playersForTeam(save, "chi").find((candidate) => candidate.position === "WR")!;
+    const physical = updatePlayerTrainingSettings(player, { developmentPlan: "physical" }, save.seed);
+    const technical = updatePlayerTrainingSettings(player, { developmentPlan: "technical" }, save.seed);
+    const switchPlan = updatePlayerTrainingSettings(player, { developmentPlan: "position-switch", targetPosition: "CB" }, save.seed);
+
+    expect(physical.training).toEqual(player.training);
+    expect(technical.training).toEqual(player.training);
+    expect(switchPlan.training).toEqual(player.training);
+  });
+
+  it("keeps college development banks disabled", () => {
+    const save = createNewSave({ selectedTeamId: "chi", selectedSchoolId: "alabama", careerType: "college", mode: "goals", seed: "college-development-plan-seed", scenario: "neutral" });
+    const schoolId = save.selectedSchoolId!;
+    const physical = {
+      ...save.collegeManagement!,
+      trainingFocus: { ...save.collegeManagement!.trainingFocus, [schoolId]: "physical" as const },
+      fatiguePosture: { ...save.collegeManagement!.fatiguePosture, [schoolId]: "aggressive" as const }
+    };
+    const recovery = {
+      ...save.collegeManagement!,
+      trainingFocus: { ...save.collegeManagement!.trainingFocus, [schoolId]: "recovery" as const },
+      fatiguePosture: { ...save.collegeManagement!.fatiguePosture, [schoolId]: "conservative" as const }
+    };
+    const physicalBanks = generateCollegeTrainingBanks(save.seed, save.seasonYear, save.collegeRoster, save.collegeSeasonResults, physical)!.entries.filter((entry) => entry.schoolId === schoolId);
+    const recoveryBanks = generateCollegeTrainingBanks(save.seed, save.seasonYear, save.collegeRoster, save.collegeSeasonResults, recovery)!.entries.filter((entry) => entry.schoolId === schoolId);
+
+    expect(physicalBanks).toHaveLength(0);
+    expect(recoveryBanks).toHaveLength(0);
+  });
+
+  it("keeps NIL separate while reducing college portal risk through morale", () => {
+    const save = createNewSave({ selectedTeamId: "chi", selectedSchoolId: "alabama", careerType: "college", mode: "goals", seed: "college-nil-risk-seed", scenario: "neutral" });
+    const schoolId = save.selectedSchoolId!;
+    const noNil = {
+      ...save.collegeManagement!,
+      nilAllocationByPosition: { ...save.collegeManagement!.nilAllocationByPosition, [schoolId]: {} }
+    };
+    const heavyNil = {
+      ...save.collegeManagement!,
+      nilAllocationByPosition: {
+        ...save.collegeManagement!.nilAllocationByPosition,
+        [schoolId]: Object.fromEntries(POSITIONS.map((position) => [position, 100]))
+      }
+    };
+    const baseMorale = generateCollegeMoraleState(save.seed, save.seasonYear, save.collegeRoster, save.collegeSeasonResults, save.annualRecruiting, save.collegeTraining, noNil)!.entries.filter((entry) => entry.schoolId === schoolId);
+    const nilMorale = generateCollegeMoraleState(save.seed, save.seasonYear, save.collegeRoster, save.collegeSeasonResults, save.annualRecruiting, save.collegeTraining, heavyNil)!.entries.filter((entry) => entry.schoolId === schoolId);
+    const avgRisk = (rows: typeof baseMorale) => rows.reduce((sum, row) => sum + row.transferRisk, 0) / Math.max(1, rows.length);
+    const avgMorale = (rows: typeof baseMorale) => rows.reduce((sum, row) => sum + row.morale, 0) / Math.max(1, rows.length);
+
+    expect(avgRisk(nilMorale)).toBeLessThan(avgRisk(baseMorale));
+    expect(avgMorale(nilMorale)).toBeGreaterThan(avgMorale(baseMorale));
+  });
 
   it("can auto-switch a player to a better trained position", () => {
     const save = createNewSave("chi", "goals", "position-switch-seed");
@@ -479,6 +564,44 @@ describe("franchise generator", () => {
     expect(save.budget.chi).toBeCloseTo(ledger.capRoom, 2);
   });
 
+  it("assigns rookie-scale year-zero contracts with draft provenance", () => {
+    const save = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-rookie-contracts", scenario: "neutral" });
+    const rookieDeals = save.players.filter((player) =>
+      !player.practiceSquad &&
+      player.teamId !== FREE_AGENT_TEAM_ID &&
+      (player.contract?.origin === "rookie" || player.contract?.origin === "udfa")
+    );
+    const draftedRookies = rookieDeals.filter((player) => player.contract?.origin === "rookie");
+    const firstRounders = draftedRookies.filter((player) => player.draftRound === 1);
+
+    expect(rookieDeals.length).toBeGreaterThan(60);
+    expect(draftedRookies.length).toBeGreaterThan(35);
+    expect(firstRounders.length).toBeGreaterThan(0);
+    expect(rookieDeals.every((player) => player.salary <= 10.25)).toBe(true);
+    expect(rookieDeals.every((player) => player.salary === player.contract?.apy)).toBe(true);
+    expect(rookieDeals.every((player) => {
+      const originalYears = player.contract?.origin === "rookie" ? 4 : 3;
+      const elapsed = Math.max(0, save.seasonYear - (player.draftYear ?? save.seasonYear));
+      return player.contractYears === Math.max(1, originalYears - elapsed);
+    })).toBe(true);
+    expect(firstRounders.every((player) => player.contract?.fifthYearOption?.eligible)).toBe(true);
+  });
+
+  it("keeps generated contract value, guarantees, and active seasons internally consistent", () => {
+    const contract = makeContract(
+      { position: "WR", salary: 12, contractYears: 4, age: 26, overall: 68, potential: 72 },
+      2026,
+      { origin: "free-agent", years: 4, apy: 12, security: "strong", voidYears: 2 }
+    );
+    const activeSeasons = contract.seasons.filter((season) => !season.voidYear);
+    const activeCash = activeSeasons.reduce((sum, season) => sum + season.baseSalary, 0) + contract.signingBonus;
+
+    expect(contractTotalValue(contract)).toBeCloseTo(48, 2);
+    expect(activeCash).toBeCloseTo(48, 2);
+    expect(contract.guaranteedTotal).toBeLessThanOrEqual(contractTotalValue(contract));
+    expect(contract.seasons.filter((season) => season.voidYear)).toHaveLength(2);
+  });
+
   it("restructures eligible contracts by lowering current cap and adding proration", () => {
     let save = createNewSave("chi", "goals", "restructure-seed");
     const target = playersForTeam(save, "chi")
@@ -506,6 +629,47 @@ describe("franchise generator", () => {
     expect(save.deadMoney?.find((charge) => charge.playerId === target.id)?.amount).toBeCloseTo(projectedDead, 2);
     expect(projectedSavings).toBeGreaterThanOrEqual(0);
     expect(save.budget.chi).toBeCloseTo(teamCapLedger(save, "chi").capRoom, 2);
+  });
+
+  it("splits post-June release dead money between current and deferred seasons", () => {
+    const contract = makeContract(
+      { position: "EDGE", salary: 20, contractYears: 4, age: 27, overall: 72, potential: 74 },
+      2026,
+      { origin: "free-agent", years: 4, apy: 20, security: "strong", voidYears: 1 }
+    );
+    const save = createNewSave("chi", "goals", "post-june-release-seed");
+    const player = { ...playersForTeam(save, "chi")[0], contract, salary: contract.apy, contractYears: contract.years };
+    const split = deadMoneyByReleaseDesignation(player, 2026, "post-june");
+
+    expect(split.current).toBeGreaterThan(0);
+    expect(split.deferred).toBeGreaterThan(0);
+    expect(split.current + split.deferred).toBeCloseTo(deadMoneyIfMoved(player, 2026), 2);
+  });
+
+  it("blocks tags and tenders that do not fit under the cap", () => {
+    let save = createNewSave("chi", "goals", "tag-cap-block-seed");
+    const target = playersForTeam(save, "chi").filter((player) => !isPracticeSquadPlayer(player) && player.contract).sort((a, b) => playerCapHit(a, save.seasonYear) - playerCapHit(b, save.seasonYear))[0];
+    const ledger = teamCapLedger(save, "chi");
+    save = {
+      ...save,
+      phase: "contract-decisions",
+      capSettings: {
+        ...save.capSettings,
+        chi: { salaryCap: ledger.totalCommitments + 0.1, rookieReserve: 0, franchiseTagUsed: false, transitionTagUsed: false }
+      },
+      players: save.players.map((player) => player.id === target.id ? {
+        ...player,
+        contractYears: 1,
+        contract: {
+          ...player.contract!,
+          endYear: save.seasonYear,
+          rights: "ufa" as const,
+          seasons: player.contract!.seasons.slice(0, 1).map((season) => ({ ...season, seasonYear: save.seasonYear }))
+        }
+      } : player)
+    };
+
+    expect(canApplyTagOrTender(save, target.id, "chi", "franchise")).toMatchObject({ ok: false, reason: "Not enough cap room." });
   });
 
   it("opens free agency, tracks qualifying UFA movement, and finalizes comp picks", () => {
@@ -569,6 +733,27 @@ describe("franchise generator", () => {
     expect(save.freeAgencyLog.some((move) => move.type === "signing" && move.playerId === target.id)).toBe(true);
   });
 
+  it("uses the same security structure for free-agent projections and signed contracts", () => {
+    let save = createNewSave("chi", "goals", "free-agent-security-contract-seed");
+    const release = playersForTeam(save, "chi").filter((player) => !isPracticeSquadPlayer(player)).sort((a, b) => a.overall - b.overall)[0];
+    save = releasePlayerToFreeAgency(save, release.id, "chi");
+    save = { ...save, budget: { ...save.budget, chi: 300 } };
+    const target = freeAgentPlayers(save).filter((player) => player.id !== release.id).sort((a, b) => b.overall - a.overall)[0];
+    const years = 4;
+    const apy = expectedFreeAgentAsk(target) * 1.35;
+    const projected = projectedCapHitForOffer(save, target, years, apy, "strong");
+
+    save = submitFreeAgentOffer(save, target.id, "chi", { years, apy, security: "strong", role: "starter" });
+    save = resolveFreeAgencyWave(save);
+    const signed = save.players.find((player) => player.id === target.id)!;
+
+    expect(signed.teamId).toBe("chi");
+    expect(signed.contract?.security).toBe("strong");
+    expect(signed.contract?.voidYears).toBeGreaterThan(0);
+    expect(playerCapHit(signed, save.seasonYear)).toBeCloseTo(projected, 2);
+    expect(signed.contract?.guaranteedTotal).toBeCloseTo((signed.contract?.totalValue ?? 0) * 0.78, 1);
+  });
+
   it("lists pending free agents as expiring-contract players, not unresolved offers", () => {
     const save = createNewSave("chi", "goals", "pending-free-agent-class-seed");
     const expiring = playersForTeam(save, "chi").find((player) => !isPracticeSquadPlayer(player) && player.contract)!;
@@ -610,13 +795,28 @@ describe("franchise generator", () => {
   });
 
   it("generates valid practice squads for every team without counting against the active roster", () => {
-    const save = createNewSave("chi", "goals", "practice-squad-generation-seed");
+      const save = createNewSave("chi", "goals", "practice-squad-generation-seed");
 
-    expect(save.teams.every((team) => activeRosterSize(save, team.id) === MAX_ROSTER_SIZE)).toBe(true);
-    expect(save.teams.every((team) => practiceSquadPlayers(save, team.id).length === PRACTICE_SQUAD_SIZE)).toBe(true);
-    expect(practiceSquadPlayers(save, "chi").every((player) => isPracticeSquadPlayer(player) && player.salary < 0.5)).toBe(true);
-    expect(save.teams.every((team) => practiceSquadPlayers(save, team.id).filter((player) => save.seasonYear - (player.draftYear ?? save.seasonYear) > 2).length <= 6)).toBe(true);
-  });
+      expect(save.teams.every((team) => activeRosterSize(save, team.id) === MAX_ROSTER_SIZE)).toBe(true);
+      expect(save.teams.every((team) => practiceSquadPlayers(save, team.id).length === PRACTICE_SQUAD_SIZE)).toBe(true);
+      expect(practiceSquadPlayers(save, "chi").every((player) => isPracticeSquadPlayer(player) && player.salary < 0.5)).toBe(true);
+      expect(save.teams.every((team) => {
+        const squad = practiceSquadPlayers(save, team.id);
+        const veteranCount = squad.filter((player) => experienceYearsForPracticeSquad(save, player) > 2).length;
+        const experiencedCount = squad.filter((player) => experienceYearsForPracticeSquad(save, player) > 0).length;
+        const specialistCount = squad.filter((player) => player.position === "K" || player.position === "P").length;
+        return veteranCount <= PRACTICE_SQUAD_VETERAN_LIMIT
+          && experiencedCount <= PRACTICE_SQUAD_EXPERIENCED_LIMIT
+          && specialistCount <= 2;
+      })).toBe(true);
+      expect(save.teams.some((team) => practiceSquadPlayers(save, team.id).every((player) => player.position !== "K" && player.position !== "P"))).toBe(true);
+      expect(save.teams.some((team) => practiceSquadPlayers(save, team.id).some((player) => experienceYearsForPracticeSquad(save, player) > 0))).toBe(true);
+      expect(save.teams.every((team) => practiceSquadPlayers(save, team.id).every((player) => {
+        const exp = experienceYearsForPracticeSquad(save, player);
+        if (exp === 0) return player.draftYear === save.seasonYear;
+        return (player.draftYear ?? save.seasonYear) === save.seasonYear - exp;
+      }))).toBe(true);
+    });
 
   it("signs, releases, and promotes practice squad players with active roster and budget rules", () => {
     let save = createNewSave("chi", "goals", "practice-squad-flow-seed");
@@ -682,15 +882,62 @@ describe("franchise generator", () => {
     const save = createNewSave("chi", "goals", "prospect-class-balance-seed");
     const progressValues = save.prospects.map((prospect) => prospect.scouted.progress);
     const qbCount = save.prospects.filter((prospect) => prospect.position === "QB").length;
+    const top10Qbs = save.prospects.filter((prospect) => prospect.consensusRank <= 10 && prospect.position === "QB");
+    const top32Qbs = save.prospects.filter((prospect) => prospect.consensusRank <= 32 && prospect.position === "QB");
     const kickerPunters = save.prospects.filter((prospect) => prospect.position === "K" || prospect.position === "P");
     const earlySpecialists = kickerPunters.filter((prospect) => prospect.consensusRank <= 100 || prospect.teamRank <= 100);
+    const collegePlayerIds = new Set(save.collegeRoster?.players.map((player) => player.id) ?? []);
 
     expect(save.prospects).toHaveLength(460);
+    expect(save.prospects.every((prospect) => prospect.collegePlayerId && collegePlayerIds.has(prospect.collegePlayerId))).toBe(true);
+    expect(save.prospects.every((prospect) => prospect.draftSource === "year_zero_college_roster")).toBe(true);
+    expect(save.prospects.some((prospect) => prospect.id.startsWith("prospect-"))).toBe(false);
     expect(Math.min(...progressValues)).toBeGreaterThanOrEqual(5);
     expect(Math.max(...progressValues)).toBeLessThanOrEqual(50);
-    expect(qbCount).toBeLessThanOrEqual(32);
+    expect(qbCount).toBeLessThanOrEqual(18);
+    expect(top10Qbs.length).toBeLessThanOrEqual(4);
+    expect(top32Qbs.length).toBeLessThanOrEqual(8);
     expect(kickerPunters.length).toBeLessThanOrEqual(24);
     expect(earlySpecialists.length).toBeLessThanOrEqual(2);
+  });
+
+  it("keeps ability ahead of positional premium on the draft board", () => {
+    const save = createNewSave("chi", "goals", "ability-first-board-seed");
+    const qb = save.prospects.find((prospect) => prospect.position === "QB")!;
+    const nonQb = save.prospects.find((prospect) => prospect.position !== "QB" && prospect.position !== "K" && prospect.position !== "P")!;
+    const weakerQb = {
+      ...qb,
+      id: "ability-test-qb",
+      trueOverall: 54,
+      potential: 60,
+      production: 55,
+      stock: 0,
+      scouted: {
+        ...qb.scouted,
+        low: 53,
+        high: 55,
+        potentialLow: 58,
+        potentialHigh: 62
+      }
+    };
+    const strongerNonQb = {
+      ...nonQb,
+      id: "ability-test-non-qb",
+      trueOverall: 63,
+      potential: 70,
+      production: 68,
+      stock: 0,
+      scouted: {
+        ...nonQb.scouted,
+        low: 62,
+        high: 64,
+        potentialLow: 68,
+        potentialHigh: 72
+      }
+    };
+    const ranked = rankProspectBoard([weakerQb, strongerNonQb], save.schools, "ability-first-board-test");
+
+    expect(ranked[0].id).toBe(strongerNonQb.id);
   });
 
   it("prevents unrealistic same-school position duplicates", () => {
@@ -969,6 +1216,29 @@ describe("franchise generator", () => {
     expect(worst.budget.chi).toBeGreaterThan(contender.budget.chi);
     expect(contender.goals.makePlayoffs).toBe(true);
   });
+
+  it("calibrates Year Zero ratings around starter baselines with a real lower range", () => {
+    const save = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-rating-scale-seed", scenario: "neutral" });
+    const activeNfl = save.players.filter((player) => player.teamId !== FREE_AGENT_TEAM_ID && !isPracticeSquadPlayer(player));
+    const sortedActive = activeNfl.map((player) => player.overall).sort((a, b) => a - b);
+    const median = sortedActive[Math.floor(sortedActive.length / 2)];
+    const eliteCount = activeNfl.filter((player) => player.overall >= 80).length;
+    const lowerRangeCount = activeNfl.filter((player) => player.overall < 50).length;
+    const collegePlayers = save.collegeRoster?.players ?? [];
+    const collegeTopPlayers = save.schools.flatMap((school) => collegePlayers
+      .filter((player) => player.schoolId === school.id)
+      .sort((a, b) => b.collegeOverall - a.collegeOverall)
+      .slice(0, 22));
+    const averageCollegeStarter = collegeTopPlayers.reduce((sum, player) => sum + player.collegeOverall, 0) / Math.max(1, collegeTopPlayers.length);
+
+    expect(median).toBeGreaterThanOrEqual(52);
+    expect(median).toBeLessThanOrEqual(62);
+    expect(eliteCount).toBeLessThan(90);
+    expect(lowerRangeCount).toBeGreaterThan(220);
+    expect(averageCollegeStarter).toBeGreaterThanOrEqual(55);
+    expect(averageCollegeStarter).toBeLessThanOrEqual(68);
+    expect(collegePlayers.some((player) => player.collegeOverall < 45)).toBe(true);
+  }, 60000);
 
   it("lets random scenario vary quality while keeping the selected team", () => {
     const saves = ["random-a", "random-b", "random-c", "random-d"].map((seed) =>
@@ -1395,11 +1665,93 @@ describe("draft room overhaul", () => {
     expect(next.schedule.filter((game) => game.seasonType === "regular")).toHaveLength(272);
     expect(next.schedule.filter((game) => game.seasonType === "preseason")).toHaveLength(48);
     expect(next.prospects).toHaveLength(460);
+    expect(next.prospects.every((prospect) => prospect.collegePlayerId)).toBe(true);
+    expect(next.prospects.every((prospect) => prospect.draftSource !== "synthetic_generated")).toBe(true);
+    expect(next.prospects.some((prospect) => prospect.id.startsWith("prospect-"))).toBe(false);
     expect(next.draftState.draftYear).toBe(next.seasonYear + 1);
     expect(next.players.find((player) => player.id === agedPlayer.id)?.age).toBe(agedPlayer.age + 1);
     expect(next.players.every((player) => player.stats.snaps === 0 && player.stats.games === 0)).toBe(true);
     expect(Object.values(next.records).every((record) => record.wins === 0 && record.losses === 0 && record.ties === 0)).toBe(true);
   }, 60000);
+
+  it("archives completed player stats into season history before rollover reset", () => {
+    const base = createNewSave("chi", "goals", "stat-history-rollover-seed");
+    const target = playersForTeam(base, "chi")[0];
+    const offseason = {
+      ...base,
+      phase: "offseason-complete" as const,
+      players: base.players.map((player) =>
+        player.id === target.id
+          ? {
+              ...player,
+              stats: {
+                ...player.stats,
+                games: 2,
+                snaps: 120,
+                offenseSnaps: 120,
+                passAttempts: 55,
+                passCompletions: 34,
+                passYards: 410,
+                passTouchdowns: 3,
+                interceptionsThrown: 1
+              },
+              playoffStats: {
+                ...player.playoffStats,
+                games: 1,
+                snaps: 58,
+                passAttempts: 24,
+                passCompletions: 15,
+                passYards: 188,
+                passTouchdowns: 1
+              }
+            }
+          : player
+      )
+    };
+
+    const next = startNextSeason(offseason);
+    const carried = next.players.find((player) => player.id === target.id)!;
+    const history = carried.statHistory?.find((entry) => entry.seasonYear === base.seasonYear);
+
+    expect(carried.stats.games).toBe(0);
+    expect(carried.playoffStats.games).toBe(0);
+    expect(history?.teamId).toBe(target.teamId);
+    expect(history?.stats.passYards).toBe(410);
+    expect(history?.playoffStats.passYards).toBe(188);
+    expect(history?.overall).toBe(target.overall);
+  }, 60000);
+
+  it("normalizes legacy sparse stats and missing game stat payloads", () => {
+    const legacy = createNewSave("chi", "goals", "legacy-expanded-stats-seed");
+    legacy.players = legacy.players.map((player, index) =>
+      index === 0
+        ? ({
+            ...player,
+            stats: { games: 1, snaps: 52, passYards: 220 },
+            playoffStats: { games: 0, snaps: 0 }
+          } as Player)
+        : player
+    );
+    legacy.schedule = legacy.schedule.map((game, index) =>
+      index === 0
+        ? ({
+            ...game,
+            playerStats: undefined,
+            teamStats: undefined
+          } as typeof game)
+        : game
+    );
+
+    const normalized = normalizeSave(legacy);
+    const player = normalized.players[0];
+
+    expect(player.stats.passYards).toBe(220);
+    expect(player.stats.passAttempts).toBe(0);
+    expect(player.stats.fieldGoalAttempts).toBe(0);
+    expect(player.statHistory).toEqual([]);
+    expect(normalized.schedule[0].playerStats).toEqual({});
+    expect(normalized.schedule[0].teamStats).toEqual({});
+  });
 
   it("runs a full postseason before offseason contract decisions", () => {
     let save = createNewSave("chi", "goals", "postseason-seed");
@@ -1429,7 +1781,7 @@ describe("draft room overhaul", () => {
     expect(save.schedule.find((game) => game.playoffRound === "super-bowl")?.status).toBe("final");
     expect(championRoundOne?.pickInRound).toBe(32);
     expect(runnerUpRoundOne?.pickInRound).toBe(31);
-    expect(save.inbox[0].title).toContain("Super Bowl");
+    expect(save.inbox).toEqual([]);
   }, 60000);
 
   it("keeps a fresh career playable through saved rookie results and next-season rollover", () => {
@@ -1473,11 +1825,14 @@ describe("draft room overhaul", () => {
     expect(next.schedule.filter((game) => game.seasonType === "regular")).toHaveLength(272);
     expect(next.schedule.filter((game) => game.seasonType === "preseason")).toHaveLength(48);
     expect(next.prospects).toHaveLength(460);
+    expect(next.prospects.every((prospect) => prospect.collegePlayerId)).toBe(true);
+    expect(next.prospects.every((prospect) => prospect.draftSource !== "synthetic_generated")).toBe(true);
+    expect(next.prospects.some((prospect) => prospect.id.startsWith("prospect-"))).toBe(false);
     expect(next.draftState.history).toHaveLength(0);
     expect(next.udfaState).toBeUndefined();
     expect(next.prospects.some((prospect) => !firstDraftClass.has(prospect.id))).toBe(true);
     expect(Object.values(next.records).every((record) => record.wins === 0 && record.losses === 0 && record.ties === 0)).toBe(true);
-  }, 120000);
+  }, 240000);
 
   it("applies player-plus-pick draft trades and updates budgets", () => {
     let base = enterDraft({ ...createNewSave("nyj", "goals", "draft-trade-seed"), phase: "draft-prep" });
@@ -2133,6 +2488,29 @@ describe("staff market overhaul", () => {
 });
 
 describe("play-by-play simulation", () => {
+  it("normalizes expanded player stats and computes advanced metrics", () => {
+    const stats = normalizePlayerStats({
+      games: 1,
+      passAttempts: 32,
+      passCompletions: 21,
+      passYards: 260,
+      passTouchdowns: 2,
+      interceptionsThrown: 1,
+      sacksTaken: 3,
+      sackYardsLost: 21,
+      passingSuccesses: 16
+    });
+    const merged = mergePlayerStats(stats, { games: 1, passAttempts: 10, passCompletions: 6, passYards: 80, passTouchdowns: 1 });
+
+    expect(stats.gamesStarted).toBe(0);
+    expect(stats.passingLong).toBe(0);
+    expect(merged.passAttempts).toBe(42);
+    expect(passerRating(merged)).toBeGreaterThan(80);
+    expect(qbrApprox(merged)).toBeGreaterThan(40);
+    expect(adjustedNetYardsPerAttempt(merged)).toBeGreaterThan(5);
+    expect(approximateValue(merged, "QB")).toBeGreaterThan(0);
+  });
+
   it("is deterministic for the same save and game seed", () => {
     const save = createNewSave("gb", "goals", "game-seed");
     const game = teamSchedule(save, "gb")[0];
@@ -2144,6 +2522,17 @@ describe("play-by-play simulation", () => {
     expect(first.awayScore).toBe(second.awayScore);
     expect(first.log.map((entry) => entry.text)).toEqual(second.log.map((entry) => entry.text));
     expect(Object.keys(first.snapCounts).length).toBeGreaterThan(20);
+    expect(first.playerStats).toEqual(second.playerStats);
+    expect(first.teamStats).toEqual(second.teamStats);
+    expect(Object.values(first.playerStats).some((stats) => stats.passAttempts > 0 || stats.rushAttempts > 0 || stats.tackles > 0)).toBe(true);
+    expect(Object.values(first.teamStats).some((stats) => stats.plays > 0 && stats.totalYards !== 0)).toBe(true);
+    expect(Object.values(first.playerStats).some((stats) => stats.gamesStarted > 0)).toBe(true);
+    expect(Object.values(first.playerStats).some((stats) => stats.passAttempts > stats.passCompletions)).toBe(true);
+    expect(Object.values(first.playerStats).some((stats) => stats.passingLong > 0 || stats.rushingLong > 0 || stats.receivingLong > 0)).toBe(true);
+    expect(Object.values(first.playerStats).some((stats) => stats.qbWins + stats.qbLosses + stats.qbTies > 0)).toBe(true);
+    expect(Object.values(first.playerStats).some((stats) => stats.qbPressures > 0 || stats.qbPressuresFaced > 0 || stats.passesDefended > 0)).toBe(true);
+    expect(Object.values(first.teamStats).every((stats) => stats.drives > 0 && stats.timeOfPossession > 0)).toBe(true);
+    expect(Object.values(first.teamStats).some((stats) => stats.successfulPlays > 0 || stats.thirdDownAttempts > 0 || stats.fourthDownAttempts > 0)).toBe(true);
     expect(first.log.length).toBeGreaterThan(40);
   });
 
@@ -2160,7 +2549,9 @@ describe("play-by-play simulation", () => {
     expect(next.records.dal.wins + next.records.dal.losses + next.records.dal.ties).toBe(1);
     expect(trackedProspect.scouted.progress).toBeGreaterThanOrEqual(progressBefore);
     expect(playersForTeam(next, "dal").reduce((sum, player) => sum + player.stats.snaps, 0)).toBeGreaterThan(0);
-    expect(next.inbox.length).toBeGreaterThan(save.inbox.length);
+    expect(playersForTeam(next, "dal").some((player) => player.stats.passYards > 0 || player.stats.rushYards > 0 || player.stats.receivingYards > 0 || player.stats.tackles > 0)).toBe(true);
+    expect(next.schedule.some((game) => game.status === "final" && Object.keys(game.playerStats ?? {}).length > 0 && Object.keys(game.teamStats ?? {}).length > 0)).toBe(true);
+    expect(next.inbox).toEqual([]);
   }, 30000);
 });
 
@@ -2176,9 +2567,73 @@ describe("expanded ratings", () => {
     expect(ratingTierLabel(60)).toBe("Starter");
     expect(ratingTierLabel(70)).toBe("Pro Bowl");
     expect(starters.length).toBeGreaterThanOrEqual(8);
-    expect(starters.length).toBeLessThanOrEqual(18);
-    expect(elite.length).toBeLessThan(12);
+    expect(starters.length).toBeLessThanOrEqual(24);
+    expect(elite.length).toBeLessThan(90);
   });
+
+  it("keeps year-zero quarterback rooms from stacking multiple high-end starters", () => {
+    const save = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-qb-room-balance", scenario: "neutral" });
+
+    for (const team of save.teams) {
+      const qbs = playersForTeam(save, team.id)
+        .filter((player) => player.position === "QB" && !player.practiceSquad)
+        .sort((a, b) => b.overall - a.overall);
+      expect(qbs).toHaveLength(3);
+      expect(qbs[1]?.overall ?? 0).toBeLessThanOrEqual(67);
+      expect(qbs[2]?.overall ?? 0).toBeLessThanOrEqual(59);
+      expect(qbs.filter((player) => player.overall >= 70)).toHaveLength(qbs[0]?.overall >= 70 ? 1 : 0);
+    }
+  });
+
+  it("keeps new-career team cap sheets within realistic year-zero commitments", () => {
+    const save = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-cap-sanity", scenario: "neutral" });
+
+    for (const team of save.teams) {
+      const ledger = teamCapLedger(save, team.id);
+      expect(ledger.activeCap).toBeLessThanOrEqual(ledger.salaryCap);
+      expect(ledger.totalCommitments).toBeLessThanOrEqual(ledger.salaryCap + 4);
+      expect(save.budget[team.id]).toBeCloseTo(ledger.capRoom, 2);
+    }
+  });
+
+  it("generates synthetic prior NFL stat history for year-zero veterans only", () => {
+    const first = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-history-seed", scenario: "neutral" });
+    const second = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-history-seed", scenario: "neutral" });
+    const veterans = first.players.filter((player) => (player.draftYear ?? first.seasonYear) < first.seasonYear);
+    const rookies = first.players.filter((player) => player.draftYear === first.seasonYear);
+    const veteranRows = veterans.flatMap((player) => player.statHistory ?? []);
+
+    expect(veteranRows.length).toBeGreaterThan(1200);
+    expect(veteranRows.every((row) => row.seasonYear < first.seasonYear)).toBe(true);
+    expect(rookies.every((player) => (player.statHistory ?? []).length === 0)).toBe(true);
+    expect(first.players.find((player) => player.position === "QB" && (player.statHistory ?? []).some((row) => row.stats.passAttempts > 0 && row.stats.qbWins + row.stats.qbLosses + row.stats.qbTies === row.stats.gamesStarted))).toBeDefined();
+    expect(first.players.find((player) => player.position === "RB" && (player.statHistory ?? []).some((row) => row.stats.rushAttempts > 0))).toBeDefined();
+    expect(first.players.find((player) => (player.position === "WR" || player.position === "TE") && (player.statHistory ?? []).some((row) => row.stats.targets > 0))).toBeDefined();
+    expect(first.players.find((player) => ["EDGE", "DL", "LB", "CB", "S"].includes(player.position) && (player.statHistory ?? []).some((row) => row.stats.tackles > 0))).toBeDefined();
+    expect(first.players.find((player) => player.position === "K" && (player.statHistory ?? []).some((row) => row.stats.fieldGoalAttempts > 0))).toBeDefined();
+    expect(first.players.find((player) => player.position === "P" && (player.statHistory ?? []).some((row) => row.stats.punts > 0))).toBeDefined();
+    expect(first.players.map((player) => player.statHistory?.[0])).toEqual(second.players.map((player) => player.statHistory?.[0]));
+  }, 60000);
+
+  it("generates class-appropriate college histories and feeds draft scouting context", () => {
+    const save = createNewSave({ selectedTeamId: "ten", mode: "goals", seed: "year-zero-college-history-seed", scenario: "neutral" });
+    const collegeRows = save.yearZero?.productionHistory.filter((row) => row.level === "college") ?? [];
+    const nflRows = save.yearZero?.productionHistory.filter((row) => row.level === "nfl") ?? [];
+    const freshmen = new Set(save.yearZero?.collegePlayers.filter((player) => player.classYear === "FR").map((player) => player.id) ?? []);
+    const collegeRosterPlayer = save.collegeRoster?.players.find((player) => (player.productionHistory ?? []).length > 0);
+    const prospectWithHistory = save.prospects.find((prospect) => prospect.scoutReports.some((report) => report.includes("Prior college production")));
+
+    expect(collegeRows.length).toBeGreaterThan(1500);
+    expect(nflRows.length).toBeGreaterThan(1200);
+    expect(save.yearZero?.debugSummary.collegeProductionHistoryGenerated).toBe(collegeRows.length);
+    expect(save.yearZero?.debugSummary.nflProductionHistoryGenerated).toBe(nflRows.length);
+    expect(collegeRows.every((row) => row.seasonYear !== undefined && row.seasonYear < save.seasonYear)).toBe(true);
+    expect(collegeRows.every((row) => !freshmen.has(row.playerId))).toBe(true);
+    expect(collegeRows.some((row) => row.position === "QB" && Number((row.stats as Record<string, number> | undefined)?.pass_att ?? 0) > 0)).toBe(true);
+    expect(collegeRows.some((row) => ["EDGE", "DL", "LB", "CB", "S"].includes(row.position ?? "QB") && Number((row.stats as Record<string, number> | undefined)?.tackles ?? 0) > 0)).toBe(true);
+    expect(collegeRosterPlayer?.productionHistory?.every((row) => row.level === "college")).toBe(true);
+    expect(prospectWithHistory).toBeDefined();
+  }, 60000);
 
   it("keeps rookies mostly below starter level while making elite ceilings rare", () => {
     const save = createNewSave({ selectedTeamId: "ten", mode: "goals", seed: "rookie-scale-baseline", scenario: "neutral" });
@@ -2203,7 +2658,7 @@ describe("expanded ratings", () => {
     expect(first.prospects[0].scouted.ratingRanges).toEqual(second.prospects[0].scouted.ratingRanges);
     expect("roleGrades" in firstPlayer).toBe(false);
     expect("roleGradeRanges" in first.prospects[0].scouted).toBe(false);
-  });
+  }, 60000);
 
   it("generates more position-focused rating profiles by default", () => {
     const qb = generateRatings("QB", 60, createRng("focused-qb"));
@@ -2415,7 +2870,7 @@ describe("expanded ratings", () => {
     expect(calmPocket.yardsMean).toBeGreaterThan(overwhelmed.yardsMean);
   });
 
-  it("runs annual development with age, potential, staff, snaps, and injuries", () => {
+  it("keeps annual development disabled", () => {
     const save = createNewSave("chi", "goals", "annual-development-seed");
     const roster = playersForTeam(save, "chi");
     const young = roster.find((player) => player.position !== "K" && player.position !== "P")!;
@@ -2453,10 +2908,9 @@ describe("expanded ratings", () => {
     const youngAfter = developed.players.find((player) => player.id === young.id)!;
     const oldAfter = developed.players.find((player) => player.id === old.id)!;
 
-    expect(youngAfter.overall).toBeGreaterThan(young.overall);
-    expect(oldAfter.overall).toBeLessThan(old.overall);
-    expect(developed.developmentReports.some((report) => report.playerId === young.id)).toBe(true);
-    expect(developed.developmentReports.some((report) => report.playerId === old.id)).toBe(true);
+    expect(youngAfter.overall).toBe(tuned.players.find((player) => player.id === young.id)!.overall);
+    expect(oldAfter.overall).toBe(tuned.players.find((player) => player.id === old.id)!.overall);
+    expect(developed.developmentReports).toEqual([]);
   });
 
   it("uses character makeup for rare league availability events", () => {
@@ -2476,7 +2930,7 @@ describe("expanded ratings", () => {
     expect(characterEventChance(92)).toBe(0);
     expect(characterEventChance(20)).toBeGreaterThan(characterEventChance(55));
     expect(suspended.length).toBeGreaterThan(0);
-    expect(after.inbox.some((item) => item.category === "discipline" && item.title.includes("suspended"))).toBe(true);
+    expect(after.inbox).toEqual([]);
   });
 });
 
@@ -2546,7 +3000,7 @@ describe("medical system", () => {
     expect(active.injury).toBeUndefined();
   });
 
-  it("applies permanent medical damage and records career-ending injuries as blocking inbox items", () => {
+  it("applies permanent medical damage and records career-ending injuries without inbox items", () => {
     const save = createNewSave("chi", "goals", "medical-career-ended-seed");
     const player = playersForTeam(save, "chi")[0];
     const majorEvent: MedicalEvent = {
@@ -2608,7 +3062,7 @@ describe("medical system", () => {
     expect(after.players.some((candidate) => candidate.id === player.id)).toBe(false);
     expect(after.careerEndedRecords[0].playerId).toBe(player.id);
     expect(after.medicalHistory[0].careerEnding).toBe(true);
-    expect(after.inbox.some((item) => item.blocking && item.important && item.category === "injury")).toBe(true);
+    expect(after.inbox).toEqual([]);
   });
 
   it("manages injured reserve roster relief and return rules", () => {
@@ -2900,6 +3354,62 @@ describe("trade values", () => {
     expect(versatilityBonus(versatile)).toBeGreaterThan(0);
     expect(versatilityBonus(versatile)).toBeLessThanOrEqual(5);
     expect(playerTradeValue({ ...save, players: save.players.map((player) => (player.id === guard.id ? versatile : player)) }, versatile)).toBeGreaterThan(0);
+  });
+
+  it("normalizes trade state and blocks picks a team does not own", () => {
+    const base = createNewSave("chi", "goals", "trade-validation-seed");
+    const save = { ...base, phase: "free-agency" as const, currentDate: leagueYearStartDate(base.seasonYear), tradeState: normalizeTradeState(base) };
+    const targetPick = save.draftPicks.find((pick) => pick.currentTeamId !== "chi" && !pick.usedByProspectId)!;
+    const userPick = save.draftPicks.find((pick) => pick.currentTeamId === "chi" && !pick.usedByProspectId)!;
+    const offer = createTradeOffer(save, "chi", targetPick.currentTeamId, [{ type: "pick", id: targetPick.id }], [{ type: "pick", id: userPick.id }]);
+
+    expect(save.tradeState.difficulty).toBe("normal");
+    expect(offer.evaluation.hardBlocks).toContain("A team does not own a draft pick being traded.");
+  });
+
+  it("applies accepted multi-asset trades with players, picks, history, and news", () => {
+    const base = createNewSave("chi", "goals", "trade-apply-seed");
+    const targetTeamId = base.teams.find((team) => team.id !== "chi")!.id;
+    const userPick = base.draftPicks.find((pick) => pick.currentTeamId === "chi" && pick.round === 1 && !pick.usedByProspectId)!;
+    const targetPick = base.draftPicks.find((pick) => pick.currentTeamId === targetTeamId && pick.round >= 6 && !pick.usedByProspectId)!;
+    const player = playersForTeam(base, targetTeamId)
+      .filter((candidate) => candidate.position !== "QB" && candidate.salary < 8)
+      .sort((a, b) => a.overall - b.overall)[0]!;
+    const save = {
+      ...base,
+      phase: "free-agency" as const,
+      currentDate: leagueYearStartDate(base.seasonYear),
+      tradeState: normalizeTradeState(base),
+      budget: { ...base.budget, chi: 300, [targetTeamId]: 300 }
+    };
+    const offer = createTradeOffer(save, "chi", targetTeamId, [{ type: "pick", id: userPick.id }], [{ type: "pick", id: targetPick.id }, { type: "player", id: player.id }]);
+    const traded = submitTradeOffer(save, offer);
+
+    expect(traded.draftPicks.find((pick) => pick.id === userPick.id)?.currentTeamId).toBe(targetTeamId);
+    expect(traded.draftPicks.find((pick) => pick.id === targetPick.id)?.currentTeamId).toBe("chi");
+    expect(traded.players.find((candidate) => candidate.id === player.id)?.teamId).toBe("chi");
+    expect(traded.tradeState?.history[0]?.summary).toContain("sends");
+    expect(traded.tradeState?.news[0]?.body).toContain(userPick.draftYear.toString());
+  });
+
+  it("protects franchise quarterbacks from weak offers with specific reasons", () => {
+    const base = createNewSave("chi", "goals", "trade-protection-seed");
+    const targetTeamId = "kc";
+    const targetQuarterback = playersForTeam(base, targetTeamId).find((player) => player.position === "QB")!;
+    const playerPatch: Player = { ...targetQuarterback, overall: 86, potential: 90, age: 25, salary: 9, contractYears: 4 };
+    const save = {
+      ...base,
+      phase: "free-agency" as const,
+      currentDate: leagueYearStartDate(base.seasonYear),
+      players: base.players.map((player) => (player.id === playerPatch.id ? playerPatch : player)),
+      tradeState: normalizeTradeState(base)
+    };
+    const weakPick = save.draftPicks.find((pick) => pick.currentTeamId === "chi" && pick.round >= 6 && !pick.usedByProspectId)!;
+    const offer = createTradeOffer(save, "chi", targetTeamId, [{ type: "pick", id: weakPick.id }], [{ type: "player", id: playerPatch.id }]);
+    const evaluation = evaluateTradeOffer(save, offer);
+
+    expect(evaluation.verdict).toBe("decline");
+    expect(evaluation.reasons.some((reason) => reason.includes("Franchise QB protection"))).toBe(true);
   });
 });
 

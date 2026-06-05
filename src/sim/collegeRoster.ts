@@ -3,6 +3,14 @@ import type { CollegeRosterPlayer, CollegeRosterState, GameSave, YearZeroBootstr
 import { annualAcademicEligibilityWeight, annualRosterPositionTargets, annualRosterTemplate, annualRuntimeDebug, annualSchoolClassSizeRange, annualWalkOnRuleForSubdivision } from "./annualRuntime";
 
 export function createInitialCollegeRosterState(yearZero: YearZeroBootstrapState, seasonYear: number): CollegeRosterState {
+  const productionByPlayerId = new Map<string, typeof yearZero.productionHistory>();
+  for (const row of yearZero.productionHistory.filter((entry) => !entry.level || entry.level === "college")) {
+    productionByPlayerId.set(row.playerId, [...(productionByPlayerId.get(row.playerId) ?? []), row]);
+  }
+  const injuriesByPlayerId = new Map<string, typeof yearZero.injuryHistory>();
+  for (const row of yearZero.injuryHistory.filter((entry) => entry.level === "college")) {
+    injuriesByPlayerId.set(row.playerId, [...(injuriesByPlayerId.get(row.playerId) ?? []), row]);
+  }
   return {
     seasonYear,
     players: yearZero.collegePlayers.map((player): CollegeRosterPlayer => ({
@@ -19,7 +27,9 @@ export function createInitialCollegeRosterState(yearZero: YearZeroBootstrapState
       source: "year_zero_college_roster",
       rosterStatus: "active",
       academicRisk: 0,
-      academicEligible: true
+      academicEligible: true,
+      productionHistory: productionByPlayerId.get(player.id) ?? [],
+      injuryHistory: injuriesByPlayerId.get(player.id) ?? []
     })),
     runtimeCsvs: yearZero.debugSummary.loadedRuntimeBundles,
     usesYearZeroBundles: true

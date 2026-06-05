@@ -21,6 +21,7 @@ import { eligiblePositionsFor, normalizePositionFits, versatilityBonus } from ".
 import { calculateOverallFromRatings, legacyAttributesFromRatings } from "./ratings";
 import { positionDraftValue } from "./scouting";
 import { rosterNeeds, teamOverall } from "./selectors";
+import { emptyPlayerStats } from "./stats";
 
 export const UDFA_POOL = 0.25;
 export const UDFA_TOTAL_WAVES = 3;
@@ -32,20 +33,7 @@ const udfaOpportunityCache = new WeakMap<GameSave, Map<string, number>>();
 const aiWaveOfferCache = new WeakMap<GameSave, UdfaOffer[]>();
 
 function emptyStats(): PlayerStats {
-  return {
-    games: 0,
-    snaps: 0,
-    offenseSnaps: 0,
-    defenseSnaps: 0,
-    specialTeamsSnaps: 0,
-    passYards: 0,
-    rushYards: 0,
-    receivingYards: 0,
-    tackles: 0,
-    sacks: 0,
-    interceptions: 0,
-    touchdowns: 0
-  };
+  return emptyPlayerStats();
 }
 
 function cents(value: number): number {
@@ -487,18 +475,7 @@ export function resolveNextUdfaWave(save: GameSave): GameSave {
   };
   return recalculateBudgets({
     ...next,
-    inbox: userSignedIds.length || userLostIds.length || counterIds.length ? [
-      {
-        id: `udfa-wave-${state.draftYear}-${state.wave}-${next.inbox.length}`,
-        week: next.currentWeek,
-        category: "draft",
-        title: `UDFA wave ${state.wave} resolved`,
-        body: `${userSignedIds.length} signing${userSignedIds.length === 1 ? "" : "s"}, ${userLostIds.length} lost target${userLostIds.length === 1 ? "" : "s"}, and ${counterIds.length} counter${counterIds.length === 1 ? "" : "s"} are on the desk.`,
-        priority: userSignedIds.length || counterIds.length ? "normal" : "low",
-        read: false
-      },
-      ...next.inbox
-    ] : next.inbox
+    inbox: []
   });
 }
 
@@ -644,18 +621,7 @@ export function finalizeUdfaClass(save: GameSave): GameSave {
     ...next,
     phase: "rookie-results",
     rookieResults: [results, ...(next.rookieResults ?? []).filter((item) => item.draftYear !== results.draftYear)],
-    inbox: [
-      {
-        id: `rookie-results-${results.draftYear}-${next.inbox.length}`,
-        week: next.currentWeek,
-        category: "draft",
-        title: "Rookie class results ready",
-        body: `${results.acquisitions.length} drafted and undrafted rookies are ready for the class reveal before onboarding.`,
-        priority: "high",
-        read: false
-      },
-      ...next.inbox
-    ]
+    inbox: []
   };
 }
 

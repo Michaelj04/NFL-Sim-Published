@@ -114,7 +114,8 @@ export interface CareerEmployment {
   history: CareerEmploymentHistoryEntry[];
 }
 
-export type CollegeDevelopmentFocus = "balanced" | "athletic" | "technical" | "mental" | "recovery";
+export type DevelopmentPlan = "auto" | "balanced" | "physical" | "technical" | "mental" | "recovery" | "position-switch";
+export type CollegeDevelopmentFocus = DevelopmentPlan | "athletic";
 export type CollegeFatiguePosture = "conservative" | "standard" | "aggressive";
 
 export interface CollegeManagementState {
@@ -198,6 +199,7 @@ export interface TrainingWeekReport {
 }
 
 export interface PlayerTrainingState {
+  developmentPlan?: DevelopmentPlan;
   bodyPlan: TrainingBodyPlan;
   skillPlan: TrainingSkillPlan;
   targetPosition?: Position;
@@ -325,17 +327,84 @@ export interface CollegeProgram {
 
 export interface PlayerStats {
   games: number;
+  gamesStarted: number;
   snaps: number;
   offenseSnaps: number;
   defenseSnaps: number;
   specialTeamsSnaps: number;
+  qbWins: number;
+  qbLosses: number;
+  qbTies: number;
+  passAttempts: number;
+  passCompletions: number;
   passYards: number;
+  passTouchdowns: number;
+  interceptionsThrown: number;
+  sacksTaken: number;
+  sackYardsLost: number;
+  passingFirstDowns: number;
+  passingSuccesses: number;
+  passingLong: number;
+  fourthQuarterComebacks: number;
+  gameWinningDrives: number;
+  qbPressuresFaced: number;
+  qbHitsTaken: number;
+  rushAttempts: number;
   rushYards: number;
+  rushTouchdowns: number;
+  rushingFirstDowns: number;
+  rushingSuccesses: number;
+  rushingLong: number;
+  fumbles: number;
+  targets: number;
+  receptions: number;
   receivingYards: number;
+  receivingTouchdowns: number;
+  receivingFirstDowns: number;
+  receivingSuccesses: number;
+  receivingLong: number;
+  drops: number;
   tackles: number;
+  tacklesForLoss: number;
   sacks: number;
+  sackYards: number;
   interceptions: number;
+  passesDefended: number;
+  forcedFumbles: number;
+  fumbleRecoveries: number;
+  defensiveTouchdowns: number;
+  safeties: number;
+  qbPressures: number;
+  qbHits: number;
+  coverageTargets: number;
+  completionsAllowed: number;
+  yardsAllowed: number;
+  touchdownsAllowed: number;
+  fieldGoalAttempts: number;
+  fieldGoalsMade: number;
+  fieldGoalLong: number;
+  extraPointAttempts: number;
+  extraPointsMade: number;
+  punts: number;
+  puntYards: number;
+  puntInside20: number;
+  puntLong: number;
+  puntTouchbacks: number;
   touchdowns: number;
+}
+
+export interface PlayerSeasonStatsHistoryEntry {
+  id: string;
+  seasonYear: number;
+  teamId: string;
+  teamName?: string;
+  age: number;
+  position: Position;
+  overall: number;
+  potential: number;
+  stats: PlayerStats;
+  playoffStats: PlayerStats;
+  awards?: string[];
 }
 
 export interface Player {
@@ -396,6 +465,7 @@ export interface Player {
   development: PlayerDevelopmentProfile;
   stats: PlayerStats;
   playoffStats: PlayerStats;
+  statHistory?: PlayerSeasonStatsHistoryEntry[];
 }
 
 export interface FreeAgencyMove {
@@ -432,6 +502,9 @@ export interface FreeAgentOffer {
   apy: number;
   security: FreeAgentSecurityLevel;
   role: FreeAgentRolePromise;
+  signingBonus?: number;
+  guaranteedTotal?: number;
+  voidYears?: number;
   interestScore: number;
   projectedCapHit: number;
   expectedAsk: number;
@@ -496,12 +569,15 @@ export type ContractOrigin = "generated" | "free-agent" | "extension" | "rookie"
 export type FreeAgentRights = "none" | "ufa" | "rfa" | "erfa";
 export type TagType = "franchise" | "transition";
 export type TenderLevel = "erfa" | "right-of-first-refusal" | "original-round" | "second-round" | "first-round";
+export type ReleaseDesignation = "standard" | "post-june";
 
 export interface ContractSeason {
   seasonYear: number;
   baseSalary: number;
   signingBonusProration: number;
   guaranteedSalary: number;
+  voidYear?: boolean;
+  optionYear?: boolean;
 }
 
 export interface ContractRestructure {
@@ -516,13 +592,24 @@ export interface PlayerContract {
   endYear: number;
   years: number;
   apy: number;
+  totalValue?: number;
   signingBonus: number;
   guaranteedTotal: number;
+  security?: FreeAgentSecurityLevel;
   seasons: ContractSeason[];
   origin: ContractOrigin;
   rights: FreeAgentRights;
   tagType?: TagType;
   tenderLevel?: TenderLevel;
+  voidYears?: number;
+  optionYear?: number;
+  fifthYearOption?: {
+    eligible: boolean;
+    exercised?: boolean;
+    seasonYear?: number;
+    apy?: number;
+  };
+  releaseDesignation?: ReleaseDesignation;
   restructureHistory?: ContractRestructure[];
 }
 
@@ -533,7 +620,7 @@ export interface DeadMoneyCharge {
   playerName: string;
   seasonYear: number;
   amount: number;
-  source: "release" | "trade" | "restructure" | "guarantee";
+  source: "release" | "post-june-release" | "trade" | "restructure" | "guarantee";
 }
 
 export interface TeamCapSettings {
@@ -722,6 +809,10 @@ export interface StaffMarketState {
 
 export interface Prospect {
   id: string;
+  collegePlayerId?: string;
+  draftSource?: "year_zero_college_roster" | "college_roster" | "synthetic_generated";
+  collegeOverall?: number;
+  draftDeclaredSeason?: number;
   firstName: string;
   lastName: string;
   position: Position;
@@ -856,7 +947,46 @@ export interface GameResult {
   awayScore: number;
   log: GameLogEntry[];
   snapCounts: Record<string, PlayerSnapCount>;
+  playerStats: Record<string, PlayerStats>;
+  teamStats: Record<string, TeamGameStats>;
   injuries: MedicalEvent[];
+}
+
+export interface TeamGameStats {
+  teamId: string;
+  plays: number;
+  offensivePlays: number;
+  defensivePlays: number;
+  drives: number;
+  scoringDrives: number;
+  timeOfPossession: number;
+  totalYards: number;
+  passingYards: number;
+  rushingYards: number;
+  firstDowns: number;
+  passingFirstDowns: number;
+  rushingFirstDowns: number;
+  successfulPlays: number;
+  explosivePlays: number;
+  turnovers: number;
+  takeaways: number;
+  sacks: number;
+  sacksAllowed: number;
+  sackYards: number;
+  sackYardsAllowed: number;
+  thirdDownAttempts: number;
+  thirdDownConversions: number;
+  fourthDownAttempts: number;
+  fourthDownConversions: number;
+  redZoneTrips: number;
+  redZoneTouchdowns: number;
+  fieldGoalAttempts: number;
+  fieldGoalsMade: number;
+  punts: number;
+  puntYards: number;
+  puntTouchbacks: number;
+  penalties: number;
+  penaltyYards: number;
 }
 
 export interface Game {
@@ -879,6 +1009,8 @@ export interface Game {
   log: GameLogEntry[];
   injuries: GameResult["injuries"];
   snapCounts: Record<string, PlayerSnapCount>;
+  playerStats?: Record<string, PlayerStats>;
+  teamStats?: Record<string, TeamGameStats>;
 }
 
 export interface PlayerSnapCount {
@@ -892,7 +1024,7 @@ export interface InboxItem {
   id: string;
   week: number;
   date?: string;
-  category: "staff" | "scouting" | "game" | "injury" | "budget" | "goal" | "draft" | "discipline";
+  category: "staff" | "scouting" | "game" | "injury" | "budget" | "goal" | "draft" | "discipline" | "trade";
   title: string;
   body: string;
   priority: "low" | "normal" | "high";
@@ -1003,6 +1135,137 @@ export interface DraftTradeOffer {
   rationale?: string;
   userFacing?: boolean;
   counterOffers?: DraftTradeOffer[];
+}
+
+export type TradeAssetType = "player" | "pick";
+export type TradeOfferStatus = "draft" | "submitted" | "accepted" | "declined" | "countered" | "withdrawn";
+export type TradeVerdict = "accept" | "counter" | "decline";
+export type PlayerAvailability = "actively-shopping" | "available" | "neutral" | "hard-to-get" | "untouchable";
+export type TeamTradeDirection = "championship-contender" | "playoff-contender" | "average" | "retooling" | "rebuilding" | "tanking";
+export type TradeDifficulty = "easy" | "normal" | "hard" | "realistic";
+export type TradeSource = "user" | "cpu" | "draft-day";
+
+export interface TradeAsset {
+  type: TradeAssetType;
+  id: string;
+}
+
+export interface TradeValueBreakdown {
+  assetId: string;
+  assetType: TradeAssetType;
+  label: string;
+  base: number;
+  age: number;
+  position: number;
+  contract: number;
+  potential: number;
+  health: number;
+  need: number;
+  availability: number;
+  protection: number;
+  final: number;
+  notes: string[];
+}
+
+export interface TradeCapPreview {
+  teamId: string;
+  currentRoom: number;
+  incomingCap: number;
+  outgoingCap: number;
+  deadMoney: number;
+  projectedRoom: number;
+  compliant: boolean;
+}
+
+export interface TradeRosterPreview {
+  teamId: string;
+  rosterBefore: number;
+  rosterAfter: number;
+  warnings: string[];
+  positionWarnings: string[];
+}
+
+export interface TradeEvaluation {
+  verdict: TradeVerdict;
+  interest: number;
+  incomingValue: number;
+  outgoingValue: number;
+  valueGap: number;
+  reasons: string[];
+  hardBlocks: string[];
+  capPreview: TradeCapPreview[];
+  rosterPreview: TradeRosterPreview[];
+  incomingBreakdown: TradeValueBreakdown[];
+  outgoingBreakdown: TradeValueBreakdown[];
+  counterOffers?: TradeOffer[];
+}
+
+export interface TradeOffer {
+  id: string;
+  fromTeamId: string;
+  toTeamId: string;
+  gives: TradeAsset[];
+  receives: TradeAsset[];
+  status: TradeOfferStatus;
+  source: TradeSource;
+  createdWeek: number;
+  createdDate?: string;
+  message: string;
+  rationale?: string;
+  evaluation: TradeEvaluation;
+  parentOfferId?: string;
+}
+
+export interface TradeHistoryEntry {
+  id: string;
+  seasonYear: number;
+  week: number;
+  date?: string;
+  fromTeamId: string;
+  toTeamId: string;
+  gives: TradeAsset[];
+  receives: TradeAsset[];
+  summary: string;
+  source: TradeSource;
+  capImpact?: TradeCapPreview[];
+}
+
+export interface TradeNewsItem {
+  id: string;
+  seasonYear: number;
+  week: number;
+  date?: string;
+  title: string;
+  body: string;
+  importance: "minor" | "notable" | "major" | "blockbuster";
+  teamIds: string[];
+  playerIds: string[];
+}
+
+export interface TradeBlockEntry {
+  playerId: string;
+  teamId: string;
+  availability: PlayerAvailability;
+  reason: string;
+  updatedWeek: number;
+  userMarked?: boolean;
+}
+
+export interface TeamTradePreference {
+  teamId: string;
+  direction: TeamTradeDirection;
+  updatedWeek: number;
+}
+
+export interface TradeState {
+  difficulty: TradeDifficulty;
+  offers: TradeOffer[];
+  history: TradeHistoryEntry[];
+  news: TradeNewsItem[];
+  tradeBlock: TradeBlockEntry[];
+  availabilityOverrides: Record<string, PlayerAvailability>;
+  teamPreferences: Record<string, TeamTradePreference>;
+  lastCpuOfferWeek?: number;
 }
 
 export interface DraftEvent {
@@ -1199,6 +1462,7 @@ export interface GameSave {
   deadMoney?: DeadMoneyCharge[];
   compPickLedger?: CompPickLedger;
   freeAgencyMarket?: FreeAgencyMarketState;
+  tradeState?: TradeState;
   goals: FranchiseGoals;
   depthOverrides: Record<string, Partial<Record<Position, string[]>>>;
   freeAgencyLog: FreeAgencyMove[];
@@ -1218,7 +1482,35 @@ export interface AnnualPipelineState {
   rngStreams: string[];
   schemaValidatedCsvs?: number;
   schemaValidatedColumns?: number;
+  parserRulesApplied?: number;
+  fallbackAuditCount?: number;
+  validationErrors?: string[];
   usesYearZeroBundles: false;
+}
+
+export interface PipelineFallbackAuditEntry {
+  csvName: string;
+  columnName: string;
+  rowNumber?: number;
+  reason: string;
+  fallbackValue: string | number | boolean;
+}
+
+export interface PipelineValidationReport {
+  valid: boolean;
+  validatedCsvs: number;
+  validatedColumns: number;
+  parserRulesApplied: number;
+  fallbackAudit: PipelineFallbackAuditEntry[];
+  errors: string[];
+}
+
+export interface PipelineDataBundle {
+  packageVersion: string;
+  activeRuntimeCsvs: string[];
+  annualRuntimeCsvs: string[];
+  yearZeroRuntimeCsvs: string[];
+  validation: PipelineValidationReport;
 }
 
 export interface AnnualTransferEntry {
@@ -1387,6 +1679,8 @@ export interface CollegeRosterPlayer {
   graduatedSeason?: number;
   redshirted?: boolean;
   cutSeason?: number;
+  productionHistory?: YearZeroProductionSeason[];
+  injuryHistory?: YearZeroInjuryHistory[];
 }
 
 export interface CollegeRosterProgressionSummary {
@@ -1579,6 +1873,8 @@ export interface YearZeroNflPlayer {
   teamId: string;
   previousTeamId?: string;
   pool: "active_roster" | "practice_squad" | "free_agent";
+  yearZeroRoleTier?: string;
+  yearZeroQualityTier?: string;
   position: Position;
   age: number;
   experience: number;
@@ -1587,6 +1883,12 @@ export interface YearZeroNflPlayer {
   potential: number;
   salary: number;
   contractYears: number;
+  contractOrigin?: ContractOrigin;
+  draftYear?: number;
+  draftRound?: number;
+  draftOverallPick?: number;
+  rookieContractYear?: number;
+  fifthYearOptionEligible?: boolean;
   ratingScaleContext: "nfl";
   source: "year_zero_nfl_player";
 }
@@ -1643,11 +1945,20 @@ export interface YearZeroScoutingView {
 export interface YearZeroProductionSeason {
   id: string;
   playerId: string;
-  schoolId: string;
+  level?: "college" | "nfl";
+  schoolId?: string;
+  teamId?: string;
+  seasonYear?: number;
   seasonOffset: number;
+  age?: number;
+  position?: Position;
   games: number;
+  gamesStarted?: number;
+  snapShare?: number;
   productionScore: number;
   role: string;
+  stats?: Record<string, number> | PlayerStats;
+  awards?: string[];
 }
 
 export interface YearZeroAwardHistory {
@@ -1662,6 +1973,8 @@ export interface YearZeroInjuryHistory {
   id: string;
   playerId: string;
   level: "college" | "nfl" | "high_school";
+  seasonOffset?: number;
+  seasonYear?: number;
   injuryFamily: string;
   severity: InjurySeverity;
   gamesMissed: number;
@@ -1725,6 +2038,8 @@ export interface YearZeroBootstrapState {
     highSchoolRecruitsGenerated: number;
     scoutingViewsGenerated: number;
     productionHistoryGenerated: number;
+    collegeProductionHistoryGenerated?: number;
+    nflProductionHistoryGenerated?: number;
     awardHistoryGenerated: number;
     injuryHistoryGenerated: number;
     draftProspectsGenerated: number;

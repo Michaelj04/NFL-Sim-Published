@@ -71,7 +71,7 @@ import transferEntryReasonsText from "../../sports_sim_player_pipeline/data/acti
 import transferTransitionProbabilitiesText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/transfer_transition_probabilities.csv?raw";
 import walkOnGenerationRulesText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/walk_on_generation_rules.csv?raw";
 import yearlyProgressionGatesText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/yearly_progression_gates.csv?raw";
-import type { Position } from "../types";
+import type { PipelineValidationReport, Position } from "../types";
 
 interface ActiveManifest {
   activeRuntimeCsvs: string[];
@@ -85,9 +85,11 @@ export interface AnnualRuntimeDebug {
   schemaValidatedCsvs: number;
   schemaValidatedColumns: number;
   parserRulesApplied: number;
+  fallbackAuditCount: number;
+  validationErrors: string[];
 }
 
-const ANNUAL_RUNTIME_FILES = [
+export const ANNUAL_RUNTIME_FILES = [
   "data/active_runtime_csvs/deterministic_rng_streams.csv",
   "data/active_runtime_csvs/development_yearly_curves.csv",
   "data/active_runtime_csvs/depth_chart_weights.csv",
@@ -161,7 +163,7 @@ const ANNUAL_RUNTIME_FILES = [
   "data/active_runtime_csvs/yearly_progression_gates.csv"
 ] as const;
 
-const ANNUAL_RUNTIME_TEXT: Record<(typeof ANNUAL_RUNTIME_FILES)[number], string> = {
+export const ANNUAL_RUNTIME_TEXT: Record<(typeof ANNUAL_RUNTIME_FILES)[number], string> = {
   "data/active_runtime_csvs/deterministic_rng_streams.csv": deterministicRngStreamsText,
   "data/active_runtime_csvs/development_yearly_curves.csv": developmentYearlyCurvesText,
   "data/active_runtime_csvs/depth_chart_weights.csv": depthChartWeightsText,
@@ -280,6 +282,7 @@ let cachedNflScoutingArchetypes: Map<string, AnnualNflScoutingArchetype> | undef
 let cachedPickValues: Map<number, AnnualPickValue> | undefined;
 let cachedCombineWeights: Map<string, number> | undefined;
 let cachedProDayAdjustment: AnnualProDayAdjustment | undefined;
+let cachedValidationReport: PipelineValidationReport | undefined;
 let cachedValidationSummary: { csvs: number; columns: number; parserRulesApplied: number } | undefined;
 
 export interface AnnualDevelopmentCurve {
@@ -618,7 +621,9 @@ export function annualRuntimeDebug(): AnnualRuntimeDebug {
     recruitClassSizes: starRows.slice(1).map((row) => Number(row[classSizeIndex])).filter(Number.isFinite),
     schemaValidatedCsvs: annualRuntimeValidationSummary().csvs,
     schemaValidatedColumns: annualRuntimeValidationSummary().columns,
-    parserRulesApplied: annualRuntimeValidationSummary().parserRulesApplied
+    parserRulesApplied: annualRuntimeValidationSummary().parserRulesApplied,
+    fallbackAuditCount: annualRuntimeValidationReport().fallbackAudit.length,
+    validationErrors: annualRuntimeValidationReport().errors
   };
   return cachedDebug;
 }
@@ -1138,11 +1143,44 @@ function validateAnnualRuntimeFiles(): void {
   if (missing.length > 0) throw new Error(`Annual runtime CSV(s) missing from active manifest: ${missing.join(", ")}`);
   const accidentalYearZero = ANNUAL_RUNTIME_FILES.filter((path) => path.includes("/year_zero/"));
   if (accidentalYearZero.length > 0) throw new Error(`Annual runtime loader cannot consume Year Zero bundles: ${accidentalYearZero.join(", ")}`);
-  annualRuntimeValidationSummary();
+  const report = annualRuntimeValidationReport();
+  if (!report.valid) throw new Error(`Annual runtime CSV validation failed:\n${report.errors.join("\n")}`);
+}
+
+export function annualRuntimeValidationReport(): PipelineValidationReport {
+  if (cachedValidationReport) return cachedValidationReport;
+  cachedValidationReport = buildAnnualRuntimeValidationReport(ANNUAL_RUNTIME_TEXT);
+  return cachedValidationReport;
 }
 
 function annualRuntimeValidationSummary(): { csvs: number; columns: number; parserRulesApplied: number } {
   if (cachedValidationSummary) return cachedValidationSummary;
+  const report = annualRuntimeValidationReport();
+  if (!report.valid) throw new Error(`Annual runtime CSV validation failed:\n${report.errors.join("\n")}`);
+  cachedValidationSummary = {
+    csvs: report.validatedCsvs,
+    columns: report.validatedColumns,
+    parserRulesApplied: report.parserRulesApplied
+  };
+  return cachedValidationSummary;
+}
+
+export function validatePipelineCsvTextForTest(csvName: string, text: string): PipelineValidationReport {
+  const path = ANNUAL_RUNTIME_FILES.find((candidate) => (candidate.split("/").pop() ?? candidate) === csvName);
+  if (!path) {
+    return {
+      valid: false,
+      validatedCsvs: 0,
+      validatedColumns: 0,
+      parserRulesApplied: 0,
+      fallbackAudit: [],
+      errors: [`${csvName} is not registered in the annual runtime loader.`]
+    };
+  }
+  return buildAnnualRuntimeValidationReport({ ...ANNUAL_RUNTIME_TEXT, [path]: text });
+}
+
+function buildAnnualRuntimeValidationReport(textByPath: Record<(typeof ANNUAL_RUNTIME_FILES)[number], string>): PipelineValidationReport {
   const registryRows = parseCsv(csvSchemaRegistryText);
   const registryHeader = registryRows[0] ?? [];
   const csvIndex = registryHeader.indexOf("csv_name");
@@ -1152,8 +1190,9 @@ function annualRuntimeValidationSummary(): { csvs: number; columns: number; pars
   const minIndex = registryHeader.indexOf("min");
   const maxIndex = registryHeader.indexOf("max");
   const allowedIndex = registryHeader.indexOf("allowed_values");
+  const errors: string[] = [];
   if ([csvIndex, columnIndex, typeIndex, requiredIndex].some((index) => index < 0)) {
-    throw new Error("csv_schema_registry.csv missing required schema columns.");
+    errors.push("csv_schema_registry.csv missing required schema columns.");
   }
   const parserRules = loadCsvParserRules();
   const parserRuleTypes = new Set(parserRules.map((rule) => rule.ruleType));
@@ -1162,33 +1201,59 @@ function annualRuntimeValidationSummary(): { csvs: number; columns: number; pars
   for (const path of ANNUAL_RUNTIME_FILES) {
     const basename = path.split("/").pop() ?? path;
     const rules = registryRows.slice(1).filter((row) => row[csvIndex] === basename);
-    if (rules.length === 0) throw new Error(`No schema registry rows for ${basename}.`);
-    const rows = parseCsv(ANNUAL_RUNTIME_TEXT[path]);
+    if (rules.length === 0) {
+      errors.push(`No schema registry rows for ${basename}.`);
+      continue;
+    }
+    const rows = parseCsv(textByPath[path]);
     const header = rows[0] ?? [];
+    if (header.length === 0) {
+      errors.push(`${basename} has no header row.`);
+      continue;
+    }
+    errors.push(...duplicateKeyErrors(basename, rows, header));
     for (const rule of rules) {
       const columnName = rule[columnIndex];
       const index = header.indexOf(columnName);
-      if (rule[requiredIndex] === "1" && index < 0) throw new Error(`${basename} missing required column ${columnName}.`);
+      if (rule[requiredIndex] === "1" && index < 0) {
+        errors.push(`${basename} missing required column ${columnName}.`);
+      }
       if (index < 0) continue;
       const schemaType = effectiveSchemaType(basename, columnName, rule[typeIndex]);
-      if (!parserRuleTypes.has(schemaType) && schemaType !== "string") throw new Error(`${basename}.${columnName} schema type ${schemaType} has no csv_parser_rules row.`);
+      if (!parserRuleTypes.has(schemaType) && schemaType !== "string") errors.push(`${basename}.${columnName} schema type ${schemaType} has no csv_parser_rules row.`);
       const parserRule = parserRules.find((candidate) => parserRuleAppliesToColumn(candidate, columnName));
       if (parserRule) {
         parserRulesApplied += 1;
-        assertParserRuleMatchesSchema(basename, columnName, schemaType, parserRule);
+        try {
+          assertParserRuleMatchesSchema(basename, columnName, schemaType, parserRule);
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : String(error));
+        }
       }
       validatedColumns += 1;
-      for (const row of rows.slice(1)) {
+      for (const [rowOffset, row] of rows.slice(1).entries()) {
         const value = row[index] ?? "";
-        if (rule[requiredIndex] === "1" && value.trim() === "" && !allowsBlankSchemaValue(basename, columnName, row, header)) throw new Error(`${basename}.${columnName} has blank required value.`);
+        const rowNumber = rowOffset + 2;
+        if (rule[requiredIndex] === "1" && value.trim() === "" && !allowsBlankSchemaValue(basename, columnName, row, header)) errors.push(`${basename}.${columnName} row ${rowNumber} has blank required value.`);
         if (value.trim() === "") continue;
         const range = effectiveSchemaRange(basename, columnName, rule[minIndex], rule[maxIndex]);
-        validateSchemaValue(basename, columnName, value, schemaType, range.min, range.max, rule[allowedIndex]);
+        try {
+          validateSchemaValue(basename, columnName, value, schemaType, range.min, range.max, rule[allowedIndex]);
+        } catch (error) {
+          errors.push(`${error instanceof Error ? error.message : String(error)} (row ${rowNumber})`);
+        }
       }
     }
+    errors.push(...weightedTableErrors(basename, rows, header));
   }
-  cachedValidationSummary = { csvs: ANNUAL_RUNTIME_FILES.length, columns: validatedColumns, parserRulesApplied };
-  return cachedValidationSummary;
+  return {
+    valid: errors.length === 0,
+    validatedCsvs: ANNUAL_RUNTIME_FILES.length,
+    validatedColumns,
+    parserRulesApplied,
+    fallbackAudit: fallbackAuditRows(),
+    errors
+  };
 }
 
 function allowsBlankSchemaValue(csvName: string, columnName: string, row: string[], header: string[]): boolean {
@@ -1231,8 +1296,8 @@ function validateSchemaValue(csvName: string, columnName: string, value: string,
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) throw new Error(`${csvName}.${columnName} expected ${type}, got ${value}.`);
     if (type === "integer" && !Number.isInteger(numeric)) throw new Error(`${csvName}.${columnName} expected integer, got ${value}.`);
-    if (min && numeric < Number(min)) throw new Error(`${csvName}.${columnName} below min ${min}: ${value}.`);
-    if (max && numeric > Number(max)) throw new Error(`${csvName}.${columnName} above max ${max}: ${value}.`);
+    if (min.trim() !== "" && numeric < Number(min)) throw new Error(`${csvName}.${columnName} below min ${min}: ${value}.`);
+    if (max.trim() !== "" && numeric > Number(max)) throw new Error(`${csvName}.${columnName} above max ${max}: ${value}.`);
   }
   if (type === "boolean" && !["0", "1", "true", "false", "yes", "no"].includes(value.toLowerCase())) {
     throw new Error(`${csvName}.${columnName} expected boolean, got ${value}.`);
@@ -1255,6 +1320,65 @@ function allowedValueMatches(csvName: string, columnName: string, value: string,
     return value.split("|").filter(Boolean).every((part) => allowed.includes(part));
   }
   return allowed.includes(value);
+}
+
+function duplicateKeyErrors(csvName: string, rows: string[][], header: string[]): string[] {
+  const uniqueKeyColumns: Record<string, string> = {
+    "balance_targets.csv": "metric",
+    "deterministic_rng_streams.csv": "stream_name",
+    "schools_master.csv": "school_id"
+  };
+  const keyColumn = uniqueKeyColumns[csvName] ?? (header.includes("id") ? "id" : undefined);
+  if (!keyColumn) return [];
+  const keyIndex = header.indexOf(keyColumn);
+  const seen = new Map<string, number>();
+  const errors: string[] = [];
+  for (const [rowOffset, row] of rows.slice(1).entries()) {
+    const key = row[keyIndex]?.trim();
+    if (!key) continue;
+    const firstSeen = seen.get(key);
+    if (firstSeen) errors.push(`${csvName}.${keyColumn} duplicate key ${key} at rows ${firstSeen} and ${rowOffset + 2}.`);
+    else seen.set(key, rowOffset + 2);
+  }
+  return errors;
+}
+
+function weightedTableErrors(csvName: string, rows: string[][], header: string[]): string[] {
+  const weightIndex = header.findIndex((column) => column === "weight" || column.endsWith("_weight") || column.endsWith("_pct") || column === "probability" || column === "spawn_pct");
+  if (weightIndex < 0) return [];
+  let positiveWeights = 0;
+  const errors: string[] = [];
+  for (const [rowOffset, row] of rows.slice(1).entries()) {
+    const raw = row[weightIndex]?.trim();
+    if (!raw) continue;
+    const weight = Number(raw);
+    if (!Number.isFinite(weight)) continue;
+    if (weight < 0) errors.push(`${csvName}.${header[weightIndex]} row ${rowOffset + 2} has negative weight ${raw}.`);
+    if (weight > 0) positiveWeights += 1;
+  }
+  if (rows.length > 1 && positiveWeights === 0) errors.push(`${csvName}.${header[weightIndex]} has no positive weights.`);
+  return errors;
+}
+
+function fallbackAuditRows(): PipelineValidationReport["fallbackAudit"] {
+  const rows = parseCsv(formulaInputDefaultsText);
+  const header = rows[0] ?? [];
+  const formulaIndex = header.indexOf("formula");
+  const inputIndex = header.indexOf("input_name");
+  const valueIndex = header.indexOf("default_value");
+  const allowedIndex = header.indexOf("allowed_fallback");
+  if ([formulaIndex, inputIndex, valueIndex, allowedIndex].some((index) => index < 0)) return [];
+  return rows.slice(1).flatMap((row, index) => {
+    const allowed = ["1", "true", "yes"].includes((row[allowedIndex] ?? "").toLowerCase());
+    if (!allowed) return [];
+    return [{
+      csvName: "formula_input_defaults.csv",
+      columnName: row[inputIndex] || "default_value",
+      rowNumber: index + 2,
+      reason: `Allowed default for formula ${row[formulaIndex] || "unknown"}.`,
+      fallbackValue: row[valueIndex] ?? ""
+    }];
+  });
 }
 
 function loadCsvParserRules(): AnnualParserRule[] {

@@ -1,5 +1,5 @@
 import { clamp, createRng } from "../lib/rng";
-import type { Game, GameSave, InboxItem, Player, TeamRecord } from "../types";
+import type { Game, GameSave, Player, PlayerStats, TeamRecord } from "../types";
 import { advanceToDraftPrep, normalizeCapState, openOffseasonContracts, recalculateBudgets, teamCapLedger } from "./cap";
 import { generateAnnualTransferPortalState } from "./annualTransfer";
 import { applyAnnualRosterImportPlan, generateAnnualRosterImportPlan } from "./annualRosterImport";
@@ -25,7 +25,9 @@ import { divisionRanksFromRecords, generateLeagueSchedule } from "./schedule";
 import { applyWeeklyScoutingPlan } from "./scouting";
 import { processWaiversForDate } from "./waivers";
 import { resolveFreeAgencyWave } from "./freeAgentMarket";
+import { refreshTradeActivity } from "./trade";
 import { medicalQuality, payroll, rosterNeeds, scoutingQuality, selectedTeam, teamById, teamSchedule, teamOverall } from "./selectors";
+import { addGameStatsToPlayer, archivePlayerSeasonStats, emptyPlayerStats } from "./stats";
 
 function cloneSave(save: GameSave): GameSave {
   return JSON.parse(JSON.stringify(save)) as GameSave;
@@ -103,19 +105,7 @@ export function characterEventChance(character: number): number {
   return clamp(0.0035 + (45 - character) * 0.00022, 0.0035, 0.0085);
 }
 
-function characterIncidentLabel(player: Player, rngSeed: string): string {
-  const makeup = player.makeup?.character ?? 70;
-  const rng = createRng(rngSeed);
-  const severe = makeup < 45;
-  return rng.pick(
-    severe
-      ? ["DUI arrest", "gambling suspension", "conduct investigation", "legal issue", "public altercation", "team rules violation"]
-      : ["team rules violation", "conduct investigation", "public altercation"]
-  );
-}
-
 export function applyCharacterEvents(save: GameSave): GameSave {
-  const events: InboxItem[] = [];
   const players = save.players.map((player) => {
     if (player.teamId === FREE_AGENT_TEAM_ID) return player;
     if (player.status !== "active" && player.status !== "limited") return player;
@@ -126,19 +116,8 @@ export function applyCharacterEvents(save: GameSave): GameSave {
     const rng = createRng(rngSeed);
     if (!rng.bool(chance)) return { ...player, makeup };
 
-    const incident = characterIncidentLabel({ ...player, makeup }, rngSeed);
     const lowCharacter = makeup.character < 45;
     const weeks = Math.round(clamp(rng.normal(lowCharacter ? 4 : 2, lowCharacter ? 1.5 : 0.75), 1, lowCharacter ? 8 : 3));
-    const team = teamById(save, player.teamId);
-    events.push({
-      id: `discipline-${save.currentWeek}-${player.id}`,
-      week: save.currentWeek,
-      category: "discipline",
-      title: `${player.position} suspended: ${player.firstName} ${player.lastName}`,
-      body: `${team.fullName} ${player.position} ${player.firstName} ${player.lastName} will miss ${weeks} week${weeks === 1 ? "" : "s"} after a ${incident}.`,
-      priority: player.teamId === save.selectedTeamId || weeks >= 4 ? "high" : "normal",
-      read: false
-    });
     return {
       ...player,
       makeup,
@@ -148,126 +127,15 @@ export function applyCharacterEvents(save: GameSave): GameSave {
     };
   });
 
-  if (!events.length) return { ...save, players };
-  return {
-    ...save,
-    players,
-    inbox: [...events.reverse(), ...save.inbox]
-  };
+  return { ...save, players, inbox: [] };
 }
 
 function emptyStats() {
-  return {
-    games: 0,
-    snaps: 0,
-    offenseSnaps: 0,
-    defenseSnaps: 0,
-    specialTeamsSnaps: 0,
-    passYards: 0,
-    rushYards: 0,
-    receivingYards: 0,
-    tackles: 0,
-    sacks: 0,
-    interceptions: 0,
-    touchdowns: 0
-  };
+  return emptyPlayerStats();
 }
 
-function applySnapCounts(player: Player, counts: { offense: number; defense: number; specialTeams: number }, bucket: "stats" | "playoffStats" = "stats"): Player {
-  const total = counts.offense + counts.defense + counts.specialTeams;
-  const stats = player[bucket] ?? emptyStats();
-  return {
-    ...player,
-    [bucket]: {
-      ...stats,
-      games: stats.games + (total > 0 ? 1 : 0),
-      snaps: (stats.snaps ?? 0) + total,
-      offenseSnaps: (stats.offenseSnaps ?? 0) + counts.offense,
-      defenseSnaps: (stats.defenseSnaps ?? 0) + counts.defense,
-      specialTeamsSnaps: (stats.specialTeamsSnaps ?? 0) + counts.specialTeams
-    }
-  };
-}
-
-function selectedGameRecap(save: GameSave, game: Game): InboxItem | undefined {
-  const team = selectedTeam(save);
-  if (game.homeTeamId !== team.id && game.awayTeamId !== team.id) return undefined;
-  const opponentId = game.homeTeamId === team.id ? game.awayTeamId : game.homeTeamId;
-  const opponent = teamById(save, opponentId);
-  const teamScore = game.homeTeamId === team.id ? game.homeScore : game.awayScore;
-  const opponentScore = game.homeTeamId === team.id ? game.awayScore : game.homeScore;
-  const result = teamScore > opponentScore ? "win" : teamScore < opponentScore ? "loss" : "tie";
-  const record = save.records[team.id];
-  return {
-    id: `game-${game.id}`,
-    week: save.currentWeek,
-    category: "game",
-    title: `Week ${save.currentWeek}: ${team.abbreviation} ${result} vs ${opponent.abbreviation}`,
-    body: `${team.fullName} ${teamScore}, ${opponent.fullName} ${opponentScore}. Current record: ${record.wins}-${record.losses}${record.ties ? `-${record.ties}` : ""}.`,
-    priority: result === "loss" ? "high" : "normal",
-    read: false
-  };
-}
-
-function scoutingInbox(save: GameSave): InboxItem {
-  const team = selectedTeam(save);
-  const needs = rosterNeeds(save, team.id).slice(0, 3);
-  const needPositions = new Set(needs.map((need) => need.position));
-  const latestReport = save.scoutingPlan?.reports?.[0];
-  const fits = save.prospects
-    .filter((prospect) => needPositions.has(prospect.position))
-    .slice(0, 4)
-    .map((prospect) => `${prospect.firstName} ${prospect.lastName} (${prospect.position}, team #${prospect.teamRank})`)
-    .join("; ");
-
-  return {
-    id: `scouting-week-${save.currentWeek}`,
-    week: save.currentWeek,
-    category: "scouting",
-    title: latestReport ? latestReport.title : "Scouting board progress updated",
-    body: `${latestReport ? `${latestReport.body} ` : ""}Primary needs: ${needs.map((need) => `${need.position} ${need.grade}`).join(", ")}. Recommended targets: ${fits || "continue broad board work"}.`,
-    priority: "normal",
-    read: false
-  };
-}
-
-function staffInbox(save: GameSave): InboxItem {
-  const team = selectedTeam(save);
-  const nextGame = teamSchedule(save, team.id).find((game) => game.status === "scheduled");
-  const opponent = nextGame ? teamById(save, nextGame.homeTeamId === team.id ? nextGame.awayTeamId : nextGame.homeTeamId) : undefined;
-  const teamGrade = teamOverall(save, team.id);
-  const opponentGrade = opponent ? teamOverall(save, opponent.id) : 0;
-  const lean = opponent ? (teamGrade >= opponentGrade ? "lean on balanced tempo" : "shorten the game and protect field position") : "prepare for draft meetings";
-  return {
-    id: `staff-week-${save.currentWeek}`,
-    week: save.currentWeek,
-    category: "staff",
-    title: opponent ? `Coach prep: ${opponent.abbreviation} next` : "Staff prep: season wrap",
-    body: opponent
-      ? `Staff model: ${teamGrade} team grade vs ${opponentGrade}. Recommendation: ${lean}.`
-      : "No regular-season opponent remains. Staff is shifting to player evaluations and draft board sorting.",
-    priority: "normal",
-    read: false
-  };
-}
-
-function goalsInbox(save: GameSave): InboxItem | undefined {
-  if (save.mode !== "goals") return undefined;
-  const team = selectedTeam(save);
-  const record = save.records[team.id];
-  const played = record.wins + record.losses + record.ties;
-  if (played === 0 || save.currentWeek % 4 !== 0) return undefined;
-  const pace = Math.round((record.wins / played) * 17);
-  const trust = pace >= save.goals.targetWins ? "steady" : "under pressure";
-  return {
-    id: `goals-week-${save.currentWeek}`,
-    week: save.currentWeek,
-    category: "goal",
-    title: "Owner goal checkpoint",
-    body: `Win pace is ${pace}. Target is ${save.goals.targetWins}. Owner trust is ${trust}; cap room is $${save.budget[team.id].toFixed(1)}M.`,
-    priority: pace >= save.goals.targetWins ? "low" : "high",
-    read: false
-  };
+function applyGameStats(player: Player, stats: PlayerStats | undefined, bucket: "stats" | "playoffStats" = "stats"): Player {
+  return stats ? addGameStatsToPlayer(player, stats, bucket) : player;
 }
 
 function budgetRefresh(save: GameSave): Record<string, number> {
@@ -309,21 +177,6 @@ function processDailyRoster(save: GameSave): GameSave {
   return next;
 }
 
-function cutdownInbox(save: GameSave, count: number): InboxItem {
-  return {
-    id: `cutdown-block-${save.seasonYear}-${save.currentDate}-${count}`,
-    week: save.currentWeek,
-    date: save.currentDate,
-    category: "staff",
-    title: "Final cutdown required",
-    body: `Active roster is at ${count}. Release or move players until the roster reaches 53 before advancing past cutdown.`,
-    priority: "high",
-    read: false,
-    important: true,
-    blocking: true
-  };
-}
-
 function processCutdowns(save: GameSave): GameSave {
   if (save.currentDate < finalCutdownDate(save.seasonYear)) return save;
   let next = save;
@@ -332,8 +185,7 @@ function processCutdowns(save: GameSave): GameSave {
     const count = rosterSize(next, team.id);
     if (count <= limit) continue;
     if (team.id === next.selectedTeamId) {
-      const alreadyBlocked = next.inbox.some((item) => item.id.startsWith(`cutdown-block-${next.seasonYear}-${next.currentDate}`) && !item.read);
-      return alreadyBlocked ? next : { ...next, inbox: [cutdownInbox(next, count), ...next.inbox] };
+      return next;
     }
     const cuttable = next.players
       .filter((player) => player.teamId === team.id && player.status !== "injured" && player.reserveStatus !== "ir" && !isPracticeSquadPlayer(player))
@@ -344,6 +196,11 @@ function processCutdowns(save: GameSave): GameSave {
     }
   }
   return next;
+}
+
+function selectedTeamOverActiveLimit(save: GameSave): boolean {
+  if (save.currentDate < finalCutdownDate(save.seasonYear)) return false;
+  return rosterSize(save, save.selectedTeamId) > activeRosterLimitForDate(save.seasonYear, save.currentDate);
 }
 
 function injuryReportStatus(player: Player): { practiceStatus: "full" | "limited" | "did-not-practice"; gameStatus: "available" | "questionable" | "doubtful" | "out" } {
@@ -427,6 +284,8 @@ function simulateGamesForDate(save: GameSave): GameSave {
     target.log = result.log;
     target.injuries = result.injuries;
     target.snapCounts = result.snapCounts;
+    target.playerStats = result.playerStats;
+    target.teamStats = result.teamStats;
 
     if ((target.seasonType ?? "regular") === "regular") {
       next.records[target.homeTeamId] = updateRecord(next.records[target.homeTeamId], result.homeScore, result.awayScore);
@@ -435,16 +294,14 @@ function simulateGamesForDate(save: GameSave): GameSave {
 
     next = applyMedicalEvents(next, result.injuries.map((event) => ({ ...event, occurredDate: next.currentDate })));
     next.players = next.players.map((player) => {
-      const counts = result.snapCounts[player.id];
-      if (!counts) return player;
-      if (target.seasonType === "postseason") return applySnapCounts(player, counts, "playoffStats");
+      const stats = result.playerStats[player.id];
+      if (!stats) return player;
+      if (target.seasonType === "postseason") return applyGameStats(player, stats, "playoffStats");
       if (target.seasonType === "preseason") return player;
-      return applySnapCounts(player, counts);
+      return applyGameStats(player, stats);
     });
 
-    const recap = target.seasonType === "postseason" ? postseasonGameRecap(next, target) : selectedGameRecap(next, target);
-    if (recap) {
-      next.inbox.unshift({ ...recap, date: next.currentDate });
+    if (target.homeTeamId === next.selectedTeamId || target.awayTeamId === next.selectedTeamId) {
       next.lastViewedGameId = target.id;
     }
   }
@@ -459,53 +316,28 @@ function progressPostseasonAfterGames(save: GameSave): GameSave {
   if (!roundGames.length || roundGames.some((game) => game.status !== "final")) return save;
   let next = completeCurrentPostseasonRound(save);
   if (next.postseasonState?.championTeamId) {
-    const champion = teamById(next, next.postseasonState.championTeamId);
-    const runnerUp = next.postseasonState.runnerUpTeamId ? teamById(next, next.postseasonState.runnerUpTeamId) : undefined;
-    const superBowl = next.schedule.find((game) => game.playoffRound === "super-bowl" && game.status === "final");
     next = openOffseasonContracts(next);
     next = ensureDraftState(next);
-    next.inbox.unshift({
-      id: `super-bowl-complete-${next.seasonYear}`,
-      week: next.currentWeek,
-      date: next.currentDate,
-      category: "staff",
-      title: `${champion.fullName} win the Super Bowl`,
-      body: `${champion.fullName} defeated ${runnerUp?.fullName ?? "the conference champion"}${superBowl ? ` ${Math.max(superBowl.homeScore, superBowl.awayScore)}-${Math.min(superBowl.homeScore, superBowl.awayScore)}` : ""}. The league now moves to offseason contract decisions.`,
-      priority: "high",
-      read: false
-    });
     return refreshCalendar(next);
   }
   next = createNextPostseasonRound(next);
-  const upcoming = currentPostseasonRound(next);
-  if (upcoming) {
-    next.inbox.unshift({
-      id: `postseason-round-ready-${next.seasonYear}-${upcoming.round}`,
-      week: upcoming.week,
-      date: upcoming.date ?? next.currentDate,
-      category: "staff",
-      title: `${postseasonRoundLabel(upcoming.round)} is set`,
-      body: `${upcoming.matchups.length} matchup${upcoming.matchups.length === 1 ? "" : "s"} are ready in the playoff bracket.`,
-      priority: "normal",
-      read: false
-    });
-  }
   return refreshCalendar(next);
 }
 
 export function advanceDay(save: GameSave): GameSave {
   let next = refreshCalendar(cloneSave(save));
   next = processCalendarDeadlines(next);
-  if (next.inbox.some((item) => item.blocking && !item.read)) return next;
+  if (selectedTeamOverActiveLimit(next)) return next;
   next = processDailyRoster(next);
   next = resolveFreeAgencyWave(next, { includeCpuOffers: ["free-agency", "training-camp", "preseason", "regular-season"].includes(next.calendarPhase) });
+  next = refreshTradeActivity(next);
   next = generateInjuryReports(next);
   next = simulateGamesForDate(next);
   next = progressPostseasonAfterGames(next);
   next.budget = budgetRefresh(next);
   next.goals = updateGoals(next);
   next = processCalendarDeadlines(next);
-  if (next.inbox.some((item) => item.blocking && !item.read)) return next;
+  if (selectedTeamOverActiveLimit(next)) return next;
   next.currentDate = addDays(next.currentDate, 1);
   next = refreshCalendar(next);
   return next;
@@ -544,6 +376,8 @@ export function advanceWeek(save: GameSave): GameSave {
     target.log = result.log;
     target.injuries = result.injuries;
     target.snapCounts = result.snapCounts;
+    target.playerStats = result.playerStats;
+    target.teamStats = result.teamStats;
 
     next.records[target.homeTeamId] = updateRecord(next.records[target.homeTeamId], result.homeScore, result.awayScore);
     next.records[target.awayTeamId] = updateRecord(next.records[target.awayTeamId], result.awayScore, result.homeScore);
@@ -551,13 +385,10 @@ export function advanceWeek(save: GameSave): GameSave {
     next = applyMedicalEvents(next, result.injuries);
 
     next.players = next.players.map((player) => {
-      const counts = result.snapCounts[player.id];
-      return counts ? applySnapCounts(player, counts) : player;
+      return applyGameStats(player, result.playerStats[player.id]);
     });
 
-    const recap = selectedGameRecap(next, target);
-    if (recap) {
-      next.inbox.unshift(recap);
+    if (target.homeTeamId === next.selectedTeamId || target.awayTeamId === next.selectedTeamId) {
       next.lastViewedGameId = target.id;
     }
   }
@@ -566,46 +397,15 @@ export function advanceWeek(save: GameSave): GameSave {
   next = autoManageCpuPracticeSquads(processPracticeSquadWeek(processIrWindows(autoManageCpuRoster(next))));
   next.budget = budgetRefresh(next);
   next.goals = updateGoals(next);
-  next.inbox.unshift(scoutingInbox(next), staffInbox(next));
-  const goals = goalsInbox(next);
-  if (goals) next.inbox.unshift(goals);
 
   if (next.currentWeek >= 18) {
     next = startPostseason(next);
-    next.inbox.unshift({
-      id: "season-complete",
-      week: next.currentWeek,
-      category: "staff",
-      title: "Regular season complete",
-      body: "The regular season is complete and the playoff bracket is set. Advance playoff rounds from the Standings playoff bracket.",
-      priority: "high",
-      read: false
-    });
   } else {
     next.currentWeek += 1;
     next = processPracticeSquadWeek(next);
   }
 
   return next;
-}
-
-function postseasonGameRecap(save: GameSave, game: Game): InboxItem | undefined {
-  const team = selectedTeam(save);
-  if (game.homeTeamId !== team.id && game.awayTeamId !== team.id) return undefined;
-  const opponentId = game.homeTeamId === team.id ? game.awayTeamId : game.homeTeamId;
-  const opponent = teamById(save, opponentId);
-  const teamScore = game.homeTeamId === team.id ? game.homeScore : game.awayScore;
-  const opponentScore = game.homeTeamId === team.id ? game.awayScore : game.homeScore;
-  const won = teamScore > opponentScore;
-  return {
-    id: `postseason-game-${game.id}`,
-    week: save.currentWeek,
-    category: "game",
-    title: `${postseasonRoundLabel(game.playoffRound ?? "wild-card")}: ${team.abbreviation} ${won ? "advance" : "eliminated"}`,
-    body: `${team.fullName} ${teamScore}, ${opponent.fullName} ${opponentScore}. ${won ? "The playoff run continues." : "The season ends here."}`,
-    priority: "high",
-    read: false
-  };
 }
 
 export function advancePostseasonRound(save: GameSave): GameSave {
@@ -618,15 +418,7 @@ export function advancePostseasonRound(save: GameSave): GameSave {
     next = processRosterWeek(next);
     next.currentWeek = round.week;
     next.budget = budgetRefresh(next);
-    next.inbox.unshift({
-      id: `postseason-bye-${next.seasonYear}-${round.round}`,
-      week: 22,
-      category: "staff",
-      title: "Super Bowl bye week complete",
-      body: "Recovery, training, injury windows, and roster upkeep have processed. The Super Bowl is ready.",
-      priority: "normal",
-      read: false
-    });
+    next.inbox = [];
     return next;
   }
 
@@ -642,14 +434,13 @@ export function advancePostseasonRound(save: GameSave): GameSave {
     target.log = result.log;
     target.injuries = result.injuries;
     target.snapCounts = result.snapCounts;
+    target.playerStats = result.playerStats;
+    target.teamStats = result.teamStats;
     next = applyMedicalEvents(next, result.injuries);
     next.players = next.players.map((player) => {
-      const counts = result.snapCounts[player.id];
-      return counts ? applySnapCounts(player, counts, "playoffStats") : player;
+      return applyGameStats(player, result.playerStats[player.id], "playoffStats");
     });
-    const recap = postseasonGameRecap(next, target);
-    if (recap) {
-      next.inbox.unshift(recap);
+    if (target.homeTeamId === next.selectedTeamId || target.awayTeamId === next.selectedTeamId) {
       next.lastViewedGameId = target.id;
     }
   }
@@ -658,51 +449,24 @@ export function advancePostseasonRound(save: GameSave): GameSave {
   next.budget = budgetRefresh(next);
   next = completeCurrentPostseasonRound(next);
   if (next.postseasonState?.championTeamId) {
-    const champion = teamById(next, next.postseasonState.championTeamId);
-    const runnerUp = next.postseasonState.runnerUpTeamId ? teamById(next, next.postseasonState.runnerUpTeamId) : undefined;
-    const superBowl = next.schedule.find((game) => game.playoffRound === "super-bowl" && game.status === "final");
     next = openOffseasonContracts(next);
     next = ensureDraftState(next);
-    next.inbox.unshift({
-      id: `super-bowl-complete-${next.seasonYear}`,
-      week: 23,
-      category: "staff",
-      title: `${champion.fullName} win the Super Bowl`,
-      body: `${champion.fullName} defeated ${runnerUp?.fullName ?? "the conference champion"}${superBowl ? ` ${Math.max(superBowl.homeScore, superBowl.awayScore)}-${Math.min(superBowl.homeScore, superBowl.awayScore)}` : ""}. The league now moves to offseason contract decisions.`,
-      priority: "high",
-      read: false
-    });
+    next.inbox = [];
     return next;
   }
 
   next = createNextPostseasonRound(next);
   const upcoming = currentPostseasonRound(next);
   next.currentWeek = upcoming?.round === "super-bowl" ? 22 : upcoming?.week ?? next.currentWeek + 1;
-  if (upcoming) {
-    next.inbox.unshift({
-      id: `postseason-round-ready-${next.seasonYear}-${upcoming.round}`,
-      week: next.currentWeek,
-      category: "staff",
-      title: `${postseasonRoundLabel(upcoming.round)} is set`,
-      body: `${upcoming.matchups.length} matchup${upcoming.matchups.length === 1 ? "" : "s"} are ready in the playoff bracket.`,
-      priority: "normal",
-      read: false
-    });
-  }
+  next.inbox = [];
   return next;
 }
 
-export function markInboxRead(save: GameSave, itemId: string): GameSave {
-  return {
-    ...save,
-    inbox: save.inbox.map((item) => (item.id === itemId ? { ...item, read: true } : item))
-  };
-}
-
-function resetSeasonStats(player: Player): Player {
+function resetSeasonStats(player: Player, save: Pick<GameSave, "seasonYear" | "teams">): Player {
   const practice = isPracticeSquadPlayer(player);
+  const archived = archivePlayerSeasonStats(player, save);
   const reset = clearIrState({
-    ...player,
+    ...archived,
     age: player.age + 1,
     contractYears: Math.max(0, player.contractYears - 1),
     status: practice ? "practice" as const : "active" as const,
@@ -733,11 +497,11 @@ export function startNextSeason(save: GameSave): GameSave {
   const seasonYear = currentSeasonYear + 1;
   const draftYear = seasonYear + 1;
   const previousSeasonRanks = divisionRanksFromRecords(importedSave.teams, importedSave.records);
-  const players = importedSave.players.map(resetSeasonStats);
+  const players = importedSave.players.map((player) => resetSeasonStats(player, importedSave));
   const previousCollegeResults = importedSave.collegeSeasonResults;
   const trainingReadySave = {
     ...importedSave,
-    collegeTraining: generateCollegeTrainingBanks(importedSave.seed, currentSeasonYear, importedSave.collegeRoster, importedSave.collegeSeasonResults)
+    collegeTraining: generateCollegeTrainingBanks(importedSave.seed, currentSeasonYear, importedSave.collegeRoster, importedSave.collegeSeasonResults, importedSave.collegeManagement)
   };
   const collegeRoster = progressAnnualCollegeRoster(trainingReadySave, seasonYear, draftYear);
   const schoolProfiles = importedSave.schoolProfiles ? { ...importedSave.schoolProfiles, seasonYear } : buildSchoolProfileState(importedSave.schools, importedSave.seed, seasonYear);
@@ -749,8 +513,8 @@ export function startNextSeason(save: GameSave): GameSave {
   );
   const draftPicks = assets.draftPicks.map((pick) => (pick.draftYear === draftYear ? carriedCurrentPicks.get(pick.id) ?? pick : pick));
   const collegeSeasonResults = generateCollegeSeasonResults(importedSave.seed, collegeRoster, seasonYear);
-  const collegeTraining = generateCollegeTrainingBanks(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults);
-  const collegeMorale = generateCollegeMoraleState(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults, assets.annualRecruiting, collegeTraining);
+  const collegeTraining = generateCollegeTrainingBanks(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults, importedSave.collegeManagement);
+  const collegeMorale = generateCollegeMoraleState(importedSave.seed, seasonYear, collegeRoster, collegeSeasonResults, assets.annualRecruiting, collegeTraining, importedSave.collegeManagement);
   const next: GameSave = {
     ...importedSave,
     ...assets,
@@ -788,18 +552,7 @@ export function startNextSeason(save: GameSave): GameSave {
     }])),
     compPickLedger: { seasonYear, entries: [], projections: [] },
     lastViewedGameId: undefined,
-    inbox: [
-      {
-        id: `season-open-${seasonYear}-${importedSave.inbox.length}`,
-        week: 1,
-        category: "staff",
-        title: `${seasonYear} season plan opened`,
-        body: "Records, schedule, prospect board, scouting plan, and draft capital have rolled into the new season.",
-        priority: "high",
-        read: false
-      },
-      ...importedSave.inbox
-    ]
+    inbox: []
   };
   const planned = {
     ...next,

@@ -1,4 +1,4 @@
-import { POSITIONS, type GameSave, type InboxItem, type Player, type Position } from "../types";
+import { POSITIONS, type GameSave, type Player, type Position } from "../types";
 import { makeContract, playerCapHit, recalculateBudgets } from "./cap";
 import { activeRosterSize, clearIrState, isOnIr } from "./ir";
 import { effectivePlayerOverallAtPosition } from "./positionEligibility";
@@ -302,7 +302,6 @@ export function canPoachPracticeSquadPlayer(save: GameSave, playerId: string, si
 export function poachPracticeSquadPlayer(save: GameSave, playerId: string, signingTeamId: string): GameSave {
   if (!canPoachPracticeSquadPlayer(save, playerId, signingTeamId).ok) return save;
   const player = save.players.find((candidate) => candidate.id === playerId)!;
-  const oldTeamId = player.teamId;
   const oldSalary = player.salary;
   const salary = Math.max(activeMinimumSalary(save, player), player.practiceSquadOriginalSalary ?? 0);
   const poached = {
@@ -318,14 +317,11 @@ export function poachPracticeSquadPlayer(save: GameSave, playerId: string, signi
     }),
     status: player.status === "injured" || player.status === "limited" ? player.status : "active" as const
   };
-  const inboxItem = oldTeamId === save.selectedTeamId
-    ? practiceSquadInbox(save, poached, "Practice squad player poached", `${poached.firstName} ${poached.lastName} signed to another team's active roster.`, "high")
-    : undefined;
   return recalculateBudgets({
     ...save,
     players: save.players.map((candidate) => candidate.id === playerId ? poached : candidate),
     freeAgencyLog: [practiceSquadMove(save, poached, signingTeamId, "practice-poach"), ...(save.freeAgencyLog ?? [])],
-    inbox: inboxItem ? [inboxItem, ...save.inbox] : save.inbox
+    inbox: []
   });
 }
 
@@ -468,18 +464,6 @@ export function practiceSquadMove(save: GameSave, player: Player, teamId: string
     teamId,
     salary: playerCapHit(player, save.seasonYear) || player.salary,
     contractYears: player.contractYears
-  };
-}
-
-function practiceSquadInbox(save: GameSave, player: Player, title: string, body: string, priority: InboxItem["priority"] = "normal"): InboxItem {
-  return {
-    id: `ps-${save.seasonYear}-${save.currentWeek}-${player.id}-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-    week: save.currentWeek,
-    category: "staff",
-    title,
-    body,
-    priority,
-    read: false
   };
 }
 

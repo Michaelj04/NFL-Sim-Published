@@ -8,7 +8,7 @@ import type {
   Player,
   Position
 } from "../types";
-import { contractOfferForPlayer, makeContract, suggestedApy, teamCapLedger } from "./cap";
+import { contractOfferForPlayer, suggestedApy, teamCapLedger } from "./cap";
 import { canSignFreeAgentWithContract, FREE_AGENT_TEAM_ID, freeAgentPlayers, makeFreeAgencyMove, signFreeAgentWithContract } from "./freeAgents";
 import { activeRosterSize } from "./ir";
 import { isPracticeSquadPlayer } from "./practiceSquad";
@@ -55,17 +55,29 @@ export function projectedPendingFreeAgents(save: GameSave): Player[] {
 }
 
 export function projectedCapHitForOffer(save: GameSave, player: Player, years: number, apy: number, security: FreeAgentSecurityLevel): number {
-  const bonusRate = security === "strong" ? 0.28 : security === "low" ? 0.12 : 0.2;
-  const contract = makeContract(player, save.seasonYear, {
-    origin: "free-agent",
-    rights: "none",
-    years,
-    apy,
-    signingBonus: apy * years * bonusRate,
-    guaranteedTotal: apy * Math.min(2, years) * (security === "strong" ? 0.78 : security === "low" ? 0.42 : 0.62)
-  });
-  const firstYear = contract.seasons.find((season) => season.seasonYear === save.seasonYear) ?? contract.seasons[0];
+  const contract = buildFreeAgentOfferContract(save, player, save.selectedTeamId, { years, apy, security });
+  const firstYear = contract.seasons.find((season) => season.seasonYear === save.seasonYear && !season.voidYear) ?? contract.seasons.find((season) => !season.voidYear);
   return money((firstYear?.baseSalary ?? apy) + (firstYear?.signingBonusProration ?? 0));
+}
+
+function voidYearsForOffer(years: number, apy: number, security: FreeAgentSecurityLevel): number {
+  if (years < 3 || security === "low" || apy < 8) return 0;
+  if (security === "strong" && years >= 4 && apy >= 14) return 2;
+  return 1;
+}
+
+function buildFreeAgentOfferContract(
+  save: GameSave,
+  player: Player,
+  teamId: string,
+  terms: { years: number; apy: number; security: FreeAgentSecurityLevel; voidYears?: number }
+) {
+  return contractOfferForPlayer(save, player, teamId, {
+    years: terms.years,
+    apy: terms.apy,
+    security: terms.security,
+    voidYears: terms.voidYears ?? voidYearsForOffer(terms.years, terms.apy, terms.security)
+  });
 }
 
 export function roleForTeamNeed(save: GameSave, player: Player, teamId: string): FreeAgentRolePromise {
@@ -123,7 +135,7 @@ export function submitFreeAgentOffer(
   const apy = money(terms?.apy ?? expectedFreeAgentAsk(player));
   const security = terms?.security ?? "standard";
   const role = terms?.role ?? roleForTeamNeed(save, player, teamId);
-  const contract = contractOfferForPlayer(save, player, teamId, { years, apy });
+  const contract = buildFreeAgentOfferContract(save, player, teamId, { years, apy, security });
   const check = canSignFreeAgentWithContract(save, player.id, teamId, contract);
   if (!check.ok) return save;
   const source = teamId === save.selectedTeamId ? "user" : "cpu";
@@ -140,8 +152,11 @@ export function submitFreeAgentOffer(
     apy,
     security,
     role,
+    signingBonus: contract.signingBonus,
+    guaranteedTotal: contract.guaranteedTotal,
+    voidYears: contract.voidYears ?? 0,
     interestScore: freeAgentInterestScore(save, player, teamId, { years, apy, security, role }),
-    projectedCapHit: projectedCapHitForOffer(save, player, years, apy, security),
+    projectedCapHit: projectedCapHitForOffer({ ...save, selectedTeamId: teamId }, player, years, apy, security),
     expectedAsk: expectedFreeAgentAsk(player),
     status: "submitted",
     resolveWeek: save.currentWeek,
@@ -229,7 +244,7 @@ export function resolveFreeAgencyWave(save: GameSave, options: { includeCpuOffer
       decisions.push(decisionFor(next, player, undefined, "declined", "No offer met the player's market."));
       continue;
     }
-    const contract = contractOfferForPlayer(next, player, winner.teamId, { years: winner.years, apy: winner.apy });
+    const contract = buildFreeAgentOfferContract(next, player, winner.teamId, { years: winner.years, apy: winner.apy, security: winner.security, voidYears: winner.voidYears });
     const beforeTeamId = player.previousTeamId;
     next = signFreeAgentWithContract(next, player.id, winner.teamId, contract, {
       source: winner.source,

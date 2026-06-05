@@ -1,10 +1,11 @@
 import { clamp, createRng, type Rng } from "../lib/rng";
-import type { Game, GameLogEntry, GameResult, GameSave, Player, PlayerSnapCount, Position } from "../types";
+import type { Game, GameLogEntry, GameResult, GameSave, Player, PlayerSnapCount, PlayerStats, Position, TeamGameStats } from "../types";
 import { calculateSnapPlan, type SnapPhase, type SnapPlan, type SnapPlanEntry, weightedEntryPick } from "./personnel";
 import { buildMedicalEvent, injuryRiskWeight, pickInjuryCandidate } from "./medical";
 import { ratingValue } from "./ratings";
 import { depthChart, medicalQuality, teamById, teamOverall, unitGrade } from "./selectors";
 import { staffGameModifier } from "./staffModel";
+import { emptyPlayerStats, emptyTeamGameStats } from "./stats";
 
 const coreOffensePositions = new Set<Position>(["QB", "LT", "LG", "C", "RG", "RT"]);
 const runPositionWeights: Partial<Record<Position, number>> = { RB: 72, QB: 7, WR: 4, TE: 3 };
@@ -130,6 +131,13 @@ function consumeClock(clock: number, rng: Rng, playType: "run" | "pass" | "kick"
   return clock - burn;
 }
 
+function playSuccess(gained: number, needed: number, playDown: number): boolean {
+  if (gained >= needed) return true;
+  if (playDown === 1) return gained >= needed * 0.4;
+  if (playDown === 2) return gained >= needed * 0.6;
+  return false;
+}
+
 function maybeInjury(
   save: GameSave,
   offenseTeamId: string,
@@ -198,6 +206,11 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
   const log: GameLogEntry[] = [];
   const injuries: GameResult["injuries"] = [];
   const snapCounts: Record<string, PlayerSnapCount> = {};
+  const playerStats: Record<string, PlayerStats> = {};
+  const teamStats: Record<string, TeamGameStats> = {
+    [home.id]: emptyTeamGameStats(home.id),
+    [away.id]: emptyTeamGameStats(away.id)
+  };
   const medicalOverrides = new Map<string, Partial<Player>>();
   let simSave: GameSave = save;
   const rebuildSimSave = () => {
@@ -232,16 +245,33 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
   let down = 1;
   let distance = 10;
   let playCount = 0;
+  let lastLeadChangeQbId: string | undefined;
+  let fourthQuarterComebackQbId: string | undefined;
+  teamStats[offenseTeamId].drives += 1;
 
   const switchPossession = (newYardLine = 25) => {
     [offenseTeamId, defenseTeamId] = [defenseTeamId, offenseTeamId];
     yardLine = newYardLine;
     down = 1;
     distance = Math.min(10, 100 - yardLine);
+    statsForTeam(offenseTeamId).drives += 1;
   };
 
-  const addScore = (teamId: string, points: number) => {
+  const addScore = (teamId: string, points: number, qb?: Player) => {
+    const before = score[teamId] - score[teamId === home.id ? away.id : home.id];
     score[teamId] += points;
+    statsForTeam(teamId).scoringDrives += 1;
+    const after = score[teamId] - score[teamId === home.id ? away.id : home.id];
+    if (quarter >= 4 && after > 0 && before <= 0 && qb) {
+      lastLeadChangeQbId = qb.id;
+      if (before < 0) fourthQuarterComebackQbId = qb.id;
+    }
+  };
+
+  const burnClock = (playType: "run" | "pass" | "kick" | "punt") => {
+    const before = clock;
+    clock = consumeClock(clock, rng, playType);
+    statsForTeam(offenseTeamId).timeOfPossession += Math.max(0, before - clock);
   };
 
   const recordSnap = (playerId: string | undefined, phase: SnapPhase) => {
@@ -250,6 +280,65 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
     if (phase === "offense") snapCounts[playerId].offense += 1;
     if (phase === "defense") snapCounts[playerId].defense += 1;
     if (phase === "special") snapCounts[playerId].specialTeams += 1;
+  };
+
+  const statsForPlayer = (player: Player | undefined): PlayerStats | undefined => {
+    if (!player) return undefined;
+    playerStats[player.id] ??= emptyPlayerStats();
+    return playerStats[player.id];
+  };
+
+  const statsForTeam = (teamId: string): TeamGameStats => {
+    teamStats[teamId] ??= emptyTeamGameStats(teamId);
+    return teamStats[teamId];
+  };
+
+  const addFirstDownContext = (teamId: string, startYardLine: number, gained: number, needed: number, playDown: number, kind: "pass" | "run" | "sack" | "none" = "none") => {
+    const stats = statsForTeam(teamId);
+    const converted = gained >= needed;
+    const success = playSuccess(gained, needed, playDown);
+    if (playDown === 3) {
+      stats.thirdDownAttempts += 1;
+      if (converted) stats.thirdDownConversions += 1;
+    }
+    if (playDown === 4) {
+      stats.fourthDownAttempts += 1;
+      if (converted) stats.fourthDownConversions += 1;
+    }
+    if (converted) {
+      stats.firstDowns += 1;
+      if (kind === "pass") stats.passingFirstDowns += 1;
+      if (kind === "run") stats.rushingFirstDowns += 1;
+    }
+    if (success) stats.successfulPlays += 1;
+    if (gained >= 20) stats.explosivePlays += 1;
+    if (startYardLine >= 80) stats.redZoneTrips += 1;
+    return { firstDown: converted, success };
+  };
+
+  const creditTackle = (defender: Player | undefined, forLoss = false) => {
+    const stats = statsForPlayer(defender);
+    if (!stats) return;
+    stats.tackles += 1;
+    if (forLoss) stats.tacklesForLoss += 1;
+  };
+
+  const creditTouchdown = (scoringTeamId: string, scorer: Player | undefined, touchdownType: "run" | "pass" | "defense", startYardLineForPlay: number) => {
+    const scorerStats = statsForPlayer(scorer);
+    if (scorerStats) {
+      scorerStats.touchdowns += 1;
+      if (touchdownType === "run") scorerStats.rushTouchdowns += 1;
+      if (touchdownType === "pass") scorerStats.receivingTouchdowns += 1;
+      if (touchdownType === "defense") scorerStats.defensiveTouchdowns += 1;
+    }
+    if (startYardLineForPlay >= 80) statsForTeam(scoringTeamId).redZoneTouchdowns += 1;
+    const kicker = snapPlans[scoringTeamId].entries.find((candidate) => candidate.position === "K" && candidate.starter)?.player;
+    const kickerStats = statsForPlayer(kicker);
+    if (kickerStats) {
+      kickerStats.extraPointAttempts += 1;
+      kickerStats.extraPointsMade += 1;
+    }
+    recordSnap(kicker?.id, "special");
   };
 
   const activeSnapEntries = (teamId: string, phase: SnapPhase): SnapPlanEntry[] => {
@@ -330,11 +419,22 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
 
       if (shouldKick) {
         recordSpecialPosition(offenseTeamId, "K");
+        const kickerEntry = snapPlans[offenseTeamId].entries.find((candidate) => candidate.position === "K" && candidate.starter);
+        const kickerStats = statsForPlayer(kickerEntry?.player);
+        const offenseStats = statsForTeam(offenseTeamId);
+        offenseStats.fieldGoalAttempts += 1;
+        if (kickerStats) kickerStats.fieldGoalAttempts += 1;
         const kicker = gameGrades[offenseTeamId]?.kicker ?? kickerGrade(simSave, offenseTeamId);
         const chance = clamp(0.92 - Math.max(0, fieldGoalDistance - 35) * 0.018 + (kicker - 60) * 0.004, 0.28, 0.97);
-        clock = consumeClock(clock, rng, "kick");
+        burnClock("kick");
         if (rng.bool(chance)) {
-          addScore(offenseTeamId, 3);
+          const driveQb = snapPlans[offenseTeamId].entries.find((candidate) => candidate.position === "QB" && candidate.starter)?.player;
+          addScore(offenseTeamId, 3, driveQb);
+          offenseStats.fieldGoalsMade += 1;
+          if (kickerStats) {
+            kickerStats.fieldGoalsMade += 1;
+            kickerStats.fieldGoalLong = Math.max(kickerStats.fieldGoalLong, fieldGoalDistance);
+          }
           log.push({
             quarter,
             clock: clockText(clock),
@@ -367,10 +467,25 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
 
       if (!shouldGo) {
         recordSpecialPosition(offenseTeamId, "P");
+        const punterEntry = snapPlans[offenseTeamId].entries.find((candidate) => candidate.position === "P" && candidate.starter);
         const punt = Math.round(clamp(rng.normal(42 + ((gameGrades[offenseTeamId]?.punter ?? punterGrade(simSave, offenseTeamId)) - 60) * 0.25, 8), 24, 64));
         const returnYards = Math.round(clamp(rng.normal(7 - gradeDiff * 0.03, 5), 0, 24));
         const newSpot = Math.round(clamp(100 - Math.min(99, yardLine + punt - returnYards), 3, 82));
-        clock = consumeClock(clock, rng, "punt");
+        const offenseStats = statsForTeam(offenseTeamId);
+        const punterStats = statsForPlayer(punterEntry?.player);
+        offenseStats.punts += 1;
+        offenseStats.puntYards += punt;
+        if (punterStats) {
+          punterStats.punts += 1;
+          punterStats.puntYards += punt;
+          if (newSpot <= 20) punterStats.puntInside20 += 1;
+        }
+        if (newSpot <= 20) offenseStats.puntTouchbacks += newSpot === 20 ? 1 : 0;
+        if (punterStats) {
+          punterStats.puntLong = Math.max(punterStats.puntLong, punt);
+          if (newSpot === 20) punterStats.puntTouchbacks += 1;
+        }
+        burnClock("punt");
         log.push({
           quarter,
           clock: clockText(clock),
@@ -406,8 +521,13 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
     let yards = 0;
     let text = "";
     let type: GameLogEntry["type"] = playType;
+    const startYardLine = yardLine;
+    const startDown = down;
+    const startDistance = distance;
 
     if (playType === "pass") {
+      const qbStats = statsForPlayer(qb);
+      const receiverStats = statsForPlayer(ballCarrier);
       const qbGrade = qbDecisionGrade(qb);
       const targetGrade = receiverSkill(ballCarrier);
       const defenderGrade = Math.max(entryGrade(defenderEntry, coverage), coverage);
@@ -421,23 +541,127 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
         pressureSense: ratingValue(qb?.ratings, "pressureSense", 58),
         composure: ratingValue(qb?.ratings, "composure", 58)
       });
+      const pressureChance = clamp(0.17 + pressureDiff * 0.006, 0.06, 0.38);
+      const pressured = rng.bool(pressureChance);
+      if (pressured) {
+        if (qbStats) qbStats.qbPressuresFaced += 1;
+        const defenderStats = statsForPlayer(defender);
+        if (defenderStats) defenderStats.qbPressures += 1;
+      }
       if (rng.bool(matchup.sackChance)) {
         yards = -rng.int(3, 11);
+        if (qbStats) {
+          qbStats.sacksTaken += 1;
+          qbStats.sackYardsLost += Math.abs(yards);
+          if (pressured) qbStats.qbHitsTaken += 1;
+        }
+        const defenderStats = statsForPlayer(defender);
+        if (defenderStats) {
+          defenderStats.sacks += 1;
+          defenderStats.sackYards += Math.abs(yards);
+          defenderStats.qbHits += 1;
+          defenderStats.tackles += 1;
+          defenderStats.tacklesForLoss += 1;
+        }
+        statsForTeam(offenseTeamId).plays += 1;
+        statsForTeam(offenseTeamId).offensivePlays += 1;
+        statsForTeam(offenseTeamId).passingYards += yards;
+        statsForTeam(offenseTeamId).totalYards += yards;
+        statsForTeam(offenseTeamId).sacksAllowed += 1;
+        statsForTeam(offenseTeamId).sackYardsAllowed += Math.abs(yards);
+        statsForTeam(defenseTeamId).sacks += 1;
+        statsForTeam(defenseTeamId).defensivePlays += 1;
+        statsForTeam(defenseTeamId).sackYards += Math.abs(yards);
+        addFirstDownContext(offenseTeamId, startYardLine, yards, startDistance, startDown, "sack");
         text = `${defender?.lastName ?? defense.abbreviation} gets home for a ${Math.abs(yards)}-yard sack.`;
       } else if (rng.bool(matchup.interceptionChance)) {
+        if (qbStats) {
+          qbStats.passAttempts += 1;
+          qbStats.interceptionsThrown += 1;
+        }
+        if (receiverStats) receiverStats.targets += 1;
+        const defenderStats = statsForPlayer(defender);
+        if (defenderStats) {
+          defenderStats.interceptions += 1;
+          defenderStats.passesDefended += 1;
+          defenderStats.coverageTargets += 1;
+        }
+        statsForTeam(offenseTeamId).plays += 1;
+        statsForTeam(offenseTeamId).offensivePlays += 1;
+        statsForTeam(offenseTeamId).turnovers += 1;
+        statsForTeam(defenseTeamId).takeaways += 1;
+        statsForTeam(defenseTeamId).defensivePlays += 1;
+        addFirstDownContext(offenseTeamId, startYardLine, 0, startDistance, startDown, "pass");
         yards = Math.round(clamp(rng.normal(8 + (qbGrade + targetGrade - defenderGrade - pressureDiff * 0.45) * 0.045, 9), -4, 34));
         yardLine += yards;
         type = "turnover";
         text = `${defense.abbreviation} intercepts the throw near ${fieldText(yardLine)}.`;
-        clock = consumeClock(clock, rng, playType);
+        burnClock(playType);
         log.push({ quarter, clock: clockText(clock), offenseTeamId, defenseTeamId, down, distance, yardLine, type, text });
         switchPossession(Math.round(clamp(100 - yardLine + rng.int(-8, 18), 5, 90)));
         continue;
       } else {
-        yards = Math.round(clamp(rng.normal(matchup.yardsMean, 8.2), -4, 52));
+        const completionChance = clamp(0.61 + (qbGrade + targetGrade - defenderGrade) * 0.0035 - (pressured ? 0.09 : 0), 0.38, 0.78);
+        const dropChance = clamp(0.035 + (62 - targetGrade) * 0.0016, 0.01, 0.095);
+        if (!rng.bool(completionChance)) {
+          if (qbStats) qbStats.passAttempts += 1;
+          const dropped = Boolean(receiverStats && rng.bool(dropChance));
+          if (receiverStats) {
+            receiverStats.targets += 1;
+            if (dropped) receiverStats.drops += 1;
+          }
+          const defenderStats = statsForPlayer(defender);
+          if (defenderStats) {
+            defenderStats.coverageTargets += 1;
+            if (!dropped) defenderStats.passesDefended += 1;
+          }
+          statsForTeam(offenseTeamId).plays += 1;
+          statsForTeam(offenseTeamId).offensivePlays += 1;
+          statsForTeam(defenseTeamId).defensivePlays += 1;
+          addFirstDownContext(offenseTeamId, startYardLine, 0, startDistance, startDown, "pass");
+          text = dropped
+            ? `${ballCarrier?.lastName ?? "The receiver"} cannot hang on.`
+            : `${offense.abbreviation} throws incomplete.`;
+        } else {
+          yards = Math.round(clamp(rng.normal(matchup.yardsMean, 8.2), -4, 52));
+        const creditedYards = Math.round(clamp(yards, -startYardLine, 100 - startYardLine));
+        if (qbStats) {
+          qbStats.passAttempts += 1;
+          qbStats.passCompletions += 1;
+          qbStats.passYards += creditedYards;
+          qbStats.passingLong = Math.max(qbStats.passingLong, creditedYards);
+        }
+        if (receiverStats) {
+          receiverStats.targets += 1;
+          receiverStats.receptions += 1;
+          receiverStats.receivingYards += creditedYards;
+          receiverStats.receivingLong = Math.max(receiverStats.receivingLong, creditedYards);
+        }
+        const defenderStats = statsForPlayer(defender);
+        if (defenderStats) {
+          defenderStats.coverageTargets += 1;
+          defenderStats.completionsAllowed += 1;
+          defenderStats.yardsAllowed += Math.max(0, creditedYards);
+        }
+        creditTackle(defender, creditedYards < 0);
+        statsForTeam(offenseTeamId).plays += 1;
+        statsForTeam(offenseTeamId).offensivePlays += 1;
+        statsForTeam(offenseTeamId).passingYards += creditedYards;
+        statsForTeam(offenseTeamId).totalYards += creditedYards;
+        statsForTeam(defenseTeamId).defensivePlays += 1;
+        const context = addFirstDownContext(offenseTeamId, startYardLine, creditedYards, startDistance, startDown, "pass");
+        if (context.firstDown) {
+          if (qbStats) qbStats.passingFirstDowns += 1;
+          if (receiverStats) receiverStats.receivingFirstDowns += 1;
+        }
+        if (context.success) {
+          if (qbStats) qbStats.passingSuccesses += 1;
+          if (receiverStats) receiverStats.receivingSuccesses += 1;
+        }
         text = yards >= distance
           ? `${offense.abbreviation} complete to ${ballCarrier?.lastName ?? "the receiver"} for ${yards} yards.`
           : `${offense.abbreviation} gains ${yards} through the air.`;
+        }
       }
     } else {
       const runnerGrade = entryGrade(ballCarrierEntry, offenseGrade);
@@ -445,23 +669,49 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
       const runDiff = runnerGrade * 0.58 + runBlock * 0.42 - defenderGrade;
       const fumbleChance = clamp(0.018 + (defenderGrade - runnerSecurity(ballCarrier)) * 0.00065, 0.004, 0.04);
       yards = Math.round(clamp(rng.normal(4.2 + runDiff * 0.052, 4.8), -5, 38));
+      const creditedYards = Math.round(clamp(yards, -startYardLine, 100 - startYardLine));
+      const runnerStats = statsForPlayer(ballCarrier);
+      if (runnerStats) {
+        runnerStats.rushAttempts += 1;
+        runnerStats.rushYards += creditedYards;
+        runnerStats.rushingLong = Math.max(runnerStats.rushingLong, creditedYards);
+      }
+      statsForTeam(offenseTeamId).plays += 1;
+      statsForTeam(offenseTeamId).offensivePlays += 1;
+      statsForTeam(offenseTeamId).rushingYards += creditedYards;
+      statsForTeam(offenseTeamId).totalYards += creditedYards;
+      statsForTeam(defenseTeamId).defensivePlays += 1;
+      const context = addFirstDownContext(offenseTeamId, startYardLine, creditedYards, startDistance, startDown, "run");
+      if (context.firstDown && runnerStats) runnerStats.rushingFirstDowns += 1;
+      if (context.success && runnerStats) runnerStats.rushingSuccesses += 1;
       if (rng.bool(fumbleChance)) {
+        if (runnerStats) runnerStats.fumbles += 1;
+        const defenderStats = statsForPlayer(defender);
+        if (defenderStats) {
+          defenderStats.forcedFumbles += 1;
+          defenderStats.fumbleRecoveries += 1;
+        }
+        statsForTeam(offenseTeamId).turnovers += 1;
+        statsForTeam(defenseTeamId).takeaways += 1;
         yardLine += yards;
         type = "turnover";
         text = `${ballCarrier?.lastName ?? offense.abbreviation} loses the ball. ${defense.abbreviation} recovers.`;
-        clock = consumeClock(clock, rng, playType);
+        burnClock(playType);
         log.push({ quarter, clock: clockText(clock), offenseTeamId, defenseTeamId, down, distance, yardLine, type, text });
         switchPossession(Math.round(clamp(100 - yardLine, 4, 95)));
         continue;
       }
+      creditTackle(defender, creditedYards < 0);
       text = `${ballCarrier?.lastName ?? offense.abbreviation} runs for ${yards} yard${Math.abs(yards) === 1 ? "" : "s"}.`;
     }
 
     yardLine += yards;
-    clock = consumeClock(clock, rng, playType);
+    burnClock(playType);
 
     if (yardLine <= 0) {
       addScore(defenseTeamId, 2);
+      const defenderStats = statsForPlayer(defender);
+      if (defenderStats) defenderStats.safeties += 1;
       log.push({
         quarter,
         clock: clockText(clock),
@@ -478,7 +728,16 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
     }
 
     if (yardLine >= 100) {
-      addScore(offenseTeamId, 7);
+      addScore(offenseTeamId, 7, qb);
+      if (playType === "pass") {
+        const qbStats = statsForPlayer(qb);
+        if (qbStats) qbStats.passTouchdowns += 1;
+        const defenderStats = statsForPlayer(defender);
+        if (defenderStats) defenderStats.touchdownsAllowed += 1;
+        creditTouchdown(offenseTeamId, ballCarrier, "pass", startYardLine);
+      } else {
+        creditTouchdown(offenseTeamId, ballCarrier, "run", startYardLine);
+      }
       log.push({
         quarter,
         clock: clockText(clock),
@@ -547,11 +806,61 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
     });
   }
 
+  const startingQbs: Record<string, Player | undefined> = {
+    [home.id]: snapPlans[home.id].entries.find((entry) => entry.position === "QB" && entry.starter)?.player,
+    [away.id]: snapPlans[away.id].entries.find((entry) => entry.position === "QB" && entry.starter)?.player
+  };
+  for (const teamId of [home.id, away.id]) {
+    for (const entry of snapPlans[teamId].entries.filter((candidate) => candidate.starter && candidate.player)) {
+      const stats = statsForPlayer(entry.player);
+      if (stats) stats.gamesStarted = 1;
+    }
+  }
+  const homeQbStats = statsForPlayer(startingQbs[home.id]);
+  const awayQbStats = statsForPlayer(startingQbs[away.id]);
+  if (score[home.id] > score[away.id]) {
+    if (homeQbStats) homeQbStats.qbWins = 1;
+    if (awayQbStats) awayQbStats.qbLosses = 1;
+  } else if (score[away.id] > score[home.id]) {
+    if (awayQbStats) awayQbStats.qbWins = 1;
+    if (homeQbStats) homeQbStats.qbLosses = 1;
+  } else {
+    if (homeQbStats) homeQbStats.qbTies = 1;
+    if (awayQbStats) awayQbStats.qbTies = 1;
+  }
+  if (lastLeadChangeQbId) {
+    const stats = playerStats[lastLeadChangeQbId];
+    if (stats) stats.gameWinningDrives += 1;
+  }
+  if (fourthQuarterComebackQbId) {
+    const stats = playerStats[fourthQuarterComebackQbId];
+    if (stats) stats.fourthQuarterComebacks += 1;
+  }
+
   return {
     homeScore: score[home.id],
     awayScore: score[away.id],
     log,
     snapCounts,
+    playerStats: Object.fromEntries(
+      [...new Set([...Object.keys(playerStats), ...Object.keys(snapCounts)])].map((playerId) => {
+        const stats = playerStats[playerId] ?? emptyPlayerStats();
+        const counts = snapCounts[playerId] ?? { playerId, offense: 0, defense: 0, specialTeams: 0 };
+        const total = counts.offense + counts.defense + counts.specialTeams;
+        return [
+          playerId,
+          {
+            ...stats,
+            games: total > 0 || Object.values(stats).some((value) => value !== 0) ? 1 : 0,
+            snaps: total,
+            offenseSnaps: counts.offense,
+            defenseSnaps: counts.defense,
+            specialTeamsSnaps: counts.specialTeams
+          }
+        ];
+      })
+    ),
+    teamStats,
     injuries
   };
 }

@@ -1,12 +1,14 @@
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$AppUrl = "http://127.0.0.1:5173/"
+$AppName = "NFL Sim"
+$AppPort = 5187
+$AppUrl = "http://127.0.0.1:$AppPort/"
 
 function Test-AppServer {
   try {
     $response = Invoke-WebRequest -UseBasicParsing -Uri $AppUrl -TimeoutSec 2
-    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
+    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500 -and $response.Content -match "<title>\s*NFL Sim\s*</title>")
   } catch {
     return $false
   }
@@ -18,7 +20,7 @@ function Open-App {
 
 Set-Location $ProjectRoot
 Write-Host ""
-Write-Host "Franchise War Room local launcher" -ForegroundColor Cyan
+Write-Host "$AppName local launcher" -ForegroundColor Cyan
 Write-Host "Project: $ProjectRoot"
 Write-Host "URL:     $AppUrl"
 Write-Host ""
@@ -40,8 +42,8 @@ if (-not (Test-Path (Join-Path $ProjectRoot "node_modules"))) {
   }
 }
 
-Write-Host "Starting the app server in a new terminal..." -ForegroundColor Cyan
-$serverCommand = "cd /d `"$ProjectRoot`" && npm run dev:local"
+Write-Host "Starting the $AppName app server in a new terminal..." -ForegroundColor Cyan
+$serverCommand = "title $AppName Dev Server && cd /d `"$ProjectRoot`" && npm run dev:local"
 $serverProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/k", $serverCommand) -PassThru
 
 Write-Host "Waiting for the server to respond..."

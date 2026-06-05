@@ -20,11 +20,12 @@ export function generateDraftEvaluationState(seed: string, draftYear: number, pr
     const allStarEffect = allStarEvent ? annualAllStarEffect(allStarEvent.eventId) : undefined;
     const competitionAdjustedProduction = prospect.production * competition.draftEvalMult;
     const smallSchoolBonus = school?.subdivision === "FCS" && allStarEvent ? allStarEvent.smallSchoolValidationBonus : 0;
-    const practiceWinner = allStarInvite && prospectRng.next() < clamp((prospect.trueOverall - 58) / 55, 0.04, 0.38);
+    const scoutedOverall = (prospect.scouted.low + prospect.scouted.high) / 2;
+    const practiceWinner = allStarInvite && prospectRng.next() < clamp((prospect.scouted.high - 58) / 55, 0.04, 0.38);
     const gameMvp = practiceWinner && prospectRng.next() < clamp((prospect.production - 62) / 90, 0.01, 0.16);
     const allStarSignal = allStarInvite ? Math.round(clamp(
       competitionAdjustedProduction * 0.5
-      + prospect.trueOverall * 0.32
+      + scoutedOverall * 0.32
       + (allStarEffect?.inviteBonus ?? 0)
       + (practiceWinner ? allStarEffect?.practiceWinnerBonus ?? 0 : 0)
       + (gameMvp ? allStarEffect?.gameMvpBonus ?? 0 : 0)
@@ -33,7 +34,7 @@ export function generateDraftEvaluationState(seed: string, draftYear: number, pr
       1,
       99
     )) : 0;
-    const combineScore = Math.round(clamp(athleticBase * athleticWeight + prospect.trueOverall * (1 - Math.min(0.9, athleticWeight)) + prospectRng.normal(0, 7), 1, 99));
+    const combineScore = Math.round(clamp(athleticBase * athleticWeight + scoutedOverall * (1 - Math.min(0.9, athleticWeight)) + prospectRng.normal(0, 7), 1, 99));
     const proDayScore = Math.round(clamp(combineScore * 0.65 + competitionAdjustedProduction * 0.2 + proDayAdjustment.bias * 10 + prospectRng.normal(proDayAdjustment.maxPositiveDelta + proDayAdjustment.maxNegativeDelta, 6), 1, 99));
     const medicalGrade = Math.round(clamp(prospect.medical - (prospect.riskFlags.includes("Medical") ? 8 : 0) + prospectRng.normal(0, 4), 1, 99));
     return {
@@ -109,7 +110,7 @@ function chooseAllStarEvent(prospect: Prospect, index: number, school: CollegePr
   return eligible.find((event) => {
     const productionGate = prospect.production >= (event.levelFocus === "national" ? 70 : 64);
     const rankGate = index < event.targetInvites;
-    const smallSchoolGate = school?.subdivision === "FCS" && prospect.trueOverall >= 62 && index < event.targetInvites + 90;
+    const smallSchoolGate = school?.subdivision === "FCS" && prospect.scouted.high >= 62 && index < event.targetInvites + 90;
     return rankGate || productionGate || smallSchoolGate || prospect.projectedRound <= 4;
   });
 }

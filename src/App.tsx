@@ -50,17 +50,24 @@ import {
   undraftedProspects,
   withdrawUdfaOffer
 } from "./sim/udfa";
-import { markInboxRead, advanceDay, advancePostseasonRound, startNextSeason } from "./sim/season";
+import { advanceDay, advancePostseasonRound, startNextSeason } from "./sim/season";
 import { addDays, calendarPhaseForDate, formatDateLong, leagueYearStartDate, nextDateWithGames, parseDate, refreshCalendar } from "./sim/calendar";
 import {
   advanceToDraftPrep,
   advanceToFreeAgency,
   applyTagOrTender,
+  canApplyTagOrTender,
+  canExerciseFifthYearOption,
+  canExtendPlayerContract,
   capSavingsIfMoved,
+  contractTotalValue,
   deadMoneyIfMoved,
+  exerciseFifthYearOption,
+  extendPlayerContract,
   playerCapHit,
   normalizeCapState,
   recalculateBudgets,
+  remainingContractYears,
   restructurePlayerContract,
   suggestedApy,
   teamCapLedger
@@ -120,6 +127,7 @@ import {
   freeAgentInterestScore,
   likelyFreeAgentCompetitors,
   normalizeFreeAgencyMarket,
+  projectedCapHitForOffer,
   projectedPendingFreeAgents,
   resolveFreeAgencyWave,
   roleForTeamNeed,
@@ -155,9 +163,38 @@ import {
   placePlayerOnIr
 } from "./sim/ir";
 import { effectiveOverallAtPosition, eligiblePositionsFor, isPrimaryPosition, normalizePositionFits, positionFitFor, skillOverallAtPosition } from "./sim/positionEligibility";
-import { normalizePlayerModel, normalizeProspectModel, updatePlayerTrainingSettings } from "./sim/playerModel";
+import { developmentPlanForTraining, developmentPlanLabels, normalizePlayerModel, normalizeProspectModel, updatePlayerTrainingSettings } from "./sim/playerModel";
 import { medicalRiskTier, medicalStatusLabel, normalizePlayerMedical, playerMedical } from "./sim/medical";
 import { submitWaiverClaim } from "./sim/waivers";
+import {
+  adjustedNetYardsPerAttempt,
+  adjustedYardsPerAttempt,
+  approximateValue,
+  formatRate,
+  formatStatNumber,
+  mergePlayerStats,
+  mergeTeamGameStats,
+  netYardsPerAttempt,
+  normalizePlayerStats,
+  normalizeTeamGameStats,
+  passerRating,
+  passingEfficiency,
+  playerPrimaryStatCategory,
+  qbRecord,
+  qbrApprox,
+  rate,
+  successRate,
+  totalPlayerStats
+} from "./sim/stats";
+import {
+  applyAcceptedTrade,
+  createTradeOffer,
+  evaluateTradeOffer,
+  normalizeTradeState,
+  refreshTradeActivity,
+  submitTradeOffer,
+  toggleUserTradeBlock
+} from "./sim/trade";
 import { buildPostseasonSeeds, currentPostseasonRound, postseasonRoundLabel } from "./sim/postseason";
 import {
   buildDisplayDepthChart,
@@ -216,14 +253,14 @@ import {
   staffValueScore,
   slotDefinitionFor
 } from "./sim/staff";
-import type { AnnualRecruitingBoardEntry, CareerScenario, CareerType, CollegeDevelopmentFocus, CollegeFatiguePosture, CollegeProgram, CollegeRosterPlayer, Conference, DraftPick, DraftTradeAsset, DraftTradeOffer, FreeAgentOffer, FreeAgentRolePromise, FreeAgentSecurityLevel, GameSave, Player, Position, Prospect, ProspectBoardLens, ProspectConcernKey, RookieAcquisitionResult, RookieClassResults, RosterMoveRecommendation, SaveMode, ScoutingAssignmentType, ScoutingRecapEntry, ScoutingRegion, StaffCandidate, StaffMember, StaffSlotId, TrainingBodyPlan, TrainingSkillPlan, UdfaOffer } from "./types";
+import type { AnnualRecruitingBoardEntry, CareerScenario, CareerType, CollegeDevelopmentFocus, CollegeFatiguePosture, CollegeProgram, CollegeRosterPlayer, Conference, DevelopmentPlan, DraftPick, DraftTradeAsset, DraftTradeOffer, FreeAgentOffer, FreeAgentRolePromise, FreeAgentSecurityLevel, GameSave, Player, PlayerStats, Position, Prospect, ProspectBoardLens, ProspectConcernKey, RookieAcquisitionResult, RookieClassResults, RosterMoveRecommendation, SaveMode, ScoutingAssignmentType, ScoutingRecapEntry, ScoutingRegion, StaffCandidate, StaffMember, StaffSlotId, TeamGameStats, TradeAsset, TradeEvaluation, TradeHistoryEntry, TradeNewsItem, TradeOffer, TrainingBodyPlan, TrainingSkillPlan, UdfaOffer } from "./types";
 import { POSITIONS } from "./types";
 
 type Tab =
-  | "inbox"
   | "roster"
   | "training"
   | "free-agents"
+  | "trading"
   | "depth"
   | "medical"
   | "staff"
@@ -242,6 +279,7 @@ type Tab =
   | "college-roster"
   | "college-depth"
   | "college-training"
+  | "college-nil"
   | "college-transfer"
   | "college-season"
   | "college-draft"
@@ -252,9 +290,8 @@ const nflNavGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: string 
   {
     label: "Team",
     tabs: [
-      { id: "inbox", label: "Inbox" },
       { id: "roster", label: "Roster" },
-      { id: "training", label: "Training" },
+      { id: "training", label: "Development" },
       { id: "free-agents", label: "Free Agents" },
       { id: "medical", label: "Medical" }
     ]
@@ -263,6 +300,7 @@ const nflNavGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: string 
     label: "Football Ops",
     tabs: [
       { id: "depth", label: "Depth Chart" },
+      { id: "trading", label: "Trading" },
       { id: "staff", label: "Staff" },
       { id: "budget", label: "Budget" }
     ]
@@ -292,11 +330,11 @@ const collegeNavGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: str
   {
     label: "Program",
     tabs: [
-      { id: "inbox", label: "Inbox" },
       { id: "college-hub", label: "College Hub" },
       { id: "college-roster", label: "Roster" },
       { id: "college-depth", label: "Depth" },
-      { id: "college-training", label: "Training / NIL" }
+      { id: "college-training", label: "Development" },
+      { id: "college-nil", label: "NIL" }
     ]
   },
   {
@@ -408,20 +446,6 @@ export function normalizeSave(save: GameSave): GameSave {
   const schoolById = new Map(normalizedSchools.map((school) => [school.id, school]));
   const normalizedCollegeRoster = save.collegeRoster ?? (save.yearZero ? createInitialCollegeRosterState(save.yearZero, seasonYear) : undefined);
   const normalizedCollegeSeasonResults = save.collegeSeasonResults ?? generateCollegeSeasonResults(save.seed, normalizedCollegeRoster, seasonYear);
-  const statDefaults = {
-    games: 0,
-    snaps: 0,
-    offenseSnaps: 0,
-    defenseSnaps: 0,
-    specialTeamsSnaps: 0,
-    passYards: 0,
-    rushYards: 0,
-    receivingYards: 0,
-    tackles: 0,
-    sacks: 0,
-    interceptions: 0,
-    touchdowns: 0
-  };
   const rawPlayers = save.players ?? [];
   const playersToNormalize = rawPlayers.some((player) => player.teamId === FREE_AGENT_TEAM_ID)
     ? rawPlayers
@@ -473,9 +497,9 @@ export function normalizeSave(save: GameSave): GameSave {
     },
     annualRecruitClass: save.annualRecruitClass ?? generateAnnualRecruitClass(save.seed, seasonYear),
     collegeRoster: normalizedCollegeRoster,
-    collegeTraining: save.collegeTraining ?? generateCollegeTrainingBanks(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults),
+    collegeTraining: save.collegeTraining ?? generateCollegeTrainingBanks(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.collegeManagement),
     collegeSeasonResults: normalizedCollegeSeasonResults,
-    collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.annualRecruiting, save.collegeTraining),
+    collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.annualRecruiting, save.collegeTraining, save.collegeManagement),
     draftEvaluation: save.draftEvaluation ?? generateDraftEvaluationState(save.seed, normalizedDraftState.draftYear, save.prospects ?? [], save.currentWeek ?? 1, save.schools),
     previousSeasonRanks: save.previousSeasonRanks,
     scenario: save.scenario ?? "neutral",
@@ -493,8 +517,14 @@ export function normalizeSave(save: GameSave): GameSave {
           potential: Math.max(refreshed.overall, refreshed.potential ?? refreshed.overall),
           development: ensureDevelopmentProfile(refreshed.development, `${save.seed}:${refreshed.id}`, refreshed.age, ratingValue(refreshed.ratings, "workEthic")),
           suspensionWeeks: refreshed.suspensionWeeks ?? 0,
-          stats: { ...statDefaults, ...player.stats },
-          playoffStats: { ...statDefaults, ...player.playoffStats }
+          stats: normalizePlayerStats(player.stats),
+          playoffStats: normalizePlayerStats(player.playoffStats),
+          statHistory: (player.statHistory ?? []).map((entry) => ({
+            ...entry,
+            stats: normalizePlayerStats(entry.stats),
+            playoffStats: normalizePlayerStats(entry.playoffStats),
+            awards: entry.awards ?? []
+          }))
         }), seasonYear), seasonYear),
       };
     }),
@@ -550,9 +580,11 @@ export function normalizeSave(save: GameSave): GameSave {
       ...game,
       seasonType: game.seasonType ?? "regular",
       injuries: game.injuries ?? [],
-      snapCounts: game.snapCounts ?? {}
+      snapCounts: game.snapCounts ?? {},
+      playerStats: Object.fromEntries(Object.entries(game.playerStats ?? {}).map(([playerId, stats]) => [playerId, normalizePlayerStats(stats)])),
+      teamStats: Object.fromEntries(Object.entries(game.teamStats ?? {}).map(([teamId, stats]) => [teamId, normalizeTeamGameStats(teamId, stats)]))
     })),
-    inbox: save.inbox.map((item) => ({ ...item, important: item.important ?? false, blocking: item.blocking ?? false })),
+    inbox: [],
     depthOverrides: save.depthOverrides ?? Object.fromEntries(save.teams.map((team) => [team.id, {}])),
     freeAgencyLog: save.freeAgencyLog ?? [],
     freeAgencyMarket: normalizeFreeAgencyMarket(save),
@@ -586,7 +618,8 @@ export function normalizeSave(save: GameSave): GameSave {
     injuryReports: save.injuryReports ?? []
   };
   const ranked = { ...normalized, prospects: rankProspectBoard(normalized.prospects, normalizedSchools, save.seed) };
-  return refreshCalendar(ensureStaffMarket({ ...ensureUdfaState(ensureDraftState(normalizeCapState(ranked))), scoutingPlan: ensureScoutingPlan(ranked) }));
+  const withSystems = ensureStaffMarket({ ...ensureUdfaState(ensureDraftState(normalizeCapState(ranked))), scoutingPlan: ensureScoutingPlan(ranked) });
+  return refreshCalendar({ ...withSystems, tradeState: normalizeTradeState(withSystems) });
 }
 
 export function TeamLogo({ teamId, save, size = 44 }: { teamId: string; save: GameSave; size?: number }) {
@@ -726,13 +759,15 @@ export default function App() {
   const [setupMode, setSetupMode] = useState<SaveMode>("goals");
   const [setupScenario, setSetupScenario] = useState<CareerScenario>("neutral");
   const [setupSeed, setSetupSeed] = useState(() => randomCareerSeed());
+  const [openingMenuMode, setOpeningMenuMode] = useState<"new" | "load">("new");
   const [isCreatingYearZero, setIsCreatingYearZero] = useState(false);
   const [yearZeroProgress, setYearZeroProgress] = useState(() => loadYearZeroProgressTemplate());
   const [teamSearch, setTeamSearch] = useState("");
   const [teamConference, setTeamConference] = useState<Conference | "all">("all");
   const [schoolSearch, setSchoolSearch] = useState("");
   const [schoolSubdivision, setSchoolSubdivision] = useState<"all" | "FBS" | "FCS">("all");
-  const [activeTab, setActiveTab] = useState<Tab>("inbox");
+  const [activeTab, setActiveTab] = useState<Tab>("roster");
+  const [tradePrefillPlayerId, setTradePrefillPlayerId] = useState<string>();
   const [pendingRosterRecommendations, setPendingRosterRecommendations] = useState<RosterMoveRecommendation[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveGenerationRef = useRef(0);
@@ -871,7 +906,8 @@ export default function App() {
     setActiveCareerName(record.slot.name);
     setSaveStatus("Saved");
     setSaveFailure(undefined);
-    setActiveTab(normalized.careerType === "college" ? "college-hub" : "inbox");
+    setActiveTab(normalized.careerType === "college" ? "college-hub" : "roster");
+    setOpeningMenuMode("load");
     await refreshCareerSlots();
   }
 
@@ -906,16 +942,18 @@ export default function App() {
       setSaveFailure(error instanceof Error ? error.message : "New career could not be saved. Export is still available.");
     }
     setIsCreatingYearZero(false);
-    setActiveTab(setupCareerType === "college" ? "college-hub" : "inbox");
+    setActiveTab(setupCareerType === "college" ? "college-hub" : "roster");
+    setOpeningMenuMode("new");
   }
 
   function newCareer() {
+    setOpeningMenuMode("new");
     setSave(undefined);
     setActiveCareerId(undefined);
     setActiveCareerName("Unsaved Career");
     setSaveStatus("Unsaved");
     setSaveFailure(undefined);
-    setActiveTab("inbox");
+    setActiveTab("roster");
     setSetupSeed(randomCareerSeed());
   }
 
@@ -977,10 +1015,6 @@ export default function App() {
     setSave((current) => (current ? advanceToDraftPrep(resolveFreeAgencyWave(current, { includeCpuOffers: true })) : current));
   }
 
-  function markRead(itemId: string) {
-    setSave((current) => (current ? markInboxRead(current, itemId) : current));
-  }
-
   function submitFreeAgentPlayerOffer(playerId: string, terms?: Partial<Pick<FreeAgentOffer, "years" | "apy" | "security" | "role">>) {
     setSave((current) => (current ? submitFreeAgentOffer(current, playerId, current.selectedTeamId, terms) : current));
   }
@@ -1017,12 +1051,24 @@ export default function App() {
     setSave((current) => (current ? releasePlayerToFreeAgency(current, playerId, current.selectedTeamId) : current));
   }
 
+  function postJuneReleaseRosterPlayer(playerId: string) {
+    setSave((current) => (current ? releasePlayerToFreeAgency(current, playerId, current.selectedTeamId, "post-june") : current));
+  }
+
   function restructureRosterPlayer(playerId: string) {
     setSave((current) => (current ? restructurePlayerContract(current, playerId, current.selectedTeamId) : current));
   }
 
   function tagOrTenderRosterPlayer(playerId: string, kind: Parameters<typeof applyTagOrTender>[3]) {
     setSave((current) => (current ? applyTagOrTender(current, playerId, current.selectedTeamId, kind) : current));
+  }
+
+  function extendRosterPlayer(playerId: string) {
+    setSave((current) => (current ? extendPlayerContract(current, playerId, current.selectedTeamId) : current));
+  }
+
+  function exerciseRosterFifthYearOption(playerId: string) {
+    setSave((current) => (current ? exerciseFifthYearOption(current, playerId, current.selectedTeamId) : current));
   }
 
   function placeRosterPlayerOnIr(playerId: string) {
@@ -1057,17 +1103,8 @@ export default function App() {
     playerId: string,
     updates: Parameters<typeof updatePlayerTrainingSettings>[1]
   ) {
-    setSave((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        players: current.players.map((player) => (
-          player.id === playerId
-            ? updatePlayerTrainingSettings(player, updates, current.seed)
-            : player
-        ))
-      };
-    });
+    void playerId;
+    void updates;
   }
 
   function setDepthOrder(position: Position, orderedIds: string[]) {
@@ -1229,6 +1266,31 @@ export default function App() {
     setSave((current) => (current ? applyDraftTradeOffer(current, offer) : current));
   }
 
+  function openTradingForPlayer(playerId?: string) {
+    setTradePrefillPlayerId(playerId);
+    setActiveTab("trading");
+  }
+
+  function submitRosterTradeOffer(offer: TradeOffer) {
+    setSave((current) => (current ? submitTradeOffer(current, offer) : current));
+  }
+
+  function acceptRosterTradeOffer(offerId: string) {
+    setSave((current) => {
+      if (!current) return current;
+      const offer = current.tradeState?.offers.find((candidate) => candidate.id === offerId);
+      return offer ? applyAcceptedTrade(current, offer) : current;
+    });
+  }
+
+  function toggleRosterTradeBlock(playerId: string) {
+    setSave((current) => (current ? toggleUserTradeBlock(current, playerId) : current));
+  }
+
+  function refreshTrades() {
+    setSave((current) => (current ? refreshTradeActivity(current) : current));
+  }
+
   function onboardRookies() {
     setSave((current) => (current ? runRookieOnboarding(current) : current));
   }
@@ -1259,7 +1321,7 @@ export default function App() {
 
   function beginNextSeason() {
     setSave((current) => (current ? startNextSeason(current) : current));
-    setActiveTab(save?.careerType === "college" ? "college-hub" : "inbox");
+    setActiveTab(save?.careerType === "college" ? "college-hub" : "roster");
   }
 
   function updateCollegeRecruit(entryId: string, updates: Partial<AnnualRecruitingBoardEntry>) {
@@ -1351,44 +1413,29 @@ export default function App() {
   }
 
   function updateCollegeTraining(focus: CollegeDevelopmentFocus, posture: CollegeFatiguePosture) {
-    setSave((current) => {
-      if (!current) return current;
-      const schoolId = managedSchoolId(current);
-      return {
-        ...current,
-        collegeManagement: {
-          ...managementStateForSchools(current.schools),
-          ...(current.collegeManagement ?? {}),
-          trainingFocus: {
-            ...(current.collegeManagement?.trainingFocus ?? {}),
-            [schoolId]: focus
-          },
-          fatiguePosture: {
-            ...(current.collegeManagement?.fatiguePosture ?? {}),
-            [schoolId]: posture
-          }
-        }
-      };
-    });
+    void focus;
+    void posture;
   }
 
   function updateCollegeNil(position: Position, value: number) {
     setSave((current) => {
       if (!current) return current;
       const schoolId = managedSchoolId(current);
-      return {
-        ...current,
-        collegeManagement: {
-          ...managementStateForSchools(current.schools),
-          ...(current.collegeManagement ?? {}),
-          nilAllocationByPosition: {
-            ...(current.collegeManagement?.nilAllocationByPosition ?? {}),
-            [schoolId]: {
-              ...(current.collegeManagement?.nilAllocationByPosition?.[schoolId] ?? {}),
-              [position]: value
-            }
+      const nextManagement = {
+        ...managementStateForSchools(current.schools),
+        ...(current.collegeManagement ?? {}),
+        nilAllocationByPosition: {
+          ...(current.collegeManagement?.nilAllocationByPosition ?? {}),
+          [schoolId]: {
+            ...(current.collegeManagement?.nilAllocationByPosition?.[schoolId] ?? {}),
+            [position]: value
           }
         }
+      };
+      return {
+        ...current,
+        collegeManagement: nextManagement,
+        collegeMorale: generateCollegeMoraleState(current.seed, current.seasonYear, current.collegeRoster, current.collegeSeasonResults, current.annualRecruiting, current.collegeTraining, nextManagement)
       };
     });
   }
@@ -1444,7 +1491,7 @@ export default function App() {
         }
       };
     });
-    setActiveTab(level === "college" ? "college-hub" : "inbox");
+    setActiveTab(level === "college" ? "college-hub" : "roster");
   }
 
   async function importSave(file?: File) {
@@ -1478,7 +1525,8 @@ export default function App() {
       setSaveStatus("Save failed");
       setSaveFailure(error instanceof Error ? error.message : "Imported save could not be stored. Export is still available.");
     }
-    setActiveTab(normalized.careerType === "college" ? "college-hub" : "inbox");
+    setActiveTab(normalized.careerType === "college" ? "college-hub" : "roster");
+    setOpeningMenuMode("load");
   }
 
   if (isBooting) {
@@ -1515,9 +1563,267 @@ export default function App() {
   }
 
   if (!save) {
+    const selectedOpeningIdentity = setupCareerType === "college" ? selectedSetupSchool?.name ?? "College Program" : selectedSetupTeam.fullName;
+    const selectedOpeningSubline = setupCareerType === "college"
+      ? `${selectedSetupSchool?.conference ?? "Independent"} | ${selectedSetupSchool?.subdivision ?? "College"} | Prestige ${selectedSetupSchool?.prestige ?? "--"}`
+      : `${selectedSetupTeam.conference} ${selectedSetupTeam.division} | ${selectedSetupTeam.city}`;
+
+    const openingSummary = (
+      <aside className="opening-summary-rail">
+        <section className="opening-preview-card">
+          <p className="eyebrow">Live Setup</p>
+          <div className="opening-preview-head">
+            {setupCareerType === "college" ? (
+              <CollegeLogo school={selectedSetupSchool} size={72} />
+            ) : (
+              <TeamLogo save={{ teams: nflTeams } as GameSave} teamId={selectedSetupTeam.id} size={72} />
+            )}
+            <div>
+              <h2>{selectedOpeningIdentity}</h2>
+              <p>{selectedOpeningSubline}</p>
+            </div>
+          </div>
+          <div className="opening-summary-grid">
+            <article>
+              <span>League</span>
+              <strong>{setupCareerType === "college" ? "College Program" : "NFL Franchise"}</strong>
+            </article>
+            <article>
+              <span>Scenario</span>
+              <strong>{careerScenarioLabels[setupScenario]}</strong>
+            </article>
+            <article>
+              <span>Mode</span>
+              <strong>{setupMode === "goals" ? "Goals Mode" : "Sandbox"}</strong>
+            </article>
+            <article>
+              <span>Seed</span>
+              <strong>{setupSeed}</strong>
+            </article>
+          </div>
+        </section>
+      </aside>
+    );
+
+    const newCareerSection = (
+      <section className="opening-workspace-card opening-new-career">
+        <header className="opening-workspace-header">
+          <div>
+            <h2>New Career</h2>
+            <p>Start a fresh universe, lock the league tone, then choose the team or program you want to run.</p>
+          </div>
+        </header>
+        <div className="setup-layout">
+          <section className="setup-step opening-builder-card">
+            <div className="opening-section-heading">
+              <div>
+                <p className="eyebrow">League</p>
+                <h3>Shape the world</h3>
+                <p>Pick the job level and the pressure around your first season.</p>
+              </div>
+            </div>
+            <div className="mode-row setup-mode-row" role="group" aria-label="Career type">
+              <button className={setupCareerType === "nfl" ? "selected" : ""} onClick={() => setSetupCareerType("nfl")}>
+                NFL Team
+              </button>
+              <button className={setupCareerType === "college" ? "selected" : ""} onClick={() => setSetupCareerType("college")}>
+                College Program
+              </button>
+            </div>
+            <div className="scenario-grid">
+              {scenarioCards.map((scenario) => (
+                <button
+                  key={scenario.id}
+                  className={`scenario-card ${setupScenario === scenario.id ? "selected" : ""}`}
+                  onClick={() => setSetupScenario(scenario.id)}
+                >
+                  <strong>{careerScenarioLabels[scenario.id]}</strong>
+                  <span>{scenario.description}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="setup-step opening-builder-card">
+            <div className="opening-section-heading">
+              <div>
+                <p className="eyebrow">Control</p>
+                <h3>Set your rules</h3>
+                <p>Decide how guided the career feels and keep a seed handy for repeatable worlds.</p>
+              </div>
+            </div>
+            <div className="mode-row setup-mode-row" role="group" aria-label="Save mode">
+              <button className={setupMode === "goals" ? "selected" : ""} onClick={() => setSetupMode("goals")}>
+                Goals Mode
+              </button>
+              <button className={setupMode === "sandbox" ? "selected" : ""} onClick={() => setSetupMode("sandbox")}>
+                Sandbox
+              </button>
+            </div>
+            <div className="seed-row opening-seed-row">
+              <input value={setupSeed} onChange={(event) => setSetupSeed(event.target.value)} aria-label="Career seed" />
+              <button onClick={() => setSetupSeed(randomCareerSeed())}>Randomize Seed</button>
+              <button onClick={() => void copySeed()}>Copy Seed</button>
+            </div>
+          </section>
+
+          <section className="setup-step team-browser-step opening-builder-card">
+            <div className="opening-section-heading">
+              <div>
+                <p className="eyebrow">{setupCareerType === "college" ? "Program" : "Team"}</p>
+                <h3>{setupCareerType === "college" ? "Choose your program" : "Choose your team"}</h3>
+                <p>{setupCareerType === "college" ? "Choose the school you manage while the NFL sim keeps rolling in the background." : "Pick the franchise that anchors the world you are about to launch."}</p>
+              </div>
+            </div>
+            {setupCareerType === "college" ? (
+              <>
+                <div className="team-browser-tools">
+                  <input
+                    type="search"
+                    value={schoolSearch}
+                    onChange={(event) => setSchoolSearch(event.target.value)}
+                    placeholder="Search schools"
+                    aria-label="Search schools"
+                  />
+                  <select
+                    value={schoolSubdivision}
+                    onChange={(event) => setSchoolSubdivision(event.target.value as "all" | "FBS" | "FCS")}
+                    aria-label="Filter subdivision"
+                  >
+                    <option value="all">All Subdivisions</option>
+                    <option value="FBS">FBS</option>
+                    <option value="FCS">FCS</option>
+                  </select>
+                </div>
+                <div className="team-grid college-program-grid">
+                  {filteredSetupSchools.slice(0, 96).map((school) => (
+                    <button
+                      key={school.id}
+                      className={`team-tile college-program-tile ${setupSchoolId === school.id ? "selected" : ""}`}
+                      style={{ "--tile-color": school.primaryColor } as CSSProperties & Record<string, string>}
+                      onClick={() => setSetupSchoolId(school.id)}
+                    >
+                      <CollegeLogo school={school} size={44} />
+                      <span>{school.name}</span>
+                      <small>
+                        {school.conference} | {school.subdivision} | Prestige {school.prestige}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="team-browser-tools">
+                  <input
+                    type="search"
+                    value={teamSearch}
+                    onChange={(event) => setTeamSearch(event.target.value)}
+                    placeholder="Search teams"
+                    aria-label="Search teams"
+                  />
+                  <select
+                    value={teamConference}
+                    onChange={(event) => setTeamConference(event.target.value as Conference | "all")}
+                    aria-label="Filter conference"
+                  >
+                    <option value="all">All Conferences</option>
+                    <option value="AFC">AFC</option>
+                    <option value="NFC">NFC</option>
+                  </select>
+                </div>
+                <div className="team-grid">
+                  {filteredSetupTeams.map((team) => (
+                    <button
+                      key={team.id}
+                      className={`team-tile ${setupTeamId === team.id ? "selected" : ""}`}
+                      style={{ "--tile-color": team.colors.primary } as CSSProperties & Record<string, string>}
+                      onClick={() => setSetupTeamId(team.id)}
+                    >
+                      <img src={team.logoUrl} alt="" onError={(event) => (event.currentTarget.style.display = "none")} />
+                      <span>{team.fullName}</span>
+                      <small>
+                        {team.conference} {team.division} | {careerScenarioLabels[setupScenario]}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+        <div className="opening-workspace-footer">
+          <button className="primary-action" onClick={() => void startCareer()}>
+            Start Career
+          </button>
+        </div>
+      </section>
+    );
+
+    const loadSaveSection = (
+      <section className="opening-workspace-card opening-load-save">
+        <header className="opening-workspace-header">
+          <div>
+            <h2>Load Save</h2>
+            <p>Resume a running universe, import a backup, or clean up older slots without leaving the launcher.</p>
+          </div>
+          <div className="opening-load-toolbar">
+            <button className="primary-action opening-import-button" onClick={() => fileInputRef.current?.click()}>Import Save</button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              hidden
+              onChange={(event) => void importSave(event.target.files?.[0])}
+            />
+          </div>
+        </header>
+        {careerSlots.length ? (
+          <div className="career-slot-grid opening-career-slot-grid">
+            {careerSlots.map((slot) => (
+              <article className="career-slot-card" key={slot.id}>
+                <div>
+                  <strong>{slot.name}</strong>
+                  <span>
+                    {slot.teamName} | {slot.currentDate ? formatDateLong(slot.currentDate) : `Week ${slot.currentWeek}`} | {slot.recordSummary}
+                  </span>
+                  <small>
+                    {careerScenarioLabels[slot.scenario]} | {slot.phase} | {new Date(slot.updatedAt).toLocaleString()}
+                  </small>
+                </div>
+                <div className="slot-actions">
+                  <button onClick={() => void loadCareerSlot(slot.id)}>Load</button>
+                  <button onClick={() => void renameCareerSlot(slot.id)}>Rename</button>
+                  <button onClick={() => void exportCareerSlot(slot.id)}>Export</button>
+                  <button className="ghost-danger" onClick={() => void deleteCareerSlot(slot.id)}>Delete</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-slots opening-empty-slots">No saved careers yet. Start a new one and it will appear here automatically.</p>
+        )}
+      </section>
+    );
+
+    const openingHeroCards = [
+      {
+        id: "new" as const,
+        title: "New Career",
+        detail: "Start a fresh universe",
+        meta: `${setupCareerType === "college" ? "College" : "NFL"} | ${careerScenarioLabels[setupScenario]}`
+      },
+      {
+        id: "load" as const,
+        title: "Load Save",
+        detail: "Resume or import a career",
+        meta: careerSlots.length ? `${careerSlots.length} saved ${careerSlots.length === 1 ? "career" : "careers"}` : "No saves yet"
+      }
+    ];
+
     return (
       <div
-        className="setup-screen"
+        className="setup-screen opening-screen"
         style={
           {
             "--team-primary": selectedSetupTeam.colors.primary,
@@ -1525,245 +1831,40 @@ export default function App() {
           } as CSSProperties & Record<string, string>
         }
       >
-        <section className="setup-panel">
-          <div className="setup-hero">
+        <section className="setup-panel opening-panel">
+          <div className="opening-topbar">
             <div>
-              <p className="eyebrow">2026 football career hub</p>
-              <h1>Opening Menu</h1>
-              <p className="setup-copy">
-                Load an existing save or build a fresh Year Zero universe for one managed NFL franchise or one college program.
-              </p>
-            </div>
-            <div className="setup-summary">
-              {setupCareerType === "college" ? (
-                <CollegeLogo school={selectedSetupSchool} size={58} />
-              ) : (
-                <TeamLogo save={{ teams: nflTeams } as GameSave} teamId={selectedSetupTeam.id} size={58} />
-              )}
-              <div>
-                <strong>{setupCareerType === "college" ? selectedSetupSchool?.name : selectedSetupTeam.fullName}</strong>
-                <span>
-                  {setupCareerType === "college" ? "College Program" : "NFL Franchise"} | {careerScenarioLabels[setupScenario]} | {setupMode === "goals" ? "Goals" : "Sandbox"}
-                </span>
-              </div>
+              <p className="eyebrow">Career Command</p>
+              <h1>Choose how you want to enter the football world.</h1>
             </div>
           </div>
 
-          <section className="setup-step career-manager">
-            <div className="setup-step-heading">
-              <span>0</span>
-              <div>
-                <h2>Career Slots</h2>
-                <p>Load, rename, export, or delete existing careers. Saves use browser database storage.</p>
-              </div>
-            </div>
-            {careerSlots.length ? (
-              <div className="career-slot-grid">
-                {careerSlots.map((slot) => (
-                  <article className="career-slot-card" key={slot.id}>
-                    <div>
-                      <strong>{slot.name}</strong>
-                      <span>
-                        {slot.teamName} | {slot.currentDate ? formatDateLong(slot.currentDate) : `Week ${slot.currentWeek}`} | {slot.recordSummary}
-                      </span>
-                      <small>
-                        {careerScenarioLabels[slot.scenario]} | {slot.phase} | {new Date(slot.updatedAt).toLocaleString()}
-                      </small>
-                    </div>
-                    <div className="slot-actions">
-                      <button onClick={() => void loadCareerSlot(slot.id)}>Load</button>
-                      <button onClick={() => void renameCareerSlot(slot.id)}>Rename</button>
-                      <button onClick={() => void exportCareerSlot(slot.id)}>Export</button>
-                      <button className="ghost-danger" onClick={() => void deleteCareerSlot(slot.id)}>Delete</button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <p className="empty-slots">No saved careers yet.</p>
-            )}
-            <div className="action-row">
-              <button onClick={() => fileInputRef.current?.click()}>Import Save</button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/json"
-                hidden
-                onChange={(event) => void importSave(event.target.files?.[0])}
-              />
-            </div>
-          </section>
-
-          <div className="setup-layout">
-            <section className="setup-step">
-              <div className="setup-step-heading">
-                <span>1</span>
-                <div>
-                  <h2>Career Type</h2>
-                  <p>Manage exactly one organization at a time. The other football world keeps simulating in the background.</p>
-                </div>
-              </div>
-              <div className="mode-row setup-mode-row" role="group" aria-label="Career type">
-                <button className={setupCareerType === "nfl" ? "selected" : ""} onClick={() => setSetupCareerType("nfl")}>
-                  NFL Team
-                </button>
-                <button className={setupCareerType === "college" ? "selected" : ""} onClick={() => setSetupCareerType("college")}>
-                  College Program
-                </button>
-              </div>
-            </section>
-
-            <section className="setup-step">
-              <div className="setup-step-heading">
-                <span>2</span>
-                <div>
-                  <h2>Scenario</h2>
-                  <p>Shape the pressure around your first job. The full universe is generated fresh at kickoff.</p>
-                </div>
-              </div>
-              <div className="scenario-grid">
-                {scenarioCards.map((scenario) => (
-                  <button
-                    key={scenario.id}
-                    className={`scenario-card ${setupScenario === scenario.id ? "selected" : ""}`}
-                    onClick={() => setSetupScenario(scenario.id)}
-                  >
-                    <strong>{careerScenarioLabels[scenario.id]}</strong>
-                    <span>{scenario.description}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="setup-step">
-              <div className="setup-step-heading">
-                <span>3</span>
-                <div>
-                  <h2>Mode</h2>
-                  <p>Goals mode tracks owner pressure. Sandbox keeps the front office loose.</p>
-                </div>
-              </div>
-              <div className="mode-row setup-mode-row" role="group" aria-label="Save mode">
-                <button className={setupMode === "goals" ? "selected" : ""} onClick={() => setSetupMode("goals")}>
-                  Goals Mode
-                </button>
-                <button className={setupMode === "sandbox" ? "selected" : ""} onClick={() => setSetupMode("sandbox")}>
-                  Sandbox
-                </button>
-              </div>
-            </section>
-
-            <section className="setup-step team-browser-step">
-              <div className="setup-step-heading">
-                <span>4</span>
-                <div>
-                  <h2>{setupCareerType === "college" ? "College Program" : "NFL Team"}</h2>
-                  <p>{setupCareerType === "college" ? "Choose the school you manage; NFL teams remain available as background league context." : "Real NFL identities, generated career data."}</p>
-                </div>
-              </div>
-              {setupCareerType === "college" ? (
-                <>
-                  <div className="team-browser-tools">
-                    <input
-                      type="search"
-                      value={schoolSearch}
-                      onChange={(event) => setSchoolSearch(event.target.value)}
-                      placeholder="Search schools"
-                      aria-label="Search schools"
-                    />
-                    <select
-                      value={schoolSubdivision}
-                      onChange={(event) => setSchoolSubdivision(event.target.value as "all" | "FBS" | "FCS")}
-                      aria-label="Filter subdivision"
-                    >
-                      <option value="all">All Subdivisions</option>
-                      <option value="FBS">FBS</option>
-                      <option value="FCS">FCS</option>
-                    </select>
-                  </div>
-                  <div className="team-grid college-program-grid">
-                    {filteredSetupSchools.slice(0, 96).map((school) => (
-                      <button
-                        key={school.id}
-                        className={`team-tile college-program-tile ${setupSchoolId === school.id ? "selected" : ""}`}
-                        style={{ "--tile-color": school.primaryColor } as CSSProperties & Record<string, string>}
-                        onClick={() => setSetupSchoolId(school.id)}
-                      >
-                        <CollegeLogo school={school} size={44} />
-                        <span>{school.name}</span>
-                        <small>
-                          {school.conference} | {school.subdivision} | Prestige {school.prestige}
-                        </small>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="team-browser-tools">
-                    <input
-                      type="search"
-                      value={teamSearch}
-                      onChange={(event) => setTeamSearch(event.target.value)}
-                      placeholder="Search teams"
-                      aria-label="Search teams"
-                    />
-                    <select
-                      value={teamConference}
-                      onChange={(event) => setTeamConference(event.target.value as Conference | "all")}
-                      aria-label="Filter conference"
-                    >
-                      <option value="all">All Conferences</option>
-                      <option value="AFC">AFC</option>
-                      <option value="NFC">NFC</option>
-                    </select>
-                  </div>
-                  <div className="team-grid">
-                    {filteredSetupTeams.map((team) => (
-                      <button
-                        key={team.id}
-                        className={`team-tile ${setupTeamId === team.id ? "selected" : ""}`}
-                        style={{ "--tile-color": team.colors.primary } as CSSProperties & Record<string, string>}
-                        onClick={() => setSetupTeamId(team.id)}
-                      >
-                        <img src={team.logoUrl} alt="" onError={(event) => (event.currentTarget.style.display = "none")} />
-                        <span>{team.fullName}</span>
-                        <small>
-                          {team.conference} {team.division} | {careerScenarioLabels[setupScenario]}
-                        </small>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </section>
-
-            <section className="setup-step">
-              <div className="setup-step-heading">
-                <span>5</span>
-                <div>
-                  <h2>Seed</h2>
-                  <p>Use the same seed and options to recreate the same career.</p>
-                </div>
-              </div>
-              <div className="seed-row">
-                <input value={setupSeed} onChange={(event) => setSetupSeed(event.target.value)} aria-label="Career seed" />
-                <button onClick={() => setSetupSeed(randomCareerSeed())}>Randomize Seed</button>
-                <button onClick={() => void copySeed()}>Copy Seed</button>
-              </div>
-            </section>
+          <div className="opening-actions" role="group" aria-label="Opening actions">
+            {openingHeroCards.map((card) => (
+              <button
+                key={card.id}
+                className={`opening-action-tile ${openingMenuMode === card.id ? "selected" : ""}`}
+                onClick={() => setOpeningMenuMode(card.id)}
+                aria-pressed={openingMenuMode === card.id}
+              >
+                <strong>{card.title}</strong>
+                <span>{card.detail}</span>
+                <small>{card.meta}</small>
+              </button>
+            ))}
           </div>
 
-          <button className="primary-action" onClick={() => void startCareer()}>
-            Start Career
-          </button>
+          <div className="opening-main-layout">
+            <div className="opening-active-workspace">
+              {openingMenuMode === "new" ? newCareerSection : loadSaveSection}
+            </div>
+            {openingSummary}
+          </div>
         </section>
       </div>
     );
   }
 
-  const unread = save.inbox.filter((item) => !item.read).length;
-  const blockingInbox = save.inbox.filter((item) => item.blocking && !item.read).length;
   const activeSchool = schoolForSave(save);
   const currentNavGroups = save.careerType === "college" ? collegeNavGroups : nflNavGroups;
 
@@ -1772,9 +1873,9 @@ export default function App() {
       <aside className="side-nav">
         <div className="club-block">
           {save.careerType === "college" ? (
-            <CollegeLogo school={activeSchool} size={58} />
+            <CollegeLogo school={activeSchool} size={46} />
           ) : (
-            <TeamLogo save={save} teamId={save.selectedTeamId} size={58} />
+            <TeamLogo save={save} teamId={save.selectedTeamId} size={46} />
           )}
           <div>
             <p className="eyebrow">{save.careerType === "college" ? "College desk" : formatDateLong(save.currentDate)}</p>
@@ -1789,10 +1890,7 @@ export default function App() {
             <div className="nav-group" key={group.label}>
               <span className="nav-group-label">{group.label}</span>
               {group.tabs.map((tab) => (
-                <button key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>
-                  {tab.label}
-                  {tab.id === "inbox" && unread > 0 ? <span className="badge">{unread}</span> : null}
-                </button>
+                <button key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>
               ))}
             </div>
           ))}
@@ -1821,9 +1919,7 @@ export default function App() {
                 <option key={slot.id} value={slot.id}>{slot.name}</option>
               ))}
             </select>
-            <button onClick={handleAdvanceDay} disabled={blockingInbox > 0} title={blockingInbox > 0 ? "Read Important inbox items before advancing." : undefined}>
-              {blockingInbox > 0 ? `Important Inbox (${blockingInbox})` : "Advance Day"}
-            </button>
+            <button onClick={handleAdvanceDay}>Advance Day</button>
             {save.phase === "offseason-complete" ? <button onClick={beginNextSeason}>Start Next Season</button> : null}
             <button onClick={() => downloadSave(save)}>Export Save</button>
             <button onClick={() => fileInputRef.current?.click()}>Import Save</button>
@@ -1839,16 +1935,14 @@ export default function App() {
           </div>
         </header>
 
-        {activeTab === "inbox" && <InboxView save={save} markRead={markRead} />}
         {activeTab === "college-hub" && <CollegeHubView save={save} openTab={setActiveTab} />}
         {activeTab === "college-recruiting" && (
           <CollegeRecruitingView save={save} updateRecruit={updateCollegeRecruit} setPriority={setCollegeRecruitPriority} />
         )}
         {activeTab === "college-roster" && <CollegeRosterView save={save} updatePlayer={updateCollegeRosterPlayer} />}
         {activeTab === "college-depth" && <CollegeDepthView save={save} movePlayer={moveCollegeDepthPlayer} autoSort={autoCollegeDepth} />}
-        {activeTab === "college-training" && (
-          <CollegeTrainingNilView save={save} updateTraining={updateCollegeTraining} updateNil={updateCollegeNil} />
-        )}
+        {activeTab === "college-training" && <CollegeDevelopmentView save={save} />}
+        {activeTab === "college-nil" && <CollegeNilView save={save} updateNil={updateCollegeNil} />}
         {activeTab === "college-transfer" && <CollegeTransferView save={save} toggleWatch={toggleTransferWatch} />}
         {activeTab === "college-season" && <CollegeSeasonView save={save} beginNextSeason={beginNextSeason} />}
         {activeTab === "college-draft" && <CollegeDraftPipelineView save={save} />}
@@ -1857,8 +1951,11 @@ export default function App() {
           <RosterView
             save={save}
             releasePlayer={releaseRosterPlayer}
+            postJuneReleasePlayer={postJuneReleaseRosterPlayer}
             restructurePlayer={restructureRosterPlayer}
             tagOrTenderPlayer={tagOrTenderRosterPlayer}
+            extendPlayer={extendRosterPlayer}
+            exerciseFifthYearOption={exerciseRosterFifthYearOption}
             placeOnIr={placeRosterPlayerOnIr}
             designateToReturn={designateRosterPlayerToReturn}
             activateFromIr={activateRosterPlayerFromIr}
@@ -1866,9 +1963,10 @@ export default function App() {
             elevatePractice={elevatePracticePlayer}
             protectPractice={protectPracticePlayer}
             releasePractice={releasePracticePlayer}
+            openTradeForPlayer={openTradingForPlayer}
           />
         )}
-        {activeTab === "training" && <TrainingView save={save} updateTrainingPlan={updateTrainingPlan} />}
+        {activeTab === "training" && <DevelopmentView save={save} />}
         {activeTab === "free-agents" && (
           <FreeAgentsView
             save={save}
@@ -1895,6 +1993,16 @@ export default function App() {
           />
         )}
         {activeTab === "staff" && <StaffView save={save} interview={interviewCandidate} hire={hireCandidate} />}
+        {activeTab === "trading" && (
+          <TradingView
+            save={save}
+            prefillPlayerId={tradePrefillPlayerId}
+            submitTrade={submitRosterTradeOffer}
+            acceptOffer={acceptRosterTradeOffer}
+            toggleBlock={toggleRosterTradeBlock}
+            refreshActivity={refreshTrades}
+          />
+        )}
         {activeTab === "calendar" && <CalendarView save={save} openTab={setActiveTab} openGame={(id) => { setSave({ ...save, lastViewedGameId: id }); setActiveTab("game"); }} />}
         {activeTab === "scouting" && (
           <ScoutingView
@@ -2002,7 +2110,8 @@ function CollegeHubView({ save, openTab }: { save: GameSave; openTab: (tab: Tab)
           ["college-recruiting", "Recruiting", `${recruiting.length} board targets`],
           ["college-roster", "Roster", `${activePlayers.filter((player) => player.rosterStatus === "redshirt").length} redshirts`],
           ["college-depth", "Depth", "Set starters and rotations"],
-          ["college-training", "Training / NIL", "Set development posture"],
+          ["college-training", "Development", "Set player growth posture"],
+          ["college-nil", "NIL", "Allocate position budget"],
           ["college-transfer", "Transfer Portal", `${save.annualTransferPortal?.entries.filter((entry) => entry.playerPool === "college").length ?? 0} entries`],
           ["college-season", "Season", `${awards.length} award results`]
         ].map(([tab, title, detail]) => (
@@ -2166,33 +2275,112 @@ function CollegeDepthView({ save, movePlayer, autoSort }: { save: GameSave; move
   );
 }
 
-function CollegeTrainingNilView({
+function CollegeDevelopmentView({
+  save
+}: {
+  save: GameSave;
+}) {
+  const { schoolId, school, activePlayers, morale } = selectedSchoolContext(save);
+  const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
+  const [sortBy, setSortBy] = useState<"overall" | "potential" | "class" | "portal">("overall");
+  if (!school) return <CollegeEmptyState title="No development state" />;
+  const moraleByPlayerId = new Map(morale.map((entry) => [entry.playerId, entry]));
+  const rows = activePlayers
+    .filter((player) => positionFilter === "all" || player.position === positionFilter)
+    .sort((a, b) => {
+      if (sortBy === "potential") return b.collegePotential - a.collegePotential || b.collegeOverall - a.collegeOverall;
+      if (sortBy === "class") return a.classYear.localeCompare(b.classYear) || b.collegeOverall - a.collegeOverall;
+      if (sortBy === "portal") return (moraleByPlayerId.get(b.id)?.transferRisk ?? 0) - (moraleByPlayerId.get(a.id)?.transferRisk ?? 0);
+      return b.collegeOverall - a.collegeOverall || b.collegePotential - a.collegePotential;
+    })
+    .slice(0, 160);
+  return (
+    <section className="view-stack development-workspace college-view">
+      <div className="roster-command-bar development-command-bar">
+        <div className="roster-toolbar-group development-toolbar-grid">
+          <label className="roster-select-field">
+            <span>Position</span>
+            <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
+              <option value="all">All</option>
+              {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
+            </select>
+          </label>
+          <label className="roster-select-field">
+            <span>Sort</span>
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
+              <option value="overall">Overall</option>
+              <option value="potential">Potential</option>
+              <option value="class">Class</option>
+              <option value="portal">Portal Risk</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <section className="table-card development-table-card">
+        <DataTable>
+          <thead>
+            <tr><th>Player</th><th>Pos</th><th>Class</th><th>OVR</th><th>POT</th><th>Academic</th><th>Portal Risk</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((player) => {
+              const moraleRow = moraleByPlayerId.get(player.id);
+              return (
+                <tr key={player.id}>
+                  <td><strong>{player.firstName} {player.lastName}</strong></td>
+                  <td>{player.position}</td>
+                  <td>{player.classYear}</td>
+                  <td><strong>{player.collegeOverall}</strong></td>
+                  <td><strong>{player.collegePotential}</strong></td>
+                  <td>{player.academicEligible === false ? "Risk" : "Eligible"}</td>
+                  <td>{moraleRow ? `${moraleRow.transferRisk}%` : "--"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
+}
+
+function CollegeNilView({
   save,
-  updateTraining,
   updateNil
 }: {
   save: GameSave;
-  updateTraining: (focus: CollegeDevelopmentFocus, posture: CollegeFatiguePosture) => void;
   updateNil: (position: Position, value: number) => void;
 }) {
-  const { schoolId, school, activePlayers } = selectedSchoolContext(save);
-  if (!school) return <CollegeEmptyState title="No training state" />;
-  const focus = save.collegeManagement?.trainingFocus?.[schoolId] ?? "balanced";
-  const posture = save.collegeManagement?.fatiguePosture?.[schoolId] ?? "standard";
+  const { schoolId, school, activePlayers, morale } = selectedSchoolContext(save);
+  if (!school) return <CollegeEmptyState title="No NIL state" />;
   const nil = save.collegeManagement?.nilAllocationByPosition?.[schoolId] ?? {};
-  const trainingRows = (save.collegeTraining?.entries ?? []).filter((entry) => entry.schoolId === schoolId).slice(0, 80);
+  const trainingByPlayerId = new Map((save.collegeTraining?.entries ?? []).filter((entry) => entry.schoolId === schoolId).map((entry) => [entry.playerId, entry]));
+  const moraleByPlayerId = new Map(morale.map((entry) => [entry.playerId, entry]));
+  const totalAllocation = POSITIONS.reduce((sum, position) => sum + (nil[position] ?? 0), 0);
+  const highRisk = activePlayers
+    .map((player) => {
+      const training = trainingByPlayerId.get(player.id);
+      const moraleRow = moraleByPlayerId.get(player.id);
+      const allocation = nil[player.position] ?? 0;
+      const nilEffect = Math.round(allocation * (training?.nilSensitivity ?? 0.5));
+      return { player, training, morale: moraleRow, allocation, nilEffect, risk: moraleRow?.transferRisk ?? 0 };
+    })
+    .sort((a, b) => b.risk - a.risk || b.nilEffect - a.nilEffect)
+    .slice(0, 40);
   return (
-    <section className="view-stack college-view">
-      <div className="view-header"><div><p className="eyebrow">Training / NIL</p><h2>{school.name}</h2></div></div>
-      <section className="setup-step">
-        <div className="board-toolbar">
-          <select value={focus} onChange={(event) => updateTraining(event.target.value as CollegeDevelopmentFocus, posture)}>
-            {["balanced", "athletic", "technical", "mental", "recovery"].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select value={posture} onChange={(event) => updateTraining(focus, event.target.value as CollegeFatiguePosture)}>
-            {["conservative", "standard", "aggressive"].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
+    <section className="view-stack college-view nil-workspace">
+      <div className="view-header">
+        <div>
+          <p className="eyebrow">NIL</p>
+          <h2>{school.name} NIL Desk</h2>
+          <p>Position allocation, player demand, and portal-risk context.</p>
         </div>
+        <div className="development-header-metrics">
+          <span><small>Total</small><strong>{totalAllocation}</strong></span>
+          <span><small>High Risk</small><strong>{highRisk.filter((row) => row.risk >= 60).length}</strong></span>
+        </div>
+      </div>
+      <section className="table-card nil-allocation-card">
+        <div className="table-card-header"><h3>Position Allocation</h3></div>
         <div className="nil-grid">
           {POSITIONS.map((position) => (
             <label key={position}>
@@ -2202,14 +2390,24 @@ function CollegeTrainingNilView({
           ))}
         </div>
       </section>
-      <section className="table-card">
+      <section className="table-card development-table-card">
+        <div className="table-card-header"><h3>Player NIL Risk</h3></div>
         <DataTable>
-          <thead><tr><th>Player</th><th>Pos</th><th>Athletic</th><th>Technical</th><th>Mental</th><th>Fatigue</th><th>Portal Risk</th></tr></thead>
+          <thead><tr><th>Player</th><th>Pos</th><th>OVR</th><th>POT</th><th>Allocation</th><th>Demand</th><th>Retention Effect</th><th>Portal Risk</th><th>Context</th></tr></thead>
           <tbody>
-            {trainingRows.map((entry) => {
-              const player = activePlayers.find((candidate) => candidate.id === entry.playerId);
-              return <tr key={entry.playerId}><td>{player ? `${player.firstName} ${player.lastName}` : entry.playerId}</td><td>{player?.position}</td><td>{Math.round(entry.athleticBank)}</td><td>{Math.round(entry.technicalBank)}</td><td>{Math.round(entry.mentalBank)}</td><td>{Math.round(entry.fatigue)}</td><td>{Math.round(entry.portalRiskMult * 100)}%</td></tr>;
-            })}
+            {highRisk.map(({ player, training, morale: moraleRow, allocation, nilEffect, risk }) => (
+              <tr key={player.id}>
+                <td><strong>{player.firstName} {player.lastName}</strong></td>
+                <td>{player.position}</td>
+                <td>{player.collegeOverall}</td>
+                <td>{player.collegePotential}</td>
+                <td>{allocation}</td>
+                <td>{Math.round((training?.nilSensitivity ?? 0.5) * 100)}%</td>
+                <td>{nilEffect > 0 ? `+${nilEffect}` : "--"}</td>
+                <td>{moraleRow ? `${risk}%` : "--"}</td>
+                <td>{moraleRow?.reasons.join(", ") || training?.debug || "Stable"}</td>
+              </tr>
+            ))}
           </tbody>
         </DataTable>
       </section>
@@ -2402,73 +2600,6 @@ function MetricStrip({ save, teamId = save.selectedTeamId }: { save: GameSave; t
   );
 }
 
-type InboxFilter = "all" | "important" | "medical" | "staff" | "scouting" | "game" | "draft" | "other";
-
-function InboxView({ save, markRead }: { save: GameSave; markRead: (itemId: string) => void }) {
-  const [filter, setFilter] = useState<InboxFilter>("all");
-  const yearZeroDebug = buildYearZeroDebugExport(save);
-  const filters: Array<{ id: InboxFilter; label: string }> = [
-    { id: "all", label: "All" },
-    { id: "important", label: "Important" },
-    { id: "medical", label: "Medical" },
-    { id: "staff", label: "Staff" },
-    { id: "scouting", label: "Scouting" },
-    { id: "game", label: "Game" },
-    { id: "draft", label: "Draft" },
-    { id: "other", label: "Other" }
-  ];
-  const shown = save.inbox.filter((item) => {
-    if (filter === "all") return true;
-    if (filter === "important") return item.important || item.blocking || item.priority === "high";
-    if (filter === "medical") return item.category === "injury" || item.category === "discipline";
-    if (filter === "other") return !["staff", "scouting", "game", "draft", "injury", "discipline"].includes(item.category);
-    return item.category === filter;
-  });
-  return (
-    <section className="view-stack">
-      <MetricStrip save={save} />
-      {yearZeroDebug ? <YearZeroDebugPanel debug={yearZeroDebug} /> : null}
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Staff reports</p>
-          <h3>GM Inbox</h3>
-        </div>
-      </div>
-      <div className="inbox-filter-tabs">
-        {filters.map((candidate) => {
-          const count = save.inbox.filter((item) => {
-            if (candidate.id === "all") return true;
-            if (candidate.id === "important") return item.important || item.blocking || item.priority === "high";
-            if (candidate.id === "medical") return item.category === "injury" || item.category === "discipline";
-            if (candidate.id === "other") return !["staff", "scouting", "game", "draft", "injury", "discipline"].includes(item.category);
-            return item.category === candidate.id;
-          }).length;
-          return (
-            <button key={candidate.id} className={filter === candidate.id ? "selected" : ""} onClick={() => setFilter(candidate.id)}>
-              {candidate.label}
-              <span>{count}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="inbox-list">
-        {shown.slice(0, 36).map((item) => (
-          <article key={item.id} className={`inbox-item ${item.read ? "read" : ""} priority-${item.priority}`}>
-            <div>
-              <span>{item.blocking ? "important" : item.category}</span>
-              <strong>{item.title}</strong>
-              <p>{item.body}</p>
-            </div>
-            <button onClick={() => markRead(item.id)} disabled={item.read}>
-              {item.read ? "Read" : "Mark Read"}
-            </button>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function YearZeroDebugPanel({ debug }: { debug: NonNullable<ReturnType<typeof buildYearZeroDebugExport>> }) {
   const invariantEntries = Object.entries(debug.invariants);
   const passed = invariantEntries.filter(([, ok]) => ok).length;
@@ -2653,27 +2784,8 @@ function PlayerRatingBreakdown({ player }: { player: Player }) {
 }
 
 function DevelopmentReportPanel({ save }: { save: GameSave }) {
-  const reports = (save.developmentReports ?? []).filter((report) => report.teamId === save.selectedTeamId).slice(0, 10);
-  if (!reports.length) return null;
-  return (
-    <article className="development-panel">
-      <h3>Offseason Development</h3>
-      {reports.map((report) => (
-        <div key={report.id} className={`development-row dev-${report.category}`}>
-          <span>{report.position}</span>
-          <strong>{report.playerName}</strong>
-          <em>
-            {`${report.previousOverall}->${report.newOverall} OVR`}
-            {report.deltaOverall ? ` (${report.deltaOverall > 0 ? "+" : ""}${report.deltaOverall})` : ""}
-          </em>
-          <small>
-            {`POT ${report.previousPotential}->${report.newPotential}`}
-            {report.deltaPotential ? ` (${report.deltaPotential > 0 ? "+" : ""}${report.deltaPotential})` : ""} | {report.summary}
-          </small>
-        </div>
-      ))}
-    </article>
-  );
+  void save;
+  return null;
 }
 
 function ProspectRatingBreakdown({ prospect, showProgress = true }: { prospect: GameSave["prospects"][number]; showProgress?: boolean }) {
@@ -2764,39 +2876,14 @@ function ScoutingProgressBar({ value }: { value: number }) {
   );
 }
 
-type RosterSort = "overall" | "potential" | "age" | "position";
+export type RosterSort = "overall" | "potential" | "age" | "position";
 type RosterRangeFilter = "all" | "90+" | "80-89" | "70-79" | "60-69" | "under-60";
 type RosterAgeFilter = "all" | "24-under" | "25-28" | "29-32" | "33-plus";
 type RosterStatusFilter = "all" | "healthy" | "limited" | "injured" | "ir" | "suspended" | "practice";
 type RosterExperienceFilter = "all" | "rookie" | "1-3" | "4-6" | "7-plus";
 type FreeAgentSalaryFilter = "all" | "under-2" | "2-5" | "5-10" | "10-plus";
 
-const bodyPlanOptions: Array<{ value: TrainingBodyPlan; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "maintain", label: "Maintain" },
-  { value: "lean-bulk", label: "Lean Bulk" },
-  { value: "power-bulk", label: "Power Bulk" },
-  { value: "cut", label: "Cut" },
-  { value: "conditioning", label: "Conditioning" },
-  { value: "mobility", label: "Mobility" }
-];
-
-const skillPlanOptions: Array<{ value: TrainingSkillPlan; label: string }> = [
-  { value: "auto", label: "Auto" },
-  { value: "maintain", label: "Maintain" },
-  { value: "position-technique", label: "Position Tech" },
-  { value: "athlete", label: "Athlete" },
-  { value: "passing", label: "Passing" },
-  { value: "ball-skills", label: "Ball Skills" },
-  { value: "trench", label: "Trench" },
-  { value: "coverage", label: "Coverage" },
-  { value: "pass-rush", label: "Pass Rush" },
-  { value: "specialist", label: "Specialist" }
-];
-
-type TrainingTab = "configure" | "results";
-type TrainingResultsLens = "summary" | "risers" | "conversions" | "body-risk";
-type RosterModalTab = "overview" | "contract" | "ratings" | "medical";
+type RosterModalTab = "overview" | "contract" | "ratings" | "stats" | "medical";
 
 function rosterRangeMatch(value: number, filter: RosterRangeFilter): boolean {
   if (filter === "all") return true;
@@ -2860,8 +2947,12 @@ function rosterStatusSymbol(player: Player): { symbol: string; label: string } |
   return undefined;
 }
 
-function rosterSortPlayers(players: Player[], sort: RosterSort): Player[] {
+export function rosterSortPlayers(players: Player[], sort: RosterSort, practiceSquadLast = false): Player[] {
   return players.slice().sort((a, b) => {
+    if (practiceSquadLast) {
+      const statusOrder = Number(isPracticeSquadPlayer(a)) - Number(isPracticeSquadPlayer(b));
+      if (statusOrder !== 0) return statusOrder;
+    }
     if (sort === "potential") return b.potential - a.potential || b.overall - a.overall || a.lastName.localeCompare(b.lastName);
     if (sort === "age") return a.age - b.age || b.overall - a.overall || a.lastName.localeCompare(b.lastName);
     if (sort === "position") return a.position.localeCompare(b.position) || b.overall - a.overall || a.lastName.localeCompare(b.lastName);
@@ -2905,7 +2996,7 @@ function remainingContractRows(save: GameSave, player: Player): Array<{ year: nu
       bonus: season.signingBonusProration,
       guarantee: season.guaranteedSalary,
       capHit: season.baseSalary + season.signingBonusProration,
-      label: index === 0 ? "Current year" : `Year ${index + 1}`
+      label: season.voidYear ? "Void year" : season.optionYear ? "Option year" : index === 0 ? "Current year" : `Year ${index + 1}`
     }));
   }
   return Array.from({ length: Math.max(1, player.contractYears) }, (_, index) => ({
@@ -2918,52 +3009,82 @@ function remainingContractRows(save: GameSave, player: Player): Array<{ year: nu
   }));
 }
 
-function trainingBodyForecast(player: Player): { title: string; summary: string; tone: "up" | "steady" | "risk" } {
-  const plan = player.training.bodyPlan;
-  if (plan === "lean-bulk") return { title: "Body outlook", summary: "Add lean mass with a modest readiness lift if recovery stays on track.", tone: "up" };
-  if (plan === "power-bulk") return { title: "Body outlook", summary: "Push strength and size fastest, with a higher chance of conditioning drag.", tone: "risk" };
-  if (plan === "cut") return { title: "Body outlook", summary: "Trim body fat and improve movement if the player responds well to volume.", tone: "up" };
-  if (plan === "conditioning") return { title: "Body outlook", summary: "Improve conditioning and recovery more than size or composition.", tone: "up" };
-  if (plan === "mobility") return { title: "Body outlook", summary: "Target flexibility and readiness gains over major weight change.", tone: "up" };
-  if (player.development.workEthic < 50) return { title: "Body outlook", summary: "Low work ethic may blunt body gains even on a safe maintenance plan.", tone: "risk" };
-  return { title: "Body outlook", summary: "Steady maintenance focus with lower variance and fewer physical swings.", tone: "steady" };
-}
-
-function trainingFootballForecast(player: Player): { title: string; summary: string; tone: "up" | "steady" | "risk" } {
-  const plan = player.training.skillPlan;
-  const target = player.training.targetPosition ?? player.position;
-  if (plan === "position-technique") return { title: "Football outlook", summary: `Sharpen ${player.position} fundamentals and reinforce the current role.`, tone: "up" };
-  if (plan === "passing") return { title: "Football outlook", summary: "Invest reps into delivery, accuracy, and timing more than broad athletic work.", tone: "up" };
-  if (plan === "ball-skills") return { title: "Football outlook", summary: "Push hands, route craft, and finishing more than trench or processing traits.", tone: "up" };
-  if (plan === "trench") return { title: "Football outlook", summary: "Lean into leverage, protection, and blocking growth rather than open-field polish.", tone: "up" };
-  if (plan === "coverage") return { title: "Football outlook", summary: "Shift practice time into range, reaction, and coverage skill growth.", tone: "up" };
-  if (plan === "pass-rush") return { title: "Football outlook", summary: "Emphasize burst, counters, and rush sequencing for front-seven upside.", tone: "up" };
-  if (plan === "specialist") return { title: "Football outlook", summary: "Refine specialist operation and consistency rather than broad football crossover.", tone: "steady" };
-  if (target !== player.position) return { title: "Football outlook", summary: `General work stays flexible, but progress will bend toward the ${target} target over time.`, tone: "steady" };
-  return { title: "Football outlook", summary: "Balanced maintenance work should keep the skill base stable without a sharp specialty push.", tone: "steady" };
-}
-
-function trainingConversionForecast(player: Player): { title: string; summary: string; tone: "up" | "steady" | "risk" } {
-  const target = player.training.targetPosition ?? player.position;
-  const progress = player.training.conversionProgress[target] ?? 0;
-  if (target === player.position) return { title: "Conversion outlook", summary: "No active position switch. Training reinforces the current primary role.", tone: "steady" };
-  if (progress >= 80) return { title: "Conversion outlook", summary: `${target} is close to becoming a real option if the current plan stays in place.`, tone: "up" };
-  if (progress >= 55) return { title: "Conversion outlook", summary: `${target} is viable, but the player still needs more reps before the role feels natural.`, tone: "steady" };
-  const bodyMismatch = target !== player.position && ["LT", "LG", "C", "RG", "RT", "DL"].includes(target) && player.body.weightLbs < 250;
-  if (bodyMismatch) return { title: "Conversion outlook", summary: `${target} is a long-term project because the current frame is light for the target role.`, tone: "risk" };
-  return { title: "Conversion outlook", summary: `${target} is in an early conversion stage and likely needs more time before a meaningful fit shift.`, tone: "risk" };
-}
-
-function trainingRiskSummary(player: Player): string {
-  if (player.training.bodyPlan === "power-bulk") return "Higher conditioning risk";
-  if (player.development.workEthic < 50) return "Low buy-in risk";
-  if (player.status === "injured" || player.status === "limited") return "Health management risk";
-  if ((player.training.targetPosition ?? player.position) !== player.position && (player.training.conversionProgress[player.training.targetPosition ?? player.position] ?? 0) < 45) return "Slow conversion risk";
-  return "Risk manageable";
-}
-
-function clampPercent(value: number): string {
-  return `${Math.round(Math.max(0, Math.min(100, value)))}%`;
+function DevelopmentView({ save }: { save: GameSave }) {
+  const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<RosterStatusFilter>("all");
+  const [sortBy, setSortBy] = useState<"overall" | "potential" | "age">("overall");
+  const rows = useMemo(() => {
+    const players = playersForTeam(save, save.selectedTeamId)
+      .filter((player) => positionFilter === "all" || player.position === positionFilter)
+      .filter((player) => statusFilter === "all" || rosterStatusMatch(player, statusFilter));
+    return players.sort((a, b) => {
+      if (sortBy === "potential") return b.potential - a.potential || b.overall - a.overall;
+      if (sortBy === "age") return a.age - b.age || b.potential - a.potential;
+      return b.overall - a.overall || b.potential - a.potential;
+    });
+  }, [positionFilter, save, sortBy, statusFilter]);
+  return (
+    <section className="view-stack development-workspace">
+      <div className="roster-command-bar development-command-bar">
+        <div className="roster-toolbar-group development-toolbar-grid">
+          <label className="roster-select-field">
+            <span>Sort</span>
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
+              <option value="overall">Overall</option>
+              <option value="potential">Potential</option>
+              <option value="age">Age</option>
+            </select>
+          </label>
+          <label className="roster-select-field">
+            <span>Position</span>
+            <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
+              <option value="all">All</option>
+              {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
+            </select>
+          </label>
+          <label className="roster-select-field">
+            <span>Status</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as RosterStatusFilter)}>
+              <option value="all">All</option>
+              <option value="healthy">Healthy</option>
+              <option value="limited">Limited</option>
+              <option value="injured">Injured</option>
+              <option value="ir">IR</option>
+              <option value="practice">Practice</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <section className="table-card development-table-card">
+        <DataTable>
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Pos</th>
+              <th>Age</th>
+              <th>OVR</th>
+              <th>POT</th>
+              <th>Playing Time</th>
+              <th>Health</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((player) => (
+              <tr key={player.id}>
+                <td><strong>{player.firstName} {player.lastName}</strong></td>
+                <td>{player.position}</td>
+                <td>{player.age}</td>
+                <td><strong>{player.overall}</strong></td>
+                <td><strong>{player.potential}</strong></td>
+                <td>{player.stats.snaps ? `${player.stats.snaps.toLocaleString()} snaps` : isPracticeSquadPlayer(player) ? "Practice" : "Needs reps"}</td>
+                <td>{medicalStatusLabel(player)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      </section>
+    </section>
+  );
 }
 
 function RosterFilterChip({ label, onClear }: { label: string; onClear: () => void }) {
@@ -3058,22 +3179,341 @@ function RosterOverviewTab({ player, save }: { player: Player; save: GameSave })
   );
 }
 
+function playerDisplayName(player: Player): string {
+  return `${player.firstName} ${player.lastName}`;
+}
+
+function compactPlayerName(player: Player): string {
+  return `${player.firstName[0]}. ${player.lastName}`;
+}
+
+type PlayerStatTableCategory = "passing" | "rushing" | "receiving" | "defense" | "kicking" | "punting";
+type StatDisplayRow = {
+  id: string;
+  season: string;
+  age: string | number;
+  team: string;
+  league: string;
+  position: Position | string;
+  stats: PlayerStats;
+  awards: string[];
+  total?: boolean;
+  average?: boolean;
+};
+type StatColumn = {
+  key: string;
+  label: string;
+  title?: string;
+  value: (row: StatDisplayRow) => string | number;
+  sortValue?: (row: StatDisplayRow) => number;
+};
+
+function primaryStatLine(stats: PlayerStats, position: Position): string {
+  if (position === "QB") {
+    return `${stats.passYards} YDS | ${stats.passTouchdowns} TD | ${stats.interceptionsThrown} INT`;
+  }
+  if (["RB"].includes(position)) {
+    return `${stats.rushYards} RUSH | ${stats.rushTouchdowns} TD | ${formatRate(rate(stats.rushYards, stats.rushAttempts), 1)} YPC`;
+  }
+  if (["WR", "TE"].includes(position)) {
+    return `${stats.receptions} REC | ${stats.receivingYards} YDS | ${stats.receivingTouchdowns} TD`;
+  }
+  if (["K"].includes(position)) {
+    return `${stats.fieldGoalsMade}/${stats.fieldGoalAttempts} FG | ${stats.extraPointsMade}/${stats.extraPointAttempts} XP`;
+  }
+  if (["P"].includes(position)) {
+    return `${stats.punts} P | ${stats.puntYards} YDS | ${stats.puntInside20} I20`;
+  }
+  return `${stats.tackles} TKL | ${stats.sacks} SCK | ${stats.interceptions} INT`;
+}
+
+function advancedPlayerStatLine(stats: PlayerStats, position: Position): string {
+  if (position === "QB") {
+    return `CMP ${formatRate(rate(stats.passCompletions, stats.passAttempts, 100), 1, "%")} | Y/A ${formatRate(rate(stats.passYards, stats.passAttempts), 1)} | EFF ${formatRate(passingEfficiency(stats), 1)}`;
+  }
+  if (position === "RB") {
+    return `YPC ${formatRate(rate(stats.rushYards, stats.rushAttempts), 1)} | FUM ${formatRate(rate(stats.fumbles, stats.rushAttempts, 100), 1, "%")}`;
+  }
+  if (["WR", "TE"].includes(position)) {
+    return `Catch ${formatRate(rate(stats.receptions, stats.targets, 100), 1, "%")} | Y/R ${formatRate(rate(stats.receivingYards, stats.receptions), 1)} | Y/T ${formatRate(rate(stats.receivingYards, stats.targets), 1)}`;
+  }
+  if (position === "K") {
+    return `FG ${formatRate(rate(stats.fieldGoalsMade, stats.fieldGoalAttempts, 100), 1, "%")} | XP ${formatRate(rate(stats.extraPointsMade, stats.extraPointAttempts, 100), 1, "%")}`;
+  }
+  if (position === "P") {
+    return `AVG ${formatRate(rate(stats.puntYards, stats.punts), 1)} | I20 ${stats.puntInside20}`;
+  }
+  return `TKL/G ${formatRate(rate(stats.tackles, stats.games), 1)} | SCK/Snap ${formatRate(rate(stats.sacks, stats.defenseSnaps, 100), 2, "%")} | Splash ${stats.sacks + stats.interceptions + stats.forcedFumbles}`;
+}
+
+function teamAbbreviationFor(save: GameSave, teamId: string): string {
+  return save.teams.find((team) => team.id === teamId)?.abbreviation ?? (teamId === FREE_AGENT_TEAM_ID ? "FA" : teamId.toUpperCase());
+}
+
+function scaleStatsPerGames(stats: PlayerStats, targetGames: number): PlayerStats {
+  const games = Math.max(1, stats.games);
+  const factor = targetGames / games;
+  const scaled = normalizePlayerStats(stats);
+  for (const key of Object.keys(scaled) as Array<keyof PlayerStats>) {
+    scaled[key] = key === "games" ? targetGames : Number((scaled[key] * factor).toFixed(1));
+  }
+  return scaled;
+}
+
+function buildPlayerStatRows(player: Player, save: GameSave): StatDisplayRow[] {
+  const currentCombined = mergePlayerStats(player.stats, player.playoffStats);
+  const seasonRows: StatDisplayRow[] = [
+    {
+      id: `current-${player.id}`,
+      season: `${save.seasonYear}`,
+      age: player.age,
+      team: teamAbbreviationFor(save, player.teamId),
+      league: "NFL",
+      position: player.position,
+      stats: currentCombined,
+      awards: []
+    },
+    ...(player.statHistory ?? []).map((entry) => ({
+      id: entry.id,
+      season: `${entry.seasonYear}`,
+      age: entry.age,
+      team: teamAbbreviationFor(save, entry.teamId),
+      league: "NFL",
+      position: entry.position,
+      stats: mergePlayerStats(entry.stats, entry.playoffStats),
+      awards: entry.awards ?? []
+    }))
+  ].filter((row) => row.stats.games || row.stats.snaps || row.id.startsWith("current"));
+  const career = seasonRows.reduce((sum, row) => mergePlayerStats(sum, row.stats), normalizePlayerStats());
+  const years = seasonRows.filter((row) => row.stats.games > 0 || row.stats.snaps > 0).length;
+  return [
+    ...seasonRows,
+    {
+      id: `career-${player.id}`,
+      season: years ? `${years} Yrs` : "Career",
+      age: "",
+      team: "",
+      league: "",
+      position: "",
+      stats: career,
+      awards: [],
+      total: true
+    },
+    {
+      id: `avg17-${player.id}`,
+      season: "17 Game Avg",
+      age: "",
+      team: "",
+      league: "",
+      position: "",
+      stats: scaleStatsPerGames(career, 17),
+      awards: [],
+      average: true
+    }
+  ];
+}
+
+function playerStatColumns(category: PlayerStatTableCategory): StatColumn[] {
+  const base: StatColumn[] = [
+    { key: "season", label: "Season", value: (row) => row.season },
+    { key: "age", label: "Age", value: (row) => row.age },
+    { key: "team", label: "Team", value: (row) => row.team },
+    { key: "league", label: "Lg", value: (row) => row.league },
+    { key: "pos", label: "Pos", value: (row) => row.position },
+    { key: "g", label: "G", value: (row) => formatStatNumber(row.stats.games, row.average ? 1 : 0), sortValue: (row) => row.stats.games },
+    { key: "gs", label: "GS", value: (row) => formatStatNumber(row.stats.gamesStarted, row.average ? 1 : 0), sortValue: (row) => row.stats.gamesStarted }
+  ];
+  const awards: StatColumn = { key: "awards", label: "Awards", value: (row) => row.awards.join(", ") };
+  if (category === "passing") {
+    return [
+      ...base,
+      { key: "qbrec", label: "QBrec", value: (row) => row.average ? qbRecord(row.stats) : qbRecord(row.stats) },
+      { key: "cmp", label: "Cmp", value: (row) => formatStatNumber(row.stats.passCompletions, row.average ? 1 : 0), sortValue: (row) => row.stats.passCompletions },
+      { key: "att", label: "Att", value: (row) => formatStatNumber(row.stats.passAttempts, row.average ? 1 : 0), sortValue: (row) => row.stats.passAttempts },
+      { key: "cmpPct", label: "Cmp%", value: (row) => formatRate(rate(row.stats.passCompletions, row.stats.passAttempts, 100), 1), sortValue: (row) => rate(row.stats.passCompletions, row.stats.passAttempts, 100) ?? -1 },
+      { key: "yds", label: "Yds", value: (row) => formatStatNumber(row.stats.passYards, row.average ? 1 : 0), sortValue: (row) => row.stats.passYards },
+      { key: "td", label: "TD", value: (row) => formatStatNumber(row.stats.passTouchdowns, row.average ? 1 : 0), sortValue: (row) => row.stats.passTouchdowns },
+      { key: "tdPct", label: "TD%", value: (row) => formatRate(rate(row.stats.passTouchdowns, row.stats.passAttempts, 100), 1), sortValue: (row) => rate(row.stats.passTouchdowns, row.stats.passAttempts, 100) ?? -1 },
+      { key: "int", label: "Int", value: (row) => formatStatNumber(row.stats.interceptionsThrown, row.average ? 1 : 0), sortValue: (row) => row.stats.interceptionsThrown },
+      { key: "intPct", label: "Int%", value: (row) => formatRate(rate(row.stats.interceptionsThrown, row.stats.passAttempts, 100), 1), sortValue: (row) => rate(row.stats.interceptionsThrown, row.stats.passAttempts, 100) ?? -1 },
+      { key: "first", label: "1D", value: (row) => formatStatNumber(row.stats.passingFirstDowns, row.average ? 1 : 0), sortValue: (row) => row.stats.passingFirstDowns },
+      { key: "succ", label: "Succ%", value: (row) => formatRate(successRate(row.stats, "pass"), 1), sortValue: (row) => successRate(row.stats, "pass") ?? -1 },
+      { key: "lng", label: "Lng", value: (row) => formatStatNumber(row.stats.passingLong), sortValue: (row) => row.stats.passingLong },
+      { key: "ya", label: "Y/A", value: (row) => formatRate(rate(row.stats.passYards, row.stats.passAttempts), 1), sortValue: (row) => rate(row.stats.passYards, row.stats.passAttempts) ?? -1 },
+      { key: "aya", label: "AY/A", value: (row) => formatRate(adjustedYardsPerAttempt(row.stats), 1), sortValue: (row) => adjustedYardsPerAttempt(row.stats) ?? -1 },
+      { key: "yc", label: "Y/C", value: (row) => formatRate(rate(row.stats.passYards, row.stats.passCompletions), 1), sortValue: (row) => rate(row.stats.passYards, row.stats.passCompletions) ?? -1 },
+      { key: "yg", label: "Y/G", value: (row) => formatRate(rate(row.stats.passYards, row.stats.games), 1), sortValue: (row) => rate(row.stats.passYards, row.stats.games) ?? -1 },
+      { key: "rate", label: "Rate", value: (row) => formatRate(passerRating(row.stats), 1), sortValue: (row) => passerRating(row.stats) ?? -1 },
+      { key: "qbr", label: "QBR", value: (row) => formatRate(qbrApprox(row.stats), 1), sortValue: (row) => qbrApprox(row.stats) ?? -1 },
+      { key: "sk", label: "Sk", value: (row) => formatStatNumber(row.stats.sacksTaken, row.average ? 1 : 0), sortValue: (row) => row.stats.sacksTaken },
+      { key: "skyds", label: "Yds", title: "Sack yards lost", value: (row) => formatStatNumber(row.stats.sackYardsLost, row.average ? 1 : 0), sortValue: (row) => row.stats.sackYardsLost },
+      { key: "skpct", label: "Sk%", value: (row) => formatRate(rate(row.stats.sacksTaken, row.stats.passAttempts + row.stats.sacksTaken, 100), 2), sortValue: (row) => rate(row.stats.sacksTaken, row.stats.passAttempts + row.stats.sacksTaken, 100) ?? -1 },
+      { key: "nya", label: "NY/A", value: (row) => formatRate(netYardsPerAttempt(row.stats), 2), sortValue: (row) => netYardsPerAttempt(row.stats) ?? -1 },
+      { key: "anya", label: "ANY/A", value: (row) => formatRate(adjustedNetYardsPerAttempt(row.stats), 2), sortValue: (row) => adjustedNetYardsPerAttempt(row.stats) ?? -1 },
+      { key: "4qc", label: "4QC", value: (row) => formatStatNumber(row.stats.fourthQuarterComebacks, row.average ? 1 : 0), sortValue: (row) => row.stats.fourthQuarterComebacks },
+      { key: "gwd", label: "GWD", value: (row) => formatStatNumber(row.stats.gameWinningDrives, row.average ? 1 : 0), sortValue: (row) => row.stats.gameWinningDrives },
+      { key: "av", label: "AV", value: (row) => approximateValue(row.stats, "QB"), sortValue: (row) => approximateValue(row.stats, "QB") },
+      awards
+    ];
+  }
+  if (category === "rushing") {
+    return [...base,
+      { key: "att", label: "Att", value: (row) => formatStatNumber(row.stats.rushAttempts, row.average ? 1 : 0), sortValue: (row) => row.stats.rushAttempts },
+      { key: "yds", label: "Yds", value: (row) => formatStatNumber(row.stats.rushYards, row.average ? 1 : 0), sortValue: (row) => row.stats.rushYards },
+      { key: "td", label: "TD", value: (row) => formatStatNumber(row.stats.rushTouchdowns, row.average ? 1 : 0), sortValue: (row) => row.stats.rushTouchdowns },
+      { key: "first", label: "1D", value: (row) => formatStatNumber(row.stats.rushingFirstDowns, row.average ? 1 : 0), sortValue: (row) => row.stats.rushingFirstDowns },
+      { key: "succ", label: "Succ%", value: (row) => formatRate(successRate(row.stats, "rush"), 1), sortValue: (row) => successRate(row.stats, "rush") ?? -1 },
+      { key: "lng", label: "Lng", value: (row) => formatStatNumber(row.stats.rushingLong), sortValue: (row) => row.stats.rushingLong },
+      { key: "ya", label: "Y/A", value: (row) => formatRate(rate(row.stats.rushYards, row.stats.rushAttempts), 1), sortValue: (row) => rate(row.stats.rushYards, row.stats.rushAttempts) ?? -1 },
+      { key: "yg", label: "Y/G", value: (row) => formatRate(rate(row.stats.rushYards, row.stats.games), 1), sortValue: (row) => rate(row.stats.rushYards, row.stats.games) ?? -1 },
+      { key: "fum", label: "Fmb", value: (row) => formatStatNumber(row.stats.fumbles, row.average ? 1 : 0), sortValue: (row) => row.stats.fumbles },
+      { key: "av", label: "AV", value: (row) => approximateValue(row.stats, "RB"), sortValue: (row) => approximateValue(row.stats, "RB") },
+      awards];
+  }
+  if (category === "receiving") {
+    return [...base,
+      { key: "tgt", label: "Tgt", value: (row) => formatStatNumber(row.stats.targets, row.average ? 1 : 0), sortValue: (row) => row.stats.targets },
+      { key: "rec", label: "Rec", value: (row) => formatStatNumber(row.stats.receptions, row.average ? 1 : 0), sortValue: (row) => row.stats.receptions },
+      { key: "catch", label: "Ctch%", value: (row) => formatRate(rate(row.stats.receptions, row.stats.targets, 100), 1), sortValue: (row) => rate(row.stats.receptions, row.stats.targets, 100) ?? -1 },
+      { key: "yds", label: "Yds", value: (row) => formatStatNumber(row.stats.receivingYards, row.average ? 1 : 0), sortValue: (row) => row.stats.receivingYards },
+      { key: "td", label: "TD", value: (row) => formatStatNumber(row.stats.receivingTouchdowns, row.average ? 1 : 0), sortValue: (row) => row.stats.receivingTouchdowns },
+      { key: "first", label: "1D", value: (row) => formatStatNumber(row.stats.receivingFirstDowns, row.average ? 1 : 0), sortValue: (row) => row.stats.receivingFirstDowns },
+      { key: "succ", label: "Succ%", value: (row) => formatRate(successRate(row.stats, "receive"), 1), sortValue: (row) => successRate(row.stats, "receive") ?? -1 },
+      { key: "lng", label: "Lng", value: (row) => formatStatNumber(row.stats.receivingLong), sortValue: (row) => row.stats.receivingLong },
+      { key: "yr", label: "Y/R", value: (row) => formatRate(rate(row.stats.receivingYards, row.stats.receptions), 1), sortValue: (row) => rate(row.stats.receivingYards, row.stats.receptions) ?? -1 },
+      { key: "yt", label: "Y/Tgt", value: (row) => formatRate(rate(row.stats.receivingYards, row.stats.targets), 1), sortValue: (row) => rate(row.stats.receivingYards, row.stats.targets) ?? -1 },
+      { key: "drop", label: "Drop", value: (row) => formatStatNumber(row.stats.drops, row.average ? 1 : 0), sortValue: (row) => row.stats.drops },
+      { key: "av", label: "AV", value: (row) => approximateValue(row.stats, row.position === "TE" ? "TE" : "WR"), sortValue: (row) => approximateValue(row.stats, row.position === "TE" ? "TE" : "WR") },
+      awards];
+  }
+  if (category === "kicking") {
+    return [...base,
+      { key: "fgm", label: "FGM", value: (row) => formatStatNumber(row.stats.fieldGoalsMade, row.average ? 1 : 0), sortValue: (row) => row.stats.fieldGoalsMade },
+      { key: "fga", label: "FGA", value: (row) => formatStatNumber(row.stats.fieldGoalAttempts, row.average ? 1 : 0), sortValue: (row) => row.stats.fieldGoalAttempts },
+      { key: "fgp", label: "FG%", value: (row) => formatRate(rate(row.stats.fieldGoalsMade, row.stats.fieldGoalAttempts, 100), 1), sortValue: (row) => rate(row.stats.fieldGoalsMade, row.stats.fieldGoalAttempts, 100) ?? -1 },
+      { key: "lng", label: "Lng", value: (row) => formatStatNumber(row.stats.fieldGoalLong), sortValue: (row) => row.stats.fieldGoalLong },
+      { key: "xpm", label: "XPM", value: (row) => formatStatNumber(row.stats.extraPointsMade, row.average ? 1 : 0), sortValue: (row) => row.stats.extraPointsMade },
+      { key: "xpa", label: "XPA", value: (row) => formatStatNumber(row.stats.extraPointAttempts, row.average ? 1 : 0), sortValue: (row) => row.stats.extraPointAttempts },
+      { key: "av", label: "AV", value: (row) => approximateValue(row.stats, "K"), sortValue: (row) => approximateValue(row.stats, "K") },
+      awards];
+  }
+  if (category === "punting") {
+    return [...base,
+      { key: "p", label: "P", value: (row) => formatStatNumber(row.stats.punts, row.average ? 1 : 0), sortValue: (row) => row.stats.punts },
+      { key: "yds", label: "Yds", value: (row) => formatStatNumber(row.stats.puntYards, row.average ? 1 : 0), sortValue: (row) => row.stats.puntYards },
+      { key: "avg", label: "Avg", value: (row) => formatRate(rate(row.stats.puntYards, row.stats.punts), 1), sortValue: (row) => rate(row.stats.puntYards, row.stats.punts) ?? -1 },
+      { key: "lng", label: "Lng", value: (row) => formatStatNumber(row.stats.puntLong), sortValue: (row) => row.stats.puntLong },
+      { key: "i20", label: "I20", value: (row) => formatStatNumber(row.stats.puntInside20, row.average ? 1 : 0), sortValue: (row) => row.stats.puntInside20 },
+      { key: "tb", label: "TB", value: (row) => formatStatNumber(row.stats.puntTouchbacks, row.average ? 1 : 0), sortValue: (row) => row.stats.puntTouchbacks },
+      { key: "av", label: "AV", value: (row) => approximateValue(row.stats, "P"), sortValue: (row) => approximateValue(row.stats, "P") },
+      awards];
+  }
+  return [...base,
+    { key: "tkl", label: "Tkl", value: (row) => formatStatNumber(row.stats.tackles, row.average ? 1 : 0), sortValue: (row) => row.stats.tackles },
+    { key: "tfl", label: "TFL", value: (row) => formatStatNumber(row.stats.tacklesForLoss, row.average ? 1 : 0), sortValue: (row) => row.stats.tacklesForLoss },
+    { key: "sk", label: "Sk", value: (row) => formatStatNumber(row.stats.sacks, 1), sortValue: (row) => row.stats.sacks },
+    { key: "qbh", label: "QBHits", value: (row) => formatStatNumber(row.stats.qbHits, row.average ? 1 : 0), sortValue: (row) => row.stats.qbHits },
+    { key: "pr", label: "Prs", value: (row) => formatStatNumber(row.stats.qbPressures, row.average ? 1 : 0), sortValue: (row) => row.stats.qbPressures },
+    { key: "int", label: "Int", value: (row) => formatStatNumber(row.stats.interceptions, row.average ? 1 : 0), sortValue: (row) => row.stats.interceptions },
+    { key: "pd", label: "PD", value: (row) => formatStatNumber(row.stats.passesDefended, row.average ? 1 : 0), sortValue: (row) => row.stats.passesDefended },
+    { key: "ff", label: "FF", value: (row) => formatStatNumber(row.stats.forcedFumbles, row.average ? 1 : 0), sortValue: (row) => row.stats.forcedFumbles },
+    { key: "fr", label: "FR", value: (row) => formatStatNumber(row.stats.fumbleRecoveries, row.average ? 1 : 0), sortValue: (row) => row.stats.fumbleRecoveries },
+    { key: "ctgt", label: "Tgt", value: (row) => formatStatNumber(row.stats.coverageTargets, row.average ? 1 : 0), sortValue: (row) => row.stats.coverageTargets },
+    { key: "cmpa", label: "CmpA", value: (row) => formatStatNumber(row.stats.completionsAllowed, row.average ? 1 : 0), sortValue: (row) => row.stats.completionsAllowed },
+    { key: "av", label: "AV", value: (row) => approximateValue(row.stats, "LB"), sortValue: (row) => approximateValue(row.stats, "LB") },
+    awards];
+}
+
+function DensePlayerStatsTable({ rows, category }: { rows: StatDisplayRow[]; category: PlayerStatTableCategory }) {
+  const columns = playerStatColumns(category);
+  return (
+    <div className="stat-table-scroll">
+      <table className="stat-reference-table">
+        <thead>
+          <tr>
+            {columns.map((column, index) => <th key={column.key} title={column.title} className={index === 0 ? "sticky-col" : ""}>{column.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id} className={row.total || row.average ? "stat-total-row" : ""}>
+              {columns.map((column, index) => <td key={column.key} className={index === 0 ? "sticky-col" : ""}>{column.value(row)}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RosterStatsTab({ player, save }: { player: Player; save: GameSave }) {
+  const careerTotals = totalPlayerStats(player);
+  const currentCombined = mergePlayerStats(player.stats, player.playoffStats);
+  const category = playerPrimaryStatCategory(player.position);
+  const rows = buildPlayerStatRows(player, save);
+  return (
+    <div className="roster-detail-panel roster-detail-panel-single">
+      <section className="roster-dossier-card roster-overview-card">
+        <div className="training-section-heading">
+          <p className="eyebrow">Stats</p>
+          <strong>Season Production</strong>
+        </div>
+        <div className="roster-dossier-grid roster-overview-grid">
+          <div className="roster-dossier-line">
+            <small>{save.seasonYear}</small>
+            <strong>{primaryStatLine(currentCombined, player.position)}</strong>
+          </div>
+          <div className="roster-dossier-line">
+            <small>Career</small>
+            <strong>{primaryStatLine(careerTotals, player.position)}</strong>
+          </div>
+          <div className="roster-dossier-line">
+            <small>Games</small>
+            <strong>{careerTotals.games}</strong>
+          </div>
+          <div className="roster-dossier-line">
+            <small>Snaps</small>
+            <strong>{careerTotals.snaps}</strong>
+          </div>
+        </div>
+        <DensePlayerStatsTable rows={rows} category={category} />
+      </section>
+    </div>
+  );
+}
+
 function RosterContractTab({
   player,
   save,
+  releasePlayer,
+  postJuneReleasePlayer,
   restructurePlayer,
-  tagOrTenderPlayer
+  tagOrTenderPlayer,
+  extendPlayer,
+  exerciseFifthYearOption
 }: {
   player: Player;
   save: GameSave;
+  releasePlayer?: (playerId: string) => void;
+  postJuneReleasePlayer?: (playerId: string) => void;
   restructurePlayer?: (playerId: string) => void;
   tagOrTenderPlayer?: (playerId: string, kind: Parameters<typeof applyTagOrTender>[3]) => void;
+  extendPlayer?: (playerId: string) => void;
+  exerciseFifthYearOption?: (playerId: string) => void;
 }) {
   const deadMoney = deadMoneyIfMoved(player, save.seasonYear);
   const savings = capSavingsIfMoved(player, save.seasonYear);
   const rights = player.contract?.rights ?? "none";
-  const canTender = save.phase === "contract-decisions" && (rights === "rfa" || rights === "erfa");
-  const canTag = save.phase === "contract-decisions" && rights === "ufa";
+  const franchiseCheck = canApplyTagOrTender(save, player.id, save.selectedTeamId, "franchise");
+  const transitionCheck = canApplyTagOrTender(save, player.id, save.selectedTeamId, "transition");
+  const tenderKind: Parameters<typeof applyTagOrTender>[3] = rights === "erfa" ? "erfa" : "second-round";
+  const tenderCheck = canApplyTagOrTender(save, player.id, save.selectedTeamId, tenderKind);
+  const extensionCheck = canExtendPlayerContract(save, player.id, save.selectedTeamId);
+  const optionCheck = canExerciseFifthYearOption(save, player.id, save.selectedTeamId);
+  const contract = player.contract;
+  const totalValue = contract ? contractTotalValue(contract) : player.salary * Math.max(1, player.contractYears);
+  const activeYears = remainingContractYears(player, save.seasonYear);
+  const voidYears = contract?.voidYears ?? contract?.seasons.filter((season) => season.voidYear).length ?? 0;
   return (
     <div className="roster-detail-panel roster-detail-panel-single">
       <section className="roster-dossier-card roster-overview-card">
@@ -3083,7 +3523,12 @@ function RosterContractTab({
         </div>
         <div className="roster-detail-meta">
           <span>{contractSummary(save, player)}</span>
-          <span>{player.contract?.years ?? player.contractYears} year{(player.contract?.years ?? player.contractYears) === 1 ? "" : "s"} total</span>
+          <span>{activeYears} active year{activeYears === 1 ? "" : "s"} left</span>
+          <span>Total ${totalValue.toFixed(2)}M</span>
+          <span>APY ${(contract?.apy ?? player.salary).toFixed(2)}M</span>
+          <span>Guaranteed ${(contract?.guaranteedTotal ?? player.salary).toFixed(2)}M</span>
+          {voidYears ? <span>{voidYears} void year{voidYears === 1 ? "" : "s"}</span> : null}
+          {contract?.security ? <span>Security {contract.security}</span> : null}
           <span>Rights {rights.toUpperCase()}</span>
           <span>Cut dead ${deadMoney.toFixed(2)}M</span>
           <span>Savings ${savings.toFixed(2)}M</span>
@@ -3113,20 +3558,32 @@ function RosterContractTab({
           </tbody>
         </DataTable>
         <div className="contract-action-grid">
+          <button type="button" disabled={!releasePlayer} onClick={() => releasePlayer?.(player.id)}>
+            Release
+          </button>
+          <button type="button" disabled={!postJuneReleasePlayer} onClick={() => postJuneReleasePlayer?.(player.id)}>
+            Post-June Cut
+          </button>
           <button type="button" disabled={!restructurePlayer || (player.contract?.seasons.filter((season) => season.seasonYear >= save.seasonYear).length ?? 0) < 2} onClick={() => restructurePlayer?.(player.id)}>
             Restructure
           </button>
-          <button type="button" disabled={!tagOrTenderPlayer || !canTag} onClick={() => tagOrTenderPlayer?.(player.id, "franchise")}>
+          <button type="button" disabled={!extendPlayer || !extensionCheck.ok} title={extensionCheck.reason} onClick={() => extendPlayer?.(player.id)}>
+            Extend
+          </button>
+          <button type="button" disabled={!exerciseFifthYearOption || !optionCheck.ok} title={optionCheck.reason} onClick={() => exerciseFifthYearOption?.(player.id)}>
+            Fifth-Year Option
+          </button>
+          <button type="button" disabled={!tagOrTenderPlayer || rights !== "ufa" || !franchiseCheck.ok} title={franchiseCheck.reason} onClick={() => tagOrTenderPlayer?.(player.id, "franchise")}>
             Franchise Tag
           </button>
-          <button type="button" disabled={!tagOrTenderPlayer || !canTag} onClick={() => tagOrTenderPlayer?.(player.id, "transition")}>
+          <button type="button" disabled={!tagOrTenderPlayer || rights !== "ufa" || !transitionCheck.ok} title={transitionCheck.reason} onClick={() => tagOrTenderPlayer?.(player.id, "transition")}>
             Transition Tag
           </button>
-          <button type="button" disabled={!tagOrTenderPlayer || !canTender} onClick={() => tagOrTenderPlayer?.(player.id, rights === "erfa" ? "erfa" : "second-round")}>
+          <button type="button" disabled={!tagOrTenderPlayer || (rights !== "rfa" && rights !== "erfa") || !tenderCheck.ok} title={tenderCheck.reason} onClick={() => tagOrTenderPlayer?.(player.id, tenderKind)}>
             {rights === "erfa" ? "ERFA Tender" : "RFA Tender"}
           </button>
         </div>
-        <p className="roster-contract-note">Future clauses, no-trade language, incentives, and void-year engineering are intentionally out of v1.</p>
+        <p className="roster-contract-note">No-trade language and incentives remain abstracted; guarantees, void years, options, tenders, tags, and extensions are live cap mechanics.</p>
       </section>
     </div>
   );
@@ -3336,20 +3793,27 @@ function RosterMedicalTab({
 function RosterView({
   save,
   releasePlayer,
+  postJuneReleasePlayer,
   restructurePlayer,
   tagOrTenderPlayer,
+  extendPlayer,
+  exerciseFifthYearOption,
   placeOnIr,
   designateToReturn,
   activateFromIr,
   promotePractice,
   elevatePractice,
   protectPractice,
-  releasePractice
+  releasePractice,
+  openTradeForPlayer
 }: {
   save: GameSave;
   releasePlayer: (playerId: string) => void;
+  postJuneReleasePlayer: (playerId: string) => void;
   restructurePlayer: (playerId: string) => void;
   tagOrTenderPlayer: (playerId: string, kind: Parameters<typeof applyTagOrTender>[3]) => void;
+  extendPlayer: (playerId: string) => void;
+  exerciseFifthYearOption: (playerId: string) => void;
   placeOnIr: (playerId: string) => void;
   designateToReturn: (playerId: string) => void;
   activateFromIr: (playerId: string) => void;
@@ -3357,6 +3821,7 @@ function RosterView({
   elevatePractice: (playerId: string) => void;
   protectPractice: (playerId: string) => void;
   releasePractice: (playerId: string) => void;
+  openTradeForPlayer: (playerId?: string) => void;
 }) {
   const [viewTeamId, setViewTeamId] = useState(save.selectedTeamId);
   const [sortBy, setSortBy] = useState<RosterSort>("overall");
@@ -3367,7 +3832,6 @@ function RosterView({
   const [statusFilter, setStatusFilter] = useState<RosterStatusFilter>("all");
   const [experienceFilter, setExperienceFilter] = useState<RosterExperienceFilter>("all");
   const [activePlayerId, setActivePlayerId] = useState<string>();
-  const [tradePlaceholderPlayerId, setTradePlaceholderPlayerId] = useState<string>();
   const [activeModalTab, setActiveModalTab] = useState<RosterModalTab>("overview");
   const team = teamById(save, viewTeamId);
   const players = useMemo(() => playersForTeam(save, team.id), [save, team.id]);
@@ -3382,7 +3846,7 @@ function RosterView({
       if (!rosterExperienceMatch(player, experienceFilter)) return false;
       return true;
     });
-    return rosterSortPlayers(filtered, sortBy);
+    return rosterSortPlayers(filtered, sortBy, statusFilter === "all" && (sortBy === "overall" || sortBy === "potential"));
   }, [ageFilter, experienceFilter, overallFilter, players, positionFilter, potentialFilter, sortBy, statusFilter]);
   const activeFilters = [
     positionFilter !== "all" ? { label: positionFilter, clear: () => setPositionFilter("all") } : undefined,
@@ -3393,17 +3857,13 @@ function RosterView({
     experienceFilter !== "all" ? { label: experienceFilter === "rookie" ? "Rookies" : `${experienceFilter} yrs`, clear: () => setExperienceFilter("all") } : undefined
   ].filter((item): item is { label: string; clear: () => void } => Boolean(item));
   const activePlayer = activePlayerId ? players.find((player) => player.id === activePlayerId) : undefined;
-  const tradePlaceholderPlayer = tradePlaceholderPlayerId ? players.find((player) => player.id === tradePlaceholderPlayerId) : undefined;
   const canManageRoster = viewTeamId === save.selectedTeamId;
 
   useEffect(() => {
     if (activePlayerId && !players.some((player) => player.id === activePlayerId)) {
       setActivePlayerId(undefined);
     }
-    if (tradePlaceholderPlayerId && !players.some((player) => player.id === tradePlaceholderPlayerId)) {
-      setTradePlaceholderPlayerId(undefined);
-    }
-  }, [activePlayerId, players, tradePlaceholderPlayerId]);
+  }, [activePlayerId, players]);
 
   useEffect(() => {
     if (activePlayerId) {
@@ -3592,7 +4052,7 @@ function RosterView({
                     <button
                       type="button"
                       className="roster-row-action"
-                      onClick={() => setTradePlaceholderPlayerId(player.id)}
+                      onClick={() => openTradeForPlayer(player.id)}
                     >
                       Trade
                     </button>
@@ -3707,6 +4167,7 @@ function RosterView({
                 ["overview", "Overview"],
                 ["contract", "Contract"],
                 ["ratings", "Ratings"],
+                ["stats", "Stats"],
                 ["medical", "Medical"]
               ] as Array<[RosterModalTab, string]>).map(([tab, label]) => (
                 <button
@@ -3726,11 +4187,16 @@ function RosterView({
               <RosterContractTab
                 player={activePlayer}
                 save={save}
+                releasePlayer={canManageRoster ? releasePlayer : undefined}
+                postJuneReleasePlayer={canManageRoster ? postJuneReleasePlayer : undefined}
                 restructurePlayer={canManageRoster ? restructurePlayer : undefined}
                 tagOrTenderPlayer={canManageRoster ? tagOrTenderPlayer : undefined}
+                extendPlayer={canManageRoster ? extendPlayer : undefined}
+                exerciseFifthYearOption={canManageRoster ? exerciseFifthYearOption : undefined}
               />
             ) : null}
             {activeModalTab === "ratings" ? <RosterRatingsTab player={activePlayer} /> : null}
+            {activeModalTab === "stats" ? <RosterStatsTab player={activePlayer} save={save} /> : null}
             {activeModalTab === "medical" ? (
               <RosterMedicalTab
                 player={activePlayer}
@@ -3743,603 +4209,1586 @@ function RosterView({
           </article>
         </div>
       ) : null}
-      {tradePlaceholderPlayer ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setTradePlaceholderPlayerId(undefined)}>
-          <article className="trade-modal roster-trade-placeholder" onMouseDown={(event) => event.stopPropagation()}>
-            <h3>Trade Desk Coming Soon</h3>
-            <p>
-              {tradePlaceholderPlayer.firstName} {tradePlaceholderPlayer.lastName} can be marked for future roster trade workflows,
-              but live roster trades are not wired into this screen yet.
-            </p>
-            <p>
-              This slot is reserved so the roster table already has a front-office action lane when full trade functionality is added.
-            </p>
-            <div className="trade-modal-actions">
-              <button
-                type="button"
-                onClick={() => {
-                  setActivePlayerId(tradePlaceholderPlayer.id);
-                  setTradePlaceholderPlayerId(undefined);
-                }}
-              >
-                Open Player File
-              </button>
-              <button type="button" onClick={() => setTradePlaceholderPlayerId(undefined)}>Close</button>
-            </div>
-          </article>
-        </div>
+    </section>
+  );
+}
+
+function formatTradeMoney(value: number): string {
+  return `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(1)}M`;
+}
+
+function tradeAssetLabel(save: GameSave, asset: TradeAsset): string {
+  if (asset.type === "player") {
+    const player = save.players.find((candidate) => candidate.id === asset.id);
+    return player ? `${player.firstName} ${player.lastName} (${player.position})` : asset.id;
+  }
+  const pick = save.draftPicks.find((candidate) => candidate.id === asset.id);
+  return pick ? `${pick.draftYear} Round ${pick.round}${pick.pickInRound ? `, Pick ${pick.pickInRound}` : ""}` : asset.id;
+}
+
+function tradeAssetKey(asset: TradeAsset): string {
+  return `${asset.type}:${asset.id}`;
+}
+
+function tradeAssetSortLabel(save: GameSave, asset: TradeAsset): string {
+  if (asset.type === "player") {
+    const player = save.players.find((candidate) => candidate.id === asset.id);
+    return player ? `${100 - player.overall}-${player.position}-${player.lastName}` : asset.id;
+  }
+  const pick = save.draftPicks.find((candidate) => candidate.id === asset.id);
+  return pick ? `${pick.draftYear}-${pick.round}-${pick.pickInRound}` : asset.id;
+}
+
+function tradeAssetSecondaryLabel(save: GameSave, asset: TradeAsset): string {
+  if (asset.type === "player") {
+    const player = save.players.find((candidate) => candidate.id === asset.id);
+    return player ? `${player.overall} OVR | ${formatTradeMoney(player.salary)} APY` : "";
+  }
+  const pick = save.draftPicks.find((candidate) => candidate.id === asset.id);
+  if (!pick) return "";
+  return `Original ${teamById(save, pick.originalTeamId).fullName}`;
+}
+
+function TradeTeamIdentity({
+  save,
+  teamId,
+  size = 34,
+  compact = false
+}: {
+  save: GameSave;
+  teamId: string;
+  size?: number;
+  compact?: boolean;
+}) {
+  const team = teamById(save, teamId);
+  return (
+    <span className={`trade-team-identity ${compact ? "compact" : ""}`}>
+      <TeamLogo save={save} teamId={team.id} size={size} />
+      <span>
+        <strong>{compact ? team.name : team.fullName}</strong>
+        <small>{team.abbreviation}</small>
+      </span>
+    </span>
+  );
+}
+
+function TradeTeamMatchup({ save, userTeamId, targetTeamId }: { save: GameSave; userTeamId: string; targetTeamId: string }) {
+  return (
+    <div className="trade-team-matchup">
+      <TradeTeamIdentity save={save} teamId={userTeamId} />
+      <span className="trade-matchup-divider">for</span>
+      <TradeTeamIdentity save={save} teamId={targetTeamId} />
+    </div>
+  );
+}
+
+function TradeAssetContent({ save, asset }: { save: GameSave; asset: TradeAsset }) {
+  const pick = asset.type === "pick" ? save.draftPicks.find((candidate) => candidate.id === asset.id) : undefined;
+  return (
+    <span className="trade-asset-content">
+      {pick ? <TeamLogo save={save} teamId={pick.originalTeamId} size={24} /> : null}
+      <span>
+        <strong>{tradeAssetLabel(save, asset)}</strong>
+        <small>{tradeAssetSecondaryLabel(save, asset)}</small>
+      </span>
+    </span>
+  );
+}
+
+function TradeMiniAssetList({ save, assets }: { save: GameSave; assets: TradeAsset[] }) {
+  if (!assets.length) return <span className="trade-mini-asset-list empty">No assets</span>;
+  return (
+    <span className="trade-mini-asset-list">
+      {assets.map((asset) => (
+        <span key={tradeAssetKey(asset)} title={tradeAssetLabel(save, asset)}>{tradeAssetLabel(save, asset)}</span>
+      ))}
+    </span>
+  );
+}
+
+function TradeTeamLogoStrip({ save, teamIds }: { save: GameSave; teamIds: string[] }) {
+  const uniqueTeamIds = [...new Set(teamIds)].filter((teamId) => save.teams.some((team) => team.id === teamId));
+  return (
+    <span className="trade-team-logo-strip">
+      {uniqueTeamIds.slice(0, 4).map((teamId) => (
+        <TeamLogo key={teamId} save={save} teamId={teamId} size={28} />
+      ))}
+    </span>
+  );
+}
+
+type TradeMarketSection = "assets" | "incoming" | "block" | "market" | "history";
+type TradeDeskTab = "builder" | "incoming" | "block" | "market" | "history";
+type TradeAssetSide = "gives" | "receives";
+type TradeModalState =
+  | { type: "asset"; side: TradeAssetSide; asset: TradeAsset }
+  | { type: "offer"; offer: TradeOffer }
+  | { type: "analysis" }
+  | { type: "history"; entry: TradeHistoryEntry }
+  | { type: "news"; item: TradeNewsItem };
+
+const tradeMarketSections: Array<{ id: TradeMarketSection; label: string }> = [
+  { id: "assets", label: "Assets" },
+  { id: "incoming", label: "Incoming" },
+  { id: "block", label: "Block" },
+  { id: "market", label: "Market" },
+  { id: "history", label: "History" }
+];
+
+const tradeDeskTabs: Array<{ id: TradeDeskTab; label: string }> = [
+  { id: "builder", label: "Deal Builder" },
+  { id: "incoming", label: "Incoming Offers" },
+  { id: "block", label: "Trade Block" },
+  { id: "market", label: "League Market" },
+  { id: "history", label: "History & News" }
+];
+
+function TradingView({
+  save,
+  prefillPlayerId,
+  submitTrade,
+  acceptOffer,
+  toggleBlock,
+  refreshActivity
+}: {
+  save: GameSave;
+  prefillPlayerId?: string;
+  submitTrade: (offer: TradeOffer) => void;
+  acceptOffer: (offerId: string) => void;
+  toggleBlock: (playerId: string) => void;
+  refreshActivity: () => void;
+}) {
+  const userTeamId = save.selectedTeamId;
+  const initialTarget = save.teams.find((team) => team.id !== userTeamId)?.id ?? userTeamId;
+  const [targetTeamId, setTargetTeamId] = useState(initialTarget);
+  const [gives, setGives] = useState<TradeAsset[]>([]);
+  const [receives, setReceives] = useState<TradeAsset[]>([]);
+  const [activeTradeTab, setActiveTradeTab] = useState<TradeDeskTab>("builder");
+  const [activeTradeModal, setActiveTradeModal] = useState<TradeModalState | undefined>();
+  const [assetTab, setAssetTab] = useState<"players" | "picks">("players");
+  const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
+  const [assetSearch, setAssetSearch] = useState("");
+  const [marketSearch, setMarketSearch] = useState("");
+  const [marketTeamFilter, setMarketTeamFilter] = useState<string>("all");
+  const lastPrefillRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (targetTeamId !== userTeamId && save.teams.some((team) => team.id === targetTeamId)) return;
+    setTargetTeamId(save.teams.find((team) => team.id !== userTeamId)?.id ?? userTeamId);
+  }, [save.teams, targetTeamId, userTeamId]);
+
+  useEffect(() => {
+    if (!prefillPlayerId || lastPrefillRef.current === prefillPlayerId) return;
+    const player = save.players.find((candidate) => candidate.id === prefillPlayerId);
+    if (!player || player.teamId === "FA") return;
+    lastPrefillRef.current = prefillPlayerId;
+    const asset: TradeAsset = { type: "player", id: player.id };
+    if (player.teamId === userTeamId) {
+      setGives((current) => current.some((item) => tradeAssetKey(item) === tradeAssetKey(asset)) ? current : [asset, ...current]);
+    } else {
+      setTargetTeamId(player.teamId);
+      setReceives((current) => current.some((item) => tradeAssetKey(item) === tradeAssetKey(asset)) ? current : [asset, ...current]);
+    }
+  }, [prefillPlayerId, save.players, userTeamId]);
+
+  const tradeState = save.tradeState ?? normalizeTradeState(save);
+  const offer = useMemo(() => createTradeOffer(save, userTeamId, targetTeamId, gives, receives), [gives, receives, save, targetTeamId, userTeamId]);
+  const evaluation = useMemo(() => evaluateTradeOffer(save, offer), [offer, save]);
+  const userAssets = useMemo(() => tradeAssetsForTeam(save, userTeamId), [save, userTeamId]);
+  const targetAssets = useMemo(() => tradeAssetsForTeam(save, targetTeamId), [save, targetTeamId]);
+  const selectedKeys = new Set([...gives, ...receives].map(tradeAssetKey));
+  const incomingOffers = tradeState.offers.filter((candidate) => candidate.toTeamId === userTeamId && candidate.source === "cpu" && candidate.status !== "accepted");
+  const userBlockIds = new Set(tradeState.tradeBlock.filter((entry) => entry.userMarked).map((entry) => entry.playerId));
+  const blockPlayers = save.players
+    .filter((player) => player.teamId === userTeamId && !isPracticeSquadPlayer(player))
+    .sort((a, b) => b.overall - a.overall || a.age - b.age);
+  const boardPlayers = tradeState.tradeBlock
+    .map((entry) => save.players.find((player) => player.id === entry.playerId))
+    .filter((player): player is Player => Boolean(player))
+    .slice(0, 24);
+
+  function addAsset(side: "gives" | "receives", asset: TradeAsset) {
+    const update = (current: TradeAsset[]) => selectedKeys.has(tradeAssetKey(asset)) ? current : [...current, asset];
+    if (side === "gives") setGives(update);
+    else setReceives(update);
+  }
+
+  function removeAsset(side: "gives" | "receives", asset: TradeAsset) {
+    const key = tradeAssetKey(asset);
+    if (side === "gives") setGives((current) => current.filter((item) => tradeAssetKey(item) !== key));
+    else setReceives((current) => current.filter((item) => tradeAssetKey(item) !== key));
+  }
+
+  function loadCounterOffer(counter: TradeOffer) {
+    setGives(counter.gives);
+    setReceives(counter.receives);
+    setActiveTradeTab("builder");
+    setActiveTradeModal(undefined);
+  }
+
+  function loadIncomingOffer(incoming: TradeOffer) {
+    setTargetTeamId(incoming.fromTeamId);
+    setGives(incoming.receives);
+    setReceives(incoming.gives);
+    setActiveTradeTab("builder");
+    setActiveTradeModal(undefined);
+  }
+
+  function targetMarketPlayer(player: Player) {
+    setTargetTeamId(player.teamId);
+    setActiveTradeModal({ type: "asset", side: "receives", asset: { type: "player", id: player.id } });
+  }
+
+  function clearBuilder() {
+    setGives([]);
+    setReceives([]);
+  }
+
+  const hasAssets = gives.length > 0 || receives.length > 0;
+  const submitDisabled = !hasAssets || evaluation.hardBlocks.length > 0 || targetTeamId === userTeamId;
+  const historyCount = (tradeState.history?.length ?? 0) + (tradeState.news?.length ?? 0);
+  const filteredBoardPlayers = boardPlayers.filter((player) => {
+    const query = marketSearch.trim().toLowerCase();
+    if (marketTeamFilter !== "all" && player.teamId !== marketTeamFilter) return false;
+    if (!query) return true;
+    return `${player.firstName} ${player.lastName} ${player.position} ${teamById(save, player.teamId).fullName}`.toLowerCase().includes(query);
+  });
+  const tabBadges: Partial<Record<TradeDeskTab, number>> = {
+    incoming: incomingOffers.length,
+    block: userBlockIds.size,
+    market: filteredBoardPlayers.length,
+    history: historyCount
+  };
+
+  return (
+    <section className="view-stack trading-workspace trade-desk">
+      <TradePackageSummaryBar
+        save={save}
+        offer={offer}
+        userTeamId={userTeamId}
+        targetTeamId={targetTeamId}
+        gives={gives}
+        receives={receives}
+        evaluation={evaluation}
+        hasAssets={hasAssets}
+        submitDisabled={submitDisabled}
+        clearBuilder={clearBuilder}
+        submitTrade={submitTrade}
+        loadCounterOffer={loadCounterOffer}
+        removeAsset={removeAsset}
+        openAnalysis={() => setActiveTradeModal({ type: "analysis" })}
+      />
+      <TradeDeskTabs activeTab={activeTradeTab} setActiveTab={setActiveTradeTab} tabBadges={tabBadges} />
+      {activeTradeTab === "builder" ? (
+        <TradeDealBuilderTab
+          save={save}
+          userTeamId={userTeamId}
+          targetTeamId={targetTeamId}
+          setTargetTeamId={setTargetTeamId}
+          assetTab={assetTab}
+          setAssetTab={setAssetTab}
+          positionFilter={positionFilter}
+          setPositionFilter={setPositionFilter}
+          assetSearch={assetSearch}
+          setAssetSearch={setAssetSearch}
+          userAssets={filterTradeAssets(save, userAssets, assetTab, assetSearch, positionFilter)}
+          targetAssets={filterTradeAssets(save, targetAssets, assetTab, assetSearch, positionFilter)}
+          selectedKeys={selectedKeys}
+          openAsset={(side, asset) => setActiveTradeModal({ type: "asset", side, asset })}
+        />
+      ) : null}
+      {activeTradeTab === "incoming" ? (
+        <TradeIncomingOffersTab
+          save={save}
+          incomingOffers={incomingOffers}
+          reviewOffer={(candidate) => setActiveTradeModal({ type: "offer", offer: candidate })}
+          loadIncomingOffer={loadIncomingOffer}
+          acceptOffer={acceptOffer}
+          refreshActivity={refreshActivity}
+        />
+      ) : null}
+      {activeTradeTab === "block" ? (
+        <TradeBlockTab save={save} blockPlayers={blockPlayers} userBlockIds={userBlockIds} toggleBlock={toggleBlock} />
+      ) : null}
+      {activeTradeTab === "market" ? (
+        <TradeMarketTab
+          save={save}
+          boardPlayers={filteredBoardPlayers}
+          marketSearch={marketSearch}
+          setMarketSearch={setMarketSearch}
+          marketTeamFilter={marketTeamFilter}
+          setMarketTeamFilter={setMarketTeamFilter}
+          targetMarketPlayer={targetMarketPlayer}
+        />
+      ) : null}
+      {activeTradeTab === "history" ? (
+        <TradeHistoryTab
+          save={save}
+          openHistory={(entry) => setActiveTradeModal({ type: "history", entry })}
+          openNews={(item) => setActiveTradeModal({ type: "news", item })}
+        />
+      ) : null}
+      {activeTradeModal ? (
+        <TradeDetailModal
+          save={save}
+          modal={activeTradeModal}
+          offer={offer}
+          evaluation={evaluation}
+          close={() => setActiveTradeModal(undefined)}
+          addAsset={(side, asset) => {
+            addAsset(side, asset);
+            setActiveTradeModal(undefined);
+          }}
+          acceptOffer={acceptOffer}
+          loadIncomingOffer={loadIncomingOffer}
+        />
       ) : null}
     </section>
   );
 }
 
-function TrainingView({
+function TradeDeskTabs({
+  activeTab,
+  setActiveTab,
+  tabBadges
+}: {
+  activeTab: TradeDeskTab;
+  setActiveTab: (tab: TradeDeskTab) => void;
+  tabBadges: Partial<Record<TradeDeskTab, number>>;
+}) {
+  return (
+    <div className="trade-desk-tabs" role="tablist" aria-label="Trading desk tabs">
+      {tradeDeskTabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === tab.id}
+          className={activeTab === tab.id ? "selected" : ""}
+          onClick={() => setActiveTab(tab.id)}
+        >
+          <span>{tab.label}</span>
+          {tabBadges[tab.id] ? <strong>{tabBadges[tab.id]}</strong> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TradePackageSummaryBar({
   save,
-  updateTrainingPlan
+  offer,
+  userTeamId,
+  targetTeamId,
+  gives,
+  receives,
+  evaluation,
+  hasAssets,
+  submitDisabled,
+  clearBuilder,
+  submitTrade,
+  loadCounterOffer,
+  removeAsset,
+  openAnalysis
 }: {
   save: GameSave;
-  updateTrainingPlan: (playerId: string, updates: Parameters<typeof updatePlayerTrainingSettings>[1]) => void;
+  offer: TradeOffer;
+  userTeamId: string;
+  targetTeamId: string;
+  gives: TradeAsset[];
+  receives: TradeAsset[];
+  evaluation: TradeEvaluation;
+  hasAssets: boolean;
+  submitDisabled: boolean;
+  clearBuilder: () => void;
+  submitTrade: (offer: TradeOffer) => void;
+  loadCounterOffer: (offer: TradeOffer) => void;
+  removeAsset: (side: TradeAssetSide, asset: TradeAsset) => void;
+  openAnalysis: () => void;
 }) {
-  const [trainingTab, setTrainingTab] = useState<TrainingTab>("configure");
-  const [resultsLens, setResultsLens] = useState<TrainingResultsLens>("summary");
-  const [sortBy, setSortBy] = useState<RosterSort>("overall");
-  const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
-  const [overallFilter, setOverallFilter] = useState<RosterRangeFilter>("all");
-  const [potentialFilter, setPotentialFilter] = useState<RosterRangeFilter>("all");
-  const [ageFilter, setAgeFilter] = useState<RosterAgeFilter>("all");
-  const [statusFilter, setStatusFilter] = useState<RosterStatusFilter>("all");
-  const [bodyPlanFilter, setBodyPlanFilter] = useState<TrainingBodyPlan | "all">("all");
-  const [skillPlanFilter, setSkillPlanFilter] = useState<TrainingSkillPlan | "all">("all");
-  const [targetPositionFilter, setTargetPositionFilter] = useState<Position | "all">("all");
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string>();
-  const team = selectedTeam(save);
-  const allPlayers = useMemo(() => playersForTeam(save, save.selectedTeamId), [save]);
-  const filteredPlayers = useMemo(() => rosterSortPlayers(
-    allPlayers.filter((player) => {
-      if (positionFilter !== "all" && player.position !== positionFilter) return false;
-      if (!rosterRangeMatch(player.overall, overallFilter)) return false;
-      if (!rosterRangeMatch(player.potential, potentialFilter)) return false;
-      if (!rosterAgeMatch(player.age, ageFilter)) return false;
-      if (!rosterStatusMatch(player, statusFilter)) return false;
-      if (bodyPlanFilter !== "all" && player.training.bodyPlan !== bodyPlanFilter) return false;
-      if (skillPlanFilter !== "all" && player.training.skillPlan !== skillPlanFilter) return false;
-      if (targetPositionFilter !== "all" && (player.training.targetPosition ?? player.position) !== targetPositionFilter) return false;
-      return true;
-    }),
-    sortBy
-  ), [ageFilter, allPlayers, bodyPlanFilter, overallFilter, positionFilter, potentialFilter, skillPlanFilter, sortBy, statusFilter, targetPositionFilter]);
-
-  useEffect(() => {
-    if (!filteredPlayers.length) {
-      setSelectedPlayerId(undefined);
-      return;
-    }
-    if (!selectedPlayerId || !filteredPlayers.some((player) => player.id === selectedPlayerId)) {
-      setSelectedPlayerId(filteredPlayers[0].id);
-    }
-  }, [filteredPlayers, selectedPlayerId]);
-
-  const selectedPlayer = filteredPlayers.find((player) => player.id === selectedPlayerId) ?? filteredPlayers[0];
-  const activeFilters = [
-    positionFilter !== "all" ? { label: positionFilter, clear: () => setPositionFilter("all") } : undefined,
-    overallFilter !== "all" ? { label: `OVR ${overallFilter}`, clear: () => setOverallFilter("all") } : undefined,
-    potentialFilter !== "all" ? { label: `POT ${potentialFilter}`, clear: () => setPotentialFilter("all") } : undefined,
-    ageFilter !== "all" ? { label: `Age ${ageFilter}`, clear: () => setAgeFilter("all") } : undefined,
-    statusFilter !== "all" ? { label: statusFilter === "healthy" ? "Healthy only" : statusFilter, clear: () => setStatusFilter("all") } : undefined,
-    bodyPlanFilter !== "all" ? { label: `Body ${bodyPlanOptions.find((option) => option.value === bodyPlanFilter)?.label ?? bodyPlanFilter}`, clear: () => setBodyPlanFilter("all") } : undefined,
-    skillPlanFilter !== "all" ? { label: `Skill ${skillPlanOptions.find((option) => option.value === skillPlanFilter)?.label ?? skillPlanFilter}`, clear: () => setSkillPlanFilter("all") } : undefined,
-    targetPositionFilter !== "all" ? { label: `Target ${targetPositionFilter}`, clear: () => setTargetPositionFilter("all") } : undefined
-  ].filter((item): item is { label: string; clear: () => void } => Boolean(item));
-
-  const playerResults = useMemo(() => allPlayers.map((player) => {
-    const report = player.training.lastReport;
-    const target = player.training.targetPosition ?? player.position;
-    const targetProgress = player.training.conversionProgress[target] ?? (target === player.position ? 100 : 0);
-    return {
-      player,
-      report,
-      readinessDelta: report?.readinessDelta ?? 0,
-      changedPrimaryPosition: Boolean(report?.changedPrimaryPosition),
-      target,
-      targetProgress,
-      bodyShiftScore: Math.abs(player.body.musclePct - 50) + Math.abs(player.body.bodyFatPct - 12) + Math.abs(player.body.conditioning - 70) * 0.35,
-      risk: trainingRiskSummary(player)
-    };
-  }), [allPlayers]);
-  const risers = playerResults
-    .slice()
-    .sort((a, b) => (b.player.overall - a.player.overall) - (a.player.overall - a.player.potential) || b.readinessDelta - a.readinessDelta)
-    .slice(0, 10);
-  const conversions = playerResults
-    .filter((entry) => entry.target !== entry.player.position || entry.changedPrimaryPosition)
-    .sort((a, b) => b.targetProgress - a.targetProgress || Number(b.changedPrimaryPosition) - Number(a.changedPrimaryPosition))
-    .slice(0, 10);
-  const bodyRisk = playerResults
-    .slice()
-    .sort((a, b) => b.bodyShiftScore - a.bodyShiftScore || b.readinessDelta - a.readinessDelta)
-    .slice(0, 10);
-  const latestReports = playerResults.filter((entry) => entry.report);
-  const summary = {
-    avgConditioning: Math.round(allPlayers.reduce((sum, player) => sum + player.body.conditioning, 0) / Math.max(1, allPlayers.length)),
-    avgFlexibility: Math.round(allPlayers.reduce((sum, player) => sum + player.body.flexibility, 0) / Math.max(1, allPlayers.length)),
-    conversionProjects: playerResults.filter((entry) => entry.target !== entry.player.position).length,
-    primaryRoleChanges: playerResults.filter((entry) => entry.changedPrimaryPosition).length,
-    elevatedRisk: playerResults.filter((entry) => entry.risk !== "Risk manageable").length,
-    latestWeek: latestReports[0]?.report?.week
-  };
-
-  function clearTrainingFilters() {
-    setPositionFilter("all");
-    setOverallFilter("all");
-    setPotentialFilter("all");
-    setAgeFilter("all");
-    setStatusFilter("all");
-    setBodyPlanFilter("all");
-    setSkillPlanFilter("all");
-    setTargetPositionFilter("all");
-  }
-
+  const firstMessage = evaluation.hardBlocks[0] ?? evaluation.reasons[0] ?? "Build a package to see partner interest.";
   return (
-    <section className="view-stack training-workspace">
-      <div className="training-page-tabs">
-        <button type="button" className={trainingTab === "configure" ? "selected" : ""} onClick={() => setTrainingTab("configure")}>Configure</button>
-        <button type="button" className={trainingTab === "results" ? "selected" : ""} onClick={() => setTrainingTab("results")}>Training Results</button>
+    <section className="table-card trade-summary-bar">
+      <div className="trade-summary-bar-head">
+        <div>
+          <p className="eyebrow">Trading GM Desk</p>
+          <h3>Current package</h3>
+          <TradeTeamMatchup save={save} userTeamId={userTeamId} targetTeamId={targetTeamId} />
+        </div>
+        <div className="trade-summary-actions">
+          <strong className={`trade-verdict trade-verdict-${evaluation.verdict}`}>{evaluation.verdict}</strong>
+          <button type="button" onClick={openAnalysis}>Analyze Deal</button>
+          <button type="button" disabled={submitDisabled} onClick={() => submitTrade({ ...offer, evaluation })}>Submit Trade</button>
+          {evaluation.counterOffers?.[0] ? <button type="button" onClick={() => loadCounterOffer(evaluation.counterOffers![0])}>Load Counter</button> : null}
+          <button type="button" disabled={!hasAssets} onClick={clearBuilder}>Clear</button>
+        </div>
+      </div>
+      <div className="trade-summary-bar-grid">
+        <TradePackageColumn teamId={userTeamId} save={save} assets={gives} side="gives" removeAsset={removeAsset} compact />
+        <TradePackageColumn teamId={targetTeamId} save={save} assets={receives} side="receives" removeAsset={removeAsset} compact />
+        <div className="trade-summary-bar-metrics">
+          <article><span>Interest</span><strong>{evaluation.interest}</strong></article>
+          <article><span>Value Gap</span><strong>{evaluation.valueGap >= 0 ? "+" : ""}{evaluation.valueGap}</strong></article>
+          <article><span>Blocks</span><strong>{evaluation.hardBlocks.length}</strong></article>
+        </div>
+      </div>
+      <div className="trade-interest summary">
+        <span>AI interest</span>
+        <div><i style={{ width: `${evaluation.interest}%` }} /></div>
+        <strong>{evaluation.interest}</strong>
+      </div>
+      <div className="trade-reasons compact">
+        <span>{firstMessage}</span>
+      </div>
+    </section>
+  );
+}
+
+function TradeDealBuilderTab({
+  save,
+  userTeamId,
+  targetTeamId,
+  setTargetTeamId,
+  assetTab,
+  setAssetTab,
+  positionFilter,
+  setPositionFilter,
+  assetSearch,
+  setAssetSearch,
+  userAssets,
+  targetAssets,
+  selectedKeys,
+  openAsset
+}: {
+  save: GameSave;
+  userTeamId: string;
+  targetTeamId: string;
+  setTargetTeamId: (teamId: string) => void;
+  assetTab: "players" | "picks";
+  setAssetTab: (tab: "players" | "picks") => void;
+  positionFilter: Position | "all";
+  setPositionFilter: (position: Position | "all") => void;
+  assetSearch: string;
+  setAssetSearch: (search: string) => void;
+  userAssets: TradeAsset[];
+  targetAssets: TradeAsset[];
+  selectedKeys: Set<string>;
+  openAsset: (side: TradeAssetSide, asset: TradeAsset) => void;
+}) {
+  return (
+    <section className="table-card trade-tab-panel">
+      <div className="trade-tab-heading">
+        <div>
+          <p className="eyebrow">Deal Builder</p>
+          <h3>Find assets and build the package</h3>
+        </div>
+        <TeamScopePicker save={save} teamId={targetTeamId} setTeamId={setTargetTeamId} label="Partner" />
+      </div>
+      <div className="trade-builder-toolbar">
+        <input value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search players or picks" />
+        <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
+          <option value="all">All Positions</option>
+          {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
+        </select>
+        <div className="trade-mini-tabs">
+          <button type="button" className={assetTab === "players" ? "selected" : ""} onClick={() => setAssetTab("players")}>Players</button>
+          <button type="button" className={assetTab === "picks" ? "selected" : ""} onClick={() => setAssetTab("picks")}>Picks</button>
+        </div>
+      </div>
+      <div className="trade-asset-table-grid">
+        <TradeAssetTable title={`${teamById(save, userTeamId).fullName} assets`} save={save} assets={userAssets} disabledKeys={selectedKeys} actionLabel="Send" onSelect={(asset) => openAsset("gives", asset)} />
+        <TradeAssetTable title={`${teamById(save, targetTeamId).fullName} assets`} save={save} assets={targetAssets} disabledKeys={selectedKeys} actionLabel="Ask" onSelect={(asset) => openAsset("receives", asset)} />
+      </div>
+    </section>
+  );
+}
+
+function TradeAssetTable({
+  title,
+  save,
+  assets,
+  disabledKeys,
+  actionLabel,
+  onSelect
+}: {
+  title: string;
+  save: GameSave;
+  assets: TradeAsset[];
+  disabledKeys: Set<string>;
+  actionLabel: string;
+  onSelect: (asset: TradeAsset) => void;
+}) {
+  return (
+    <div className="trade-asset-table">
+      <strong>{title}</strong>
+      <div className="trade-asset-table-head">
+        <span>Asset</span>
+        <span>Pos</span>
+        <span>OVR</span>
+        <span>Age</span>
+        <span>APY / Pick</span>
+        <span>Action</span>
+      </div>
+      {assets.length ? assets.map((asset) => (
+        <TradeAssetRow
+          key={tradeAssetKey(asset)}
+          save={save}
+          asset={asset}
+          disabled={disabledKeys.has(tradeAssetKey(asset))}
+          actionLabel={actionLabel}
+          onSelect={() => onSelect(asset)}
+        />
+      )) : <p className="roster-contract-note">No matching assets.</p>}
+    </div>
+  );
+}
+
+function TradeAssetRow({
+  save,
+  asset,
+  disabled,
+  actionLabel,
+  onSelect
+}: {
+  save: GameSave;
+  asset: TradeAsset;
+  disabled?: boolean;
+  actionLabel: string;
+  onSelect: () => void;
+}) {
+  const player = asset.type === "player" ? save.players.find((candidate) => candidate.id === asset.id) : undefined;
+  const pick = asset.type === "pick" ? save.draftPicks.find((candidate) => candidate.id === asset.id) : undefined;
+  const label = tradeAssetLabel(save, asset);
+  return (
+    <div className="trade-asset-row">
+      <span className="trade-asset-row-main" title={label}>
+        <strong>{label}</strong>
+        <small>{asset.type === "player" && player ? teamById(save, player.teamId).abbreviation : pick ? `Original ${teamById(save, pick.originalTeamId).abbreviation}` : "Unknown"}</small>
+      </span>
+      <span>{player?.position ?? "-"}</span>
+      <span><strong>{player?.overall ?? "-"}</strong></span>
+      <span>{player?.age ?? "-"}</span>
+      <span>{player ? formatTradeMoney(player.salary) : pick ? `${pick.draftYear} R${pick.round}` : "-"}</span>
+      <button type="button" disabled={disabled} onClick={onSelect}>{disabled ? "Added" : actionLabel}</button>
+    </div>
+  );
+}
+
+function TradeIncomingOffersTab({
+  save,
+  incomingOffers,
+  reviewOffer,
+  loadIncomingOffer,
+  acceptOffer,
+  refreshActivity
+}: {
+  save: GameSave;
+  incomingOffers: TradeOffer[];
+  reviewOffer: (offer: TradeOffer) => void;
+  loadIncomingOffer: (offer: TradeOffer) => void;
+  acceptOffer: (offerId: string) => void;
+  refreshActivity: () => void;
+}) {
+  return (
+    <section className="table-card trade-tab-panel">
+      <div className="trade-tab-heading">
+        <div>
+          <p className="eyebrow">Incoming Offers</p>
+          <h3>CPU proposals</h3>
+        </div>
+        <button type="button" onClick={refreshActivity}>Refresh AI Activity</button>
+      </div>
+      <div className="trade-offer-list">
+        {incomingOffers.length ? incomingOffers.map((offer) => (
+          <article key={offer.id} className="trade-offer-card compact">
+            <div className="trade-offer-card-head">
+              <div>
+                <strong>{teamById(save, offer.fromTeamId).fullName}</strong>
+                <small>Interest {offer.evaluation.interest} | Gap {offer.evaluation.valueGap >= 0 ? "+" : ""}{offer.evaluation.valueGap}</small>
+              </div>
+              <strong className={`trade-verdict trade-verdict-${offer.evaluation.verdict}`}>{offer.evaluation.verdict}</strong>
+            </div>
+            <div className="trade-offer-packages">
+              <div><strong>You send</strong><TradeMiniAssetList save={save} assets={offer.receives} /></div>
+              <div><strong>You receive</strong><TradeMiniAssetList save={save} assets={offer.gives} /></div>
+            </div>
+            <div className="trade-card-actions">
+              <button type="button" onClick={() => reviewOffer(offer)}>Review</button>
+              <button type="button" onClick={() => loadIncomingOffer(offer)}>Load</button>
+              <button type="button" disabled={offer.evaluation.hardBlocks.length > 0} onClick={() => acceptOffer(offer.id)}>Accept</button>
+            </div>
+          </article>
+        )) : (
+          <div className="trade-empty-state">
+            <strong>No incoming offers</strong>
+            <span>Refresh AI activity or shop players from your block to create more conversations.</span>
+            <button type="button" onClick={refreshActivity}>Refresh AI Activity</button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function TradeBlockTab({ save, blockPlayers, userBlockIds, toggleBlock }: { save: GameSave; blockPlayers: Player[]; userBlockIds: Set<string>; toggleBlock: (playerId: string) => void }) {
+  return (
+    <section className="table-card trade-tab-panel">
+      <div className="trade-tab-heading">
+        <div>
+          <p className="eyebrow">Trade Block</p>
+          <h3>Set user availability</h3>
+        </div>
+      </div>
+      <div className="trade-player-table">
+        <div className="trade-player-table-head"><span>Player</span><span>Pos</span><span>OVR</span><span>Age</span><span>APY</span><span>Status</span><span>Action</span></div>
+        {blockPlayers.map((player) => (
+          <TradePlayerMarketRow
+            key={player.id}
+            save={save}
+            player={player}
+            status={userBlockIds.has(player.id) ? "Shopping" : "Private"}
+            actionLabel={userBlockIds.has(player.id) ? "Remove" : "Shop"}
+            onAction={() => toggleBlock(player.id)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TradeMarketTab({
+  save,
+  boardPlayers,
+  marketSearch,
+  setMarketSearch,
+  marketTeamFilter,
+  setMarketTeamFilter,
+  targetMarketPlayer
+}: {
+  save: GameSave;
+  boardPlayers: Player[];
+  marketSearch: string;
+  setMarketSearch: (search: string) => void;
+  marketTeamFilter: string;
+  setMarketTeamFilter: (teamId: string) => void;
+  targetMarketPlayer: (player: Player) => void;
+}) {
+  return (
+    <section className="table-card trade-tab-panel">
+      <div className="trade-tab-heading">
+        <div>
+          <p className="eyebrow">League Market</p>
+          <h3>Trade-block targets</h3>
+        </div>
+      </div>
+      <div className="trade-builder-toolbar market">
+        <input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search market targets" />
+        <select value={marketTeamFilter} onChange={(event) => setMarketTeamFilter(event.target.value)}>
+          <option value="all">All Teams</option>
+          {save.teams.slice().sort((a, b) => a.fullName.localeCompare(b.fullName)).map((team) => (
+            <option key={team.id} value={team.id}>{team.fullName}</option>
+          ))}
+        </select>
+      </div>
+      <div className="trade-player-table">
+        <div className="trade-player-table-head"><span>Player</span><span>Pos</span><span>OVR</span><span>Age</span><span>APY</span><span>Team</span><span>Action</span></div>
+        {boardPlayers.length ? boardPlayers.map((player) => (
+          <TradePlayerMarketRow
+            key={player.id}
+            save={save}
+            player={player}
+            status={teamById(save, player.teamId).abbreviation}
+            actionLabel="Target"
+            onAction={() => targetMarketPlayer(player)}
+          />
+        )) : (
+          <div className="trade-empty-state">
+            <strong>No matching targets</strong>
+            <span>Change the team or search filter to scan more of the market.</span>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function TradePlayerMarketRow({
+  player,
+  status,
+  actionLabel,
+  onAction
+}: {
+  save: GameSave;
+  player: Player;
+  status: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <div className="trade-player-market-row">
+      <span title={`${player.firstName} ${player.lastName}`}><strong>{player.firstName} {player.lastName}</strong></span>
+      <span>{player.position}</span>
+      <span><strong>{player.overall}</strong></span>
+      <span>{player.age}</span>
+      <span>{formatTradeMoney(player.salary)}</span>
+      <span>{status}</span>
+      <button type="button" onClick={onAction}>{actionLabel}</button>
+    </div>
+  );
+}
+
+function TradeHistoryTab({ save, openHistory, openNews }: { save: GameSave; openHistory: (entry: TradeHistoryEntry) => void; openNews: (item: TradeNewsItem) => void }) {
+  const history = (save.tradeState?.history ?? []).slice(0, 16);
+  const news = (save.tradeState?.news ?? []).slice(0, 16);
+  return (
+    <section className="table-card trade-tab-panel">
+      <div className="trade-tab-heading">
+        <div>
+          <p className="eyebrow">History & News</p>
+          <h3>Completed trades and transaction wire</h3>
+        </div>
+      </div>
+      <div className="trade-history-grid">
+        <div className="trade-history-list">
+          <strong>Completed trades</strong>
+          {history.length ? history.map((entry) => (
+            <button key={entry.id} type="button" className="trade-history-row" onClick={() => openHistory(entry)}>
+              <span>{entry.date ?? `Week ${entry.week}`}</span>
+              <strong>{entry.summary}</strong>
+            </button>
+          )) : <p className="roster-contract-note">No completed regular trade history yet.</p>}
+        </div>
+        <div className="trade-history-list">
+          <strong>League news</strong>
+          {news.length ? news.map((item) => (
+            <button key={item.id} type="button" className="trade-history-row" onClick={() => openNews(item)}>
+              <span>{item.importance}</span>
+              <strong>{item.title}</strong>
+            </button>
+          )) : <p className="roster-contract-note">No trade news yet.</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TradeDetailModal({
+  save,
+  modal,
+  offer,
+  evaluation,
+  close,
+  addAsset,
+  acceptOffer,
+  loadIncomingOffer
+}: {
+  save: GameSave;
+  modal: TradeModalState;
+  offer: TradeOffer;
+  evaluation: TradeEvaluation;
+  close: () => void;
+  addAsset: (side: TradeAssetSide, asset: TradeAsset) => void;
+  acceptOffer: (offerId: string) => void;
+  loadIncomingOffer: (offer: TradeOffer) => void;
+}) {
+  const title = modal.type === "asset"
+    ? tradeAssetLabel(save, modal.asset)
+    : modal.type === "offer"
+      ? `${teamById(save, modal.offer.fromTeamId).fullName} offer`
+      : modal.type === "analysis"
+        ? "Deal analysis"
+        : modal.type === "history"
+          ? "Completed trade"
+          : modal.item.title;
+  return (
+    <div className="modal-backdrop roster-modal-backdrop" role="presentation" onMouseDown={close}>
+      <article className="roster-modal trade-detail-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="roster-modal-header">
+          <div>
+            <p className="eyebrow">Trading GM Desk</p>
+            <h3>{title}</h3>
+          </div>
+          <div className="roster-modal-actions">
+            <button type="button" onClick={close}>Close</button>
+          </div>
+        </div>
+        {modal.type === "asset" ? (
+          <TradeAssetDetail save={save} asset={modal.asset} side={modal.side} addAsset={addAsset} close={close} />
+        ) : null}
+        {modal.type === "offer" ? (
+          <TradeOfferDetail save={save} offer={modal.offer} acceptOffer={acceptOffer} loadIncomingOffer={loadIncomingOffer} />
+        ) : null}
+        {modal.type === "analysis" ? <TradeAnalysisContent save={save} offer={offer} evaluation={evaluation} /> : null}
+        {modal.type === "history" ? (
+          <div className="trade-modal-stack">
+            <p>{modal.entry.summary}</p>
+            <div className="trade-offer-packages">
+              <div><strong>{teamById(save, modal.entry.fromTeamId).fullName} sent</strong><TradeMiniAssetList save={save} assets={modal.entry.gives} /></div>
+              <div><strong>{teamById(save, modal.entry.toTeamId).fullName} sent</strong><TradeMiniAssetList save={save} assets={modal.entry.receives} /></div>
+            </div>
+          </div>
+        ) : null}
+        {modal.type === "news" ? (
+          <div className="trade-modal-stack">
+            <p>{modal.item.body}</p>
+            <small>{modal.item.date ?? `Week ${modal.item.week}`} | {modal.item.importance}</small>
+          </div>
+        ) : null}
+      </article>
+    </div>
+  );
+}
+
+function TradeAssetDetail({ save, asset, side, addAsset, close }: { save: GameSave; asset: TradeAsset; side: TradeAssetSide; addAsset: (side: TradeAssetSide, asset: TradeAsset) => void; close: () => void }) {
+  const player = asset.type === "player" ? save.players.find((candidate) => candidate.id === asset.id) : undefined;
+  const pick = asset.type === "pick" ? save.draftPicks.find((candidate) => candidate.id === asset.id) : undefined;
+  return (
+    <div className="trade-modal-stack">
+      <div className="trade-detail-metrics">
+        {player ? (
+          <>
+            <article><span>Team</span><strong>{teamById(save, player.teamId).fullName}</strong></article>
+            <article><span>Position</span><strong>{player.position}</strong></article>
+            <article><span>OVR</span><strong>{player.overall}</strong></article>
+            <article><span>Age</span><strong>{player.age}</strong></article>
+            <article><span>APY</span><strong>{formatTradeMoney(player.salary)}</strong></article>
+          </>
+        ) : pick ? (
+          <>
+            <article><span>Current Team</span><strong>{teamById(save, pick.currentTeamId).fullName}</strong></article>
+            <article><span>Original Team</span><strong>{teamById(save, pick.originalTeamId).fullName}</strong></article>
+            <article><span>Year</span><strong>{pick.draftYear}</strong></article>
+            <article><span>Round</span><strong>{pick.round}</strong></article>
+            <article><span>Pick</span><strong>{pick.pickInRound ?? "-"}</strong></article>
+          </>
+        ) : <p>Asset not found.</p>}
+      </div>
+      <div className="trade-modal-actions">
+        <button type="button" onClick={() => addAsset(side, asset)}>{side === "gives" ? "Send Asset" : "Ask For Asset"}</button>
+        <button type="button" onClick={close}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function TradeOfferDetail({ save, offer, acceptOffer, loadIncomingOffer }: { save: GameSave; offer: TradeOffer; acceptOffer: (offerId: string) => void; loadIncomingOffer: (offer: TradeOffer) => void }) {
+  return (
+    <div className="trade-modal-stack">
+      <TradeAnalysisContent save={save} offer={offer} evaluation={offer.evaluation} />
+      <div className="trade-offer-packages">
+        <div><strong>You send</strong><TradeMiniAssetList save={save} assets={offer.receives} /></div>
+        <div><strong>You receive</strong><TradeMiniAssetList save={save} assets={offer.gives} /></div>
+      </div>
+      <div className="trade-modal-actions">
+        <button type="button" disabled={offer.evaluation.hardBlocks.length > 0} onClick={() => acceptOffer(offer.id)}>Accept Offer</button>
+        <button type="button" onClick={() => loadIncomingOffer(offer)}>Load In Builder</button>
+      </div>
+    </div>
+  );
+}
+
+function TradeAnalysisContent({ save, offer, evaluation }: { save: GameSave; offer: TradeOffer; evaluation: TradeEvaluation }) {
+  const warnings = evaluation.rosterPreview.flatMap((preview) => [...preview.warnings, ...preview.positionWarnings]).slice(0, 8);
+  return (
+    <div className="trade-modal-stack">
+      <div className="trade-summary-metrics rail">
+        <article><span>Verdict</span><strong className={`trade-verdict trade-verdict-${evaluation.verdict}`}>{evaluation.verdict}</strong></article>
+        <article><span>Interest</span><strong>{evaluation.interest}</strong></article>
+        <article><span>Value Gap</span><strong>{evaluation.valueGap >= 0 ? "+" : ""}{evaluation.valueGap}</strong></article>
+        <article><span>Hard Blocks</span><strong>{evaluation.hardBlocks.length}</strong></article>
+      </div>
+      <div className="trade-reasons compact">
+        {[...evaluation.hardBlocks, ...evaluation.reasons].slice(0, 8).map((reason) => <span key={reason}>{reason}</span>)}
+        {!evaluation.hardBlocks.length && !evaluation.reasons.length ? <span>No issues detected yet.</span> : null}
+      </div>
+      <DataTable>
+        <thead><tr><th>Team</th><th>Room</th><th>In</th><th>Out</th><th>Dead</th><th>Projected</th><th>Roster</th></tr></thead>
+        <tbody>
+          {evaluation.capPreview.map((cap) => {
+            const roster = evaluation.rosterPreview.find((preview) => preview.teamId === cap.teamId);
+            return (
+              <tr key={cap.teamId}>
+                <td>{teamById(save, cap.teamId).fullName}</td>
+                <td>{formatTradeMoney(cap.currentRoom)}</td>
+                <td>{formatTradeMoney(cap.incomingCap)}</td>
+                <td>{formatTradeMoney(cap.outgoingCap)}</td>
+                <td>{formatTradeMoney(cap.deadMoney)}</td>
+                <td><strong>{formatTradeMoney(cap.projectedRoom)}</strong></td>
+                <td>{roster?.rosterBefore ?? 0} to {roster?.rosterAfter ?? 0}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </DataTable>
+      {warnings.length ? <div className="trade-reasons compact warnings">{warnings.map((warning) => <span key={warning}>{warning}</span>)}</div> : null}
+      <details className="trade-debug">
+        <summary>Value Breakdown</summary>
+        <TradeBreakdownTable title="Partner receives" rows={evaluation.outgoingBreakdown} />
+        <TradeBreakdownTable title="User receives" rows={evaluation.incomingBreakdown} />
+        <small>Offer ID: {offer.id}</small>
+      </details>
+    </div>
+  );
+}
+
+function TradeMarketPane({
+  save,
+  userTeamId,
+  targetTeamId,
+  setTargetTeamId,
+  activeSection,
+  setActiveSection,
+  sectionBadges,
+  assetTab,
+  setAssetTab,
+  positionFilter,
+  setPositionFilter,
+  assetSearch,
+  setAssetSearch,
+  marketSearch,
+  setMarketSearch,
+  marketTeamFilter,
+  setMarketTeamFilter,
+  userAssets,
+  targetAssets,
+  incomingOffers,
+  blockPlayers,
+  boardPlayers,
+  userBlockIds,
+  selectedKeys,
+  addAsset,
+  loadIncomingOffer,
+  acceptOffer,
+  toggleBlock,
+  targetMarketPlayer,
+  refreshActivity
+}: {
+  save: GameSave;
+  userTeamId: string;
+  targetTeamId: string;
+  setTargetTeamId: (teamId: string) => void;
+  activeSection: TradeMarketSection;
+  setActiveSection: (section: TradeMarketSection) => void;
+  sectionBadges: Partial<Record<TradeMarketSection, number>>;
+  assetTab: "players" | "picks";
+  setAssetTab: (tab: "players" | "picks") => void;
+  positionFilter: Position | "all";
+  setPositionFilter: (position: Position | "all") => void;
+  assetSearch: string;
+  setAssetSearch: (search: string) => void;
+  marketSearch: string;
+  setMarketSearch: (search: string) => void;
+  marketTeamFilter: string;
+  setMarketTeamFilter: (teamId: string) => void;
+  userAssets: TradeAsset[];
+  targetAssets: TradeAsset[];
+  incomingOffers: TradeOffer[];
+  blockPlayers: Player[];
+  boardPlayers: Player[];
+  userBlockIds: Set<string>;
+  selectedKeys: Set<string>;
+  addAsset: (side: "gives" | "receives", asset: TradeAsset) => void;
+  loadIncomingOffer: (offer: TradeOffer) => void;
+  acceptOffer: (offerId: string) => void;
+  toggleBlock: (playerId: string) => void;
+  targetMarketPlayer: (player: Player) => void;
+  refreshActivity: () => void;
+}) {
+  return (
+    <aside className="table-card trade-market-pane">
+      <div className="trade-pane-header">
+        <div>
+          <p className="eyebrow">Market Board</p>
+          <h3>Browse the league</h3>
+        </div>
+        <TeamScopePicker save={save} teamId={targetTeamId} setTeamId={setTargetTeamId} label="Partner" />
       </div>
 
-      {trainingTab === "configure" ? (
-        <>
-          <div className="roster-command-bar training-command-bar">
-            <div className="roster-toolbar-group training-toolbar-grid">
-              <label className="roster-select-field">
-                <span>Sort</span>
-                <select value={sortBy} onChange={(event) => setSortBy(event.target.value as RosterSort)}>
-                  <option value="overall">Overall</option>
-                  <option value="potential">Potential</option>
-                  <option value="age">Age</option>
-                  <option value="position">Position</option>
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>Position</span>
-                <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
-                  <option value="all">All</option>
-                  {POSITIONS.map((position) => (
-                    <option key={position} value={position}>{position}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>OVR</span>
-                <select value={overallFilter} onChange={(event) => setOverallFilter(event.target.value as RosterRangeFilter)}>
-                  <option value="all">All</option>
-                  <option value="90+">90+</option>
-                  <option value="80-89">80-89</option>
-                  <option value="70-79">70-79</option>
-                  <option value="60-69">60-69</option>
-                  <option value="under-60">Under 60</option>
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>POT</span>
-                <select value={potentialFilter} onChange={(event) => setPotentialFilter(event.target.value as RosterRangeFilter)}>
-                  <option value="all">All</option>
-                  <option value="90+">90+</option>
-                  <option value="80-89">80-89</option>
-                  <option value="70-79">70-79</option>
-                  <option value="60-69">60-69</option>
-                  <option value="under-60">Under 60</option>
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>Age</span>
-                <select value={ageFilter} onChange={(event) => setAgeFilter(event.target.value as RosterAgeFilter)}>
-                  <option value="all">All</option>
-                  <option value="24-under">24 and under</option>
-                  <option value="25-28">25-28</option>
-                  <option value="29-32">29-32</option>
-                  <option value="33-plus">33+</option>
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>Status</span>
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as RosterStatusFilter)}>
-                  <option value="all">All</option>
-                  <option value="healthy">Healthy</option>
-                  <option value="limited">Limited</option>
-                  <option value="injured">Injured</option>
-                  <option value="ir">IR</option>
-                  <option value="suspended">Suspended</option>
-                  <option value="practice">Practice</option>
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>Body Plan</span>
-                <select value={bodyPlanFilter} onChange={(event) => setBodyPlanFilter(event.target.value as TrainingBodyPlan | "all")}>
-                  <option value="all">All</option>
-                  {bodyPlanOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>Skill Plan</span>
-                <select value={skillPlanFilter} onChange={(event) => setSkillPlanFilter(event.target.value as TrainingSkillPlan | "all")}>
-                  <option value="all">All</option>
-                  {skillPlanOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="roster-select-field">
-                <span>Target</span>
-                <select value={targetPositionFilter} onChange={(event) => setTargetPositionFilter(event.target.value as Position | "all")}>
-                  <option value="all">All</option>
-                  {POSITIONS.map((position) => (
-                    <option key={position} value={position}>{position}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="roster-toolbar-meta">
-              <span className="read-only-chip">{filteredPlayers.length} players</span>
-              {activeFilters.length ? <button type="button" onClick={clearTrainingFilters}>Clear Filters</button> : null}
+      <div className="trade-market-sections" role="tablist" aria-label="Trade market sections">
+        {tradeMarketSections.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            className={activeSection === section.id ? "selected" : ""}
+            onClick={() => setActiveSection(section.id)}
+          >
+            <span>{section.label}</span>
+            {sectionBadges[section.id] ? <strong>{sectionBadges[section.id]}</strong> : null}
+          </button>
+        ))}
+      </div>
+
+      {activeSection === "assets" ? (
+        <div className="trade-pane-body">
+          <div className="trade-filter-grid">
+            <input value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search players or picks" />
+            <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
+              <option value="all">All Pos</option>
+              {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
+            </select>
+            <div className="trade-mini-tabs">
+              <button type="button" className={assetTab === "players" ? "selected" : ""} onClick={() => setAssetTab("players")}>Players</button>
+              <button type="button" className={assetTab === "picks" ? "selected" : ""} onClick={() => setAssetTab("picks")}>Picks</button>
             </div>
           </div>
-
-          {activeFilters.length ? (
-            <div className="roster-active-filters">
-              {activeFilters.map((filter) => (
-                <RosterFilterChip key={filter.label} label={filter.label} onClear={filter.clear} />
-              ))}
-            </div>
-          ) : null}
-
-          <div className="training-config-layout">
-            <aside className="training-player-list">
-              {filteredPlayers.map((player) => (
-                <button
-                  key={player.id}
-                  type="button"
-                  className={`training-player-row ${selectedPlayer?.id === player.id ? "selected" : ""}`}
-                  onClick={() => setSelectedPlayerId(player.id)}
-                >
-                  <div className="training-player-row-main">
-                    <strong>{player.firstName} {player.lastName}</strong>
-                    <span>{player.position}</span>
-                  </div>
-                  <div className="training-player-row-metrics">
-                    <span>OVR <strong>{player.overall}</strong></span>
-                    <span>POT <strong>{player.potential}</strong></span>
-                  </div>
-                </button>
-              ))}
-              {!filteredPlayers.length ? (
-                <article className="roster-empty-state">
-                  <strong>No players match the current filters.</strong>
-                  <p>Try clearing a filter or widening one of the ranges.</p>
-                </article>
-              ) : null}
-            </aside>
-
-            <div className="training-detail-pane">
-              {selectedPlayer ? (() => {
-                const school = save.schools.find((candidate) => candidate.id === selectedPlayer.collegeId);
-                const report = selectedPlayer.training.lastReport;
-                const bodyForecast = trainingBodyForecast(selectedPlayer);
-                const footballForecast = trainingFootballForecast(selectedPlayer);
-                const conversionForecast = trainingConversionForecast(selectedPlayer);
-                const target = selectedPlayer.training.targetPosition ?? selectedPlayer.position;
-                const targetProgress = selectedPlayer.training.conversionProgress[target] ?? (target === selectedPlayer.position ? 100 : 0);
-                const schoolName = school?.name ?? "Unknown College";
-                return (
-                  <article className={`training-detail-card roster-status-${selectedPlayer.status}`}>
-                    <header className="training-detail-header">
-                      <div className="training-hero-identity">
-                        <div className="roster-player-heading">
-                          <strong>{selectedPlayer.firstName} {selectedPlayer.lastName}</strong>
-                          {rosterStatusSymbol(selectedPlayer) ? <span className={`roster-status-dot roster-status-dot-${selectedPlayer.status}`}>{rosterStatusSymbol(selectedPlayer)?.symbol}</span> : null}
-                        </div>
-                        <div className="roster-player-subline">
-                          <span className="roster-position-tag">{selectedPlayer.position}</span>
-                          <span className="roster-college-badge" title={school?.name ?? "Unknown College"}>
-                            <CollegeLogo school={school} size={28} />
-                          </span>
-                          <span className="roster-experience-badge">{rosterExperienceLabel(selectedPlayer)}</span>
-                        </div>
-                        <p className="training-identity-note">{schoolName} | {selectedPlayer.development.style}</p>
-                      </div>
-                      <div className="training-detail-header-metrics">
-                        <span><small>OVR</small><strong>{selectedPlayer.overall}</strong></span>
-                        <span><small>POT</small><strong>{selectedPlayer.potential}</strong></span>
-                      </div>
-                    </header>
-
-                    <section className="training-section">
-                      <div className="training-section-heading">
-                        <p className="eyebrow">Training Setup</p>
-                        <strong>Plans</strong>
-                      </div>
-                      <div className="training-detail-controls">
-                        <label className="roster-select-field">
-                          <span>Body Plan</span>
-                          <select value={selectedPlayer.training.bodyPlan} onChange={(event) => updateTrainingPlan(selectedPlayer.id, { bodyPlan: event.target.value as TrainingBodyPlan })}>
-                            {bodyPlanOptions.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="roster-select-field">
-                          <span>Skill Plan</span>
-                          <select value={selectedPlayer.training.skillPlan} onChange={(event) => updateTrainingPlan(selectedPlayer.id, { skillPlan: event.target.value as TrainingSkillPlan })}>
-                            {skillPlanOptions.map((option) => (
-                              <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="roster-select-field">
-                          <span>Target Position</span>
-                          <select value={target} onChange={(event) => updateTrainingPlan(selectedPlayer.id, { targetPosition: event.target.value as Position })}>
-                            {POSITIONS.map((position) => (
-                              <option key={position} value={position}>{position}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="training-toggle">
-                          <input
-                            type="checkbox"
-                            checked={selectedPlayer.training.autoPosition}
-                            onChange={(event) => updateTrainingPlan(selectedPlayer.id, { autoPosition: event.target.checked })}
-                          />
-                          <span>Auto-update primary position</span>
-                        </label>
-                      </div>
-                    </section>
-
-                    <section className="training-section">
-                      <div className="training-section-heading">
-                        <p className="eyebrow">Expected Outcome</p>
-                        <strong>Forecast</strong>
-                      </div>
-                      <div className="training-forecast-grid">
-                        {[bodyForecast, footballForecast, conversionForecast].map((item) => (
-                          <article key={item.title} className={`training-forecast-card tone-${item.tone}`}>
-                            <span>{item.title}</span>
-                            <p>{item.summary}</p>
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-
-                    <section className="training-section">
-                      <div className="training-section-heading">
-                        <p className="eyebrow">Body Profile</p>
-                        <strong>Frame</strong>
-                      </div>
-                      <div className="training-vitals training-vitals-compact">
-                        <span><small>Height</small><strong>{formatHeight(selectedPlayer.body.heightInches)}</strong></span>
-                        <span><small>Weight</small><strong>{selectedPlayer.body.weightLbs}</strong></span>
-                      </div>
-                    </section>
-
-                    <section className="training-section training-role-grid">
-                      <div>
-                        <div className="training-section-heading">
-                          <p className="eyebrow">Role Fit</p>
-                          <strong>Conversion</strong>
-                        </div>
-                        <div className="training-conversion-stack">
-                          <span>Primary role <strong>{selectedPlayer.position}</strong></span>
-                          <span>Target role <strong>{target}</strong></span>
-                          <span>Target progress <strong>{clampPercent(targetProgress)}</strong></span>
-                          <span>Work ethic <strong>{selectedPlayer.development.workEthic}</strong></span>
-                          <span>Learning <strong>{selectedPlayer.development.learning}</strong></span>
-                          <span>{trainingRiskSummary(selectedPlayer)}</span>
-                          {report?.changedPrimaryPosition ? <span>Latest shift: <strong>{report.previousPrimaryPosition} to {report.nextPrimaryPosition}</strong></span> : null}
-                        </div>
-                      </div>
-                      {report ? (
-                        <div className="training-latest-report">
-                          <div className="training-section-heading">
-                            <p className="eyebrow">Latest Result</p>
-                            <strong>Week {report.week}</strong>
-                          </div>
-                          <p>{report.summary}</p>
-                          <small>{report.bodySummary} {report.footballSummary} {report.risk}</small>
-                        </div>
-                      ) : (
-                        <div className="training-latest-report">
-                          <div className="training-section-heading">
-                            <p className="eyebrow">Latest Result</p>
-                            <strong>No weekly report yet</strong>
-                          </div>
-                          <p>Advance a week to generate the first training result for this player.</p>
-                        </div>
-                      )}
-                    </section>
-
-                    <section className="training-section training-lab-grid">
-                      <div className="training-lab-card">
-                        <div className="training-section-heading">
-                          <p className="eyebrow">Body Lab</p>
-                          <strong>Training Indicators</strong>
-                        </div>
-                        <div className="training-vitals training-vitals-detail">
-                          <span><small>Muscle</small><strong>{selectedPlayer.body.musclePct}%</strong></span>
-                          <span><small>Body Fat</small><strong>{selectedPlayer.body.bodyFatPct}%</strong></span>
-                          <span><small>Conditioning</small><strong>{selectedPlayer.body.conditioning}</strong></span>
-                          <span><small>Flexibility</small><strong>{selectedPlayer.body.flexibility}</strong></span>
-                          <span><small>Recovery</small><strong>{selectedPlayer.body.recovery}</strong></span>
-                          <span><small>Readiness</small><strong>{selectedPlayer.body.explosiveReadiness}</strong></span>
-                        </div>
-                      </div>
-                      <div className="training-lab-card">
-                        <div className="training-section-heading">
-                          <p className="eyebrow">Deeper Profile</p>
-                          <strong>Role Context</strong>
-                        </div>
-                        <div className="roster-detail-meta training-detail-meta">
-                          <span>Work Ethic {selectedPlayer.development.workEthic}</span>
-                          <span>Learning {selectedPlayer.development.learning}</span>
-                          <span>Peak {selectedPlayer.development.peakAge}</span>
-                          <span>Decline {selectedPlayer.development.declineAge}</span>
-                          <span>{trainingRiskSummary(selectedPlayer)}</span>
-                        </div>
-                        <PlayerRatingsDetails player={selectedPlayer} summary="Ratings" />
-                      </div>
-                    </section>
-                  </article>
-                );
-              })() : (
-                <article className="roster-empty-state">
-                  <strong>No player selected.</strong>
-                  <p>Adjust the filters or pick a player from the list.</p>
-                </article>
-              )}
-            </div>
+          <div className="trade-asset-columns compact">
+            <TradeAssetList teamId={userTeamId} save={save} assets={userAssets} disabledKeys={selectedKeys} addLabel="Send" addAsset={(asset) => addAsset("gives", asset)} />
+            <TradeAssetList teamId={targetTeamId} save={save} assets={targetAssets} disabledKeys={selectedKeys} addLabel="Ask" addAsset={(asset) => addAsset("receives", asset)} />
           </div>
-        </>
-      ) : (
-        <section className="training-results-workspace">
-          <div className="training-results-header">
-            <div className="training-results-lenses">
-              <button type="button" className={resultsLens === "summary" ? "selected" : ""} onClick={() => setResultsLens("summary")}>Summary</button>
-              <button type="button" className={resultsLens === "risers" ? "selected" : ""} onClick={() => setResultsLens("risers")}>Risers</button>
-              <button type="button" className={resultsLens === "conversions" ? "selected" : ""} onClick={() => setResultsLens("conversions")}>Conversions</button>
-              <button type="button" className={resultsLens === "body-risk" ? "selected" : ""} onClick={() => setResultsLens("body-risk")}>Body / Risk</button>
-            </div>
-            <span className="read-only-chip">
-              {summary.latestWeek ? `Week ${summary.latestWeek} latest` : "Season view"}
-            </span>
-          </div>
+        </div>
+      ) : null}
 
-          {resultsLens === "summary" ? (
-            <>
-              <div className="training-summary-grid">
-                <article className="training-summary-card">
-                  <span>Conditioning</span>
-                  <strong>{summary.avgConditioning}</strong>
-                  <small>Average roster conditioning</small>
-                </article>
-                <article className="training-summary-card">
-                  <span>Flexibility</span>
-                  <strong>{summary.avgFlexibility}</strong>
-                  <small>Average roster flexibility</small>
-                </article>
-                <article className="training-summary-card">
-                  <span>Conversions</span>
-                  <strong>{summary.conversionProjects}</strong>
-                  <small>Active role-change projects</small>
-                </article>
-                <article className="training-summary-card">
-                  <span>Role Shifts</span>
-                  <strong>{summary.primaryRoleChanges}</strong>
-                  <small>Latest primary-position changes</small>
-                </article>
-                <article className="training-summary-card">
-                  <span>Risk Flags</span>
-                  <strong>{summary.elevatedRisk}</strong>
-                  <small>Players needing closer management</small>
-                </article>
+      {activeSection === "incoming" ? (
+        <div className="trade-pane-body">
+          <div className="trade-inline-actions">
+            <button type="button" onClick={refreshActivity}>Refresh AI Activity</button>
+          </div>
+          {incomingOffers.length ? incomingOffers.map((offer) => (
+            <article key={offer.id} className="trade-offer-card compact">
+              <div className="trade-offer-card-head">
+                <TradeTeamIdentity save={save} teamId={offer.fromTeamId} size={30} compact />
+                <strong className={`trade-verdict trade-verdict-${offer.evaluation.verdict}`}>{offer.evaluation.verdict}</strong>
               </div>
-
-              <div className="training-results-columns">
-                <section className="training-results-panel">
-                  <div className="training-section-heading">
-                    <p className="eyebrow">Top Risers</p>
-                    <strong>Who looks strongest now</strong>
-                  </div>
-                  {risers.slice(0, 5).map(({ player, report }) => (
-                    <article key={player.id} className="training-results-row">
-                      <div>
-                        <strong>{player.firstName} {player.lastName}</strong>
-                        <small>{player.position} | OVR {player.overall} | POT {player.potential}</small>
-                      </div>
-                      <span>{report?.summary ?? "Stable weekly outlook"}</span>
-                    </article>
-                  ))}
-                </section>
-                <section className="training-results-panel">
-                  <div className="training-section-heading">
-                    <p className="eyebrow">Conversion Watch</p>
-                    <strong>Closest role changes</strong>
-                  </div>
-                  {conversions.slice(0, 5).map(({ player, target, targetProgress, changedPrimaryPosition }) => (
-                    <article key={player.id} className="training-results-row">
-                      <div>
-                        <strong>{player.firstName} {player.lastName}</strong>
-                        <small>{player.position} to {target}</small>
-                      </div>
-                      <span>{changedPrimaryPosition ? "Role shifted" : clampPercent(targetProgress)}</span>
-                    </article>
-                  ))}
-                </section>
-                <section className="training-results-panel">
-                  <div className="training-section-heading">
-                    <p className="eyebrow">Body / Risk</p>
-                    <strong>Where management matters</strong>
-                  </div>
-                  {bodyRisk.slice(0, 5).map(({ player, risk }) => (
-                    <article key={player.id} className="training-results-row">
-                      <div>
-                        <strong>{player.firstName} {player.lastName}</strong>
-                        <small>{player.body.weightLbs} lbs | {player.body.musclePct}% muscle | {player.body.bodyFatPct}% fat</small>
-                      </div>
-                      <span>{risk}</span>
-                    </article>
-                  ))}
-                </section>
+              <div className="trade-offer-packages">
+                <div>
+                  <strong>You send</strong>
+                  <TradeMiniAssetList save={save} assets={offer.receives} />
+                </div>
+                <div>
+                  <strong>You receive</strong>
+                  <TradeMiniAssetList save={save} assets={offer.gives} />
+                </div>
               </div>
-            </>
-          ) : null}
+              <div className="trade-card-actions">
+                <button type="button" onClick={() => loadIncomingOffer(offer)}>Load</button>
+                <button type="button" disabled={offer.evaluation.hardBlocks.length > 0} onClick={() => acceptOffer(offer.id)}>Accept</button>
+              </div>
+            </article>
+          )) : (
+            <div className="trade-empty-state">
+              <strong>No incoming offers</strong>
+              <span>Refresh AI activity or shop players from your block to create more conversations.</span>
+              <button type="button" onClick={refreshActivity}>Refresh AI Activity</button>
+            </div>
+          )}
+        </div>
+      ) : null}
 
-          {resultsLens === "risers" ? (
-            <section className="training-results-panel training-results-board">
-              {risers.map(({ player, report, readinessDelta, risk }) => (
-                <article key={player.id} className="training-results-row board">
-                  <div>
-                    <strong>{player.firstName} {player.lastName}</strong>
-                    <small>{player.position} | OVR {player.overall} | POT {player.potential}</small>
-                  </div>
-                  <span>{report?.summary ?? "Stable weekly outlook"}</span>
-                  <span>Readiness {readinessDelta > 0 ? "+" : ""}{readinessDelta}</span>
-                  <span>{risk}</span>
-                </article>
+      {activeSection === "block" ? (
+        <div className="trade-pane-body">
+          <div className="trade-player-list">
+            {blockPlayers.map((player) => (
+              <TradePlayerActionRow
+                key={player.id}
+                save={save}
+                player={player}
+                status={userBlockIds.has(player.id) ? "Shopping" : "Private"}
+                actionLabel={userBlockIds.has(player.id) ? "Remove" : "Shop"}
+                onAction={() => toggleBlock(player.id)}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {activeSection === "market" ? (
+        <div className="trade-pane-body">
+          <div className="trade-filter-grid market">
+            <input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value)} placeholder="Search market targets" />
+            <select value={marketTeamFilter} onChange={(event) => setMarketTeamFilter(event.target.value)}>
+              <option value="all">All Teams</option>
+              {save.teams.slice().sort((a, b) => a.fullName.localeCompare(b.fullName)).map((team) => (
+                <option key={team.id} value={team.id}>{team.fullName}</option>
               ))}
-            </section>
-          ) : null}
+            </select>
+          </div>
+          <div className="trade-player-list">
+            {boardPlayers.length ? boardPlayers.map((player) => (
+              <TradePlayerActionRow
+                key={player.id}
+                save={save}
+                player={player}
+                status={teamById(save, player.teamId).name}
+                actionLabel="Target"
+                onAction={() => targetMarketPlayer(player)}
+              />
+            )) : (
+              <div className="trade-empty-state">
+                <strong>No matching targets</strong>
+                <span>Change the team or search filter to scan more of the market.</span>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
-          {resultsLens === "conversions" ? (
-            <section className="training-results-panel training-results-board">
-              {conversions.length ? conversions.map(({ player, target, targetProgress, changedPrimaryPosition, report }) => (
-                <article key={player.id} className="training-results-row board">
-                  <div>
-                    <strong>{player.firstName} {player.lastName}</strong>
-                    <small>{player.position} | target {target}</small>
-                  </div>
-                  <span>{changedPrimaryPosition ? "Primary role changed" : clampPercent(targetProgress)}</span>
-                  <span>{report?.summary ?? "Conversion work active"}</span>
-                </article>
-              )) : <article className="roster-empty-state"><strong>No active conversion projects.</strong><p>Set a target position in Configure to start one.</p></article>}
-            </section>
-          ) : null}
+      {activeSection === "history" ? (
+        <div className="trade-pane-body">
+          <TradeHistoryPanel save={save} compact />
+          <TradeNewsPanel save={save} compact />
+        </div>
+      ) : null}
+    </aside>
+  );
+}
 
-          {resultsLens === "body-risk" ? (
-            <section className="training-results-panel training-results-board">
-              {bodyRisk.map(({ player, report, risk }) => (
-                <article key={player.id} className="training-results-row board">
-                  <div>
-                    <strong>{player.firstName} {player.lastName}</strong>
-                    <small>{player.position} | {player.body.weightLbs} lbs | {player.body.musclePct}% muscle | {player.body.bodyFatPct}% fat</small>
-                  </div>
-                  <span>Cond {player.body.conditioning} | Flex {player.body.flexibility}</span>
-                  <span>{risk}</span>
-                  <span>{report?.bodySummary ?? "No weekly body note yet"}</span>
-                </article>
-              ))}
-            </section>
-          ) : null}
-        </section>
-      )}
+function TradePlayerActionRow({
+  save,
+  player,
+  status,
+  actionLabel,
+  onAction
+}: {
+  save: GameSave;
+  player: Player;
+  status: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <article className="trade-player-row">
+      <div className="trade-player-main">
+        <TradeTeamIdentity save={save} teamId={player.teamId} size={30} compact />
+        <span>
+          <strong>{player.firstName} {player.lastName}</strong>
+          <small>{player.position} | {player.overall} OVR | Age {player.age} | {formatTradeMoney(player.salary)} APY</small>
+        </span>
+      </div>
+      <span className="trade-player-status">{status}</span>
+      <button type="button" onClick={onAction}>{actionLabel}</button>
+    </article>
+  );
+}
+
+function TradeDealBuilderPane({
+  save,
+  offer,
+  userTeamId,
+  targetTeamId,
+  gives,
+  receives,
+  evaluation,
+  hasAssets,
+  submitDisabled,
+  removeAsset,
+  clearBuilder,
+  submitTrade,
+  loadCounterOffer,
+  toggleBlock,
+  userBlockIds
+}: {
+  save: GameSave;
+  offer: TradeOffer;
+  userTeamId: string;
+  targetTeamId: string;
+  gives: TradeAsset[];
+  receives: TradeAsset[];
+  evaluation: TradeEvaluation;
+  hasAssets: boolean;
+  submitDisabled: boolean;
+  removeAsset: (side: "gives" | "receives", asset: TradeAsset) => void;
+  clearBuilder: () => void;
+  submitTrade: (offer: TradeOffer) => void;
+  loadCounterOffer: (offer: TradeOffer) => void;
+  toggleBlock: (playerId: string) => void;
+  userBlockIds: Set<string>;
+}) {
+  const firstMessage = evaluation.hardBlocks[0] ?? evaluation.reasons[0] ?? "Add assets from the market board to start pricing the package.";
+  const shoppablePlayers = gives
+    .filter((asset) => asset.type === "player")
+    .map((asset) => save.players.find((player) => player.id === asset.id))
+    .filter((player): player is Player => {
+      if (!player) return false;
+      return !userBlockIds.has(player.id);
+    });
+
+  return (
+    <main className="table-card trade-deal-builder-pane">
+      <div className="trade-pane-header builder">
+        <div>
+          <p className="eyebrow">Deal Builder</p>
+          <h3>Active package</h3>
+          <TradeTeamMatchup save={save} userTeamId={userTeamId} targetTeamId={targetTeamId} />
+        </div>
+        <div className="trade-builder-badges">
+          <span>{gives.length} for {receives.length}</span>
+          <span>{evaluation.hardBlocks.length} blocks</span>
+        </div>
+      </div>
+
+      <div className="trade-package-columns workbench">
+        <TradePackageColumn teamId={userTeamId} save={save} assets={gives} side="gives" removeAsset={removeAsset} />
+        <TradePackageColumn teamId={targetTeamId} save={save} assets={receives} side="receives" removeAsset={removeAsset} />
+      </div>
+
+      <div className="trade-builder-status">
+        <div className="trade-interest">
+          <span>AI interest</span>
+          <div><i style={{ width: `${evaluation.interest}%` }} /></div>
+          <strong>{evaluation.interest}</strong>
+        </div>
+        <strong className={`trade-verdict trade-verdict-${evaluation.verdict}`}>{evaluation.verdict}</strong>
+      </div>
+
+      <div className="trade-reasons builder">
+        <span>{firstMessage}</span>
+        {evaluation.reasons.slice(1, 4).map((reason) => <span key={reason}>{reason}</span>)}
+      </div>
+
+      <div className="trade-builder-actions">
+        <button type="button" disabled={submitDisabled} onClick={() => submitTrade({ ...offer, evaluation })}>Submit Trade</button>
+        {evaluation.counterOffers?.[0] ? <button type="button" onClick={() => loadCounterOffer(evaluation.counterOffers![0])}>Load Counter</button> : null}
+        <button type="button" disabled={!shoppablePlayers.length} onClick={() => shoppablePlayers.forEach((player) => toggleBlock(player.id))}>Shop Selected</button>
+        <button type="button" disabled={!hasAssets} onClick={clearBuilder}>Clear</button>
+      </div>
+    </main>
+  );
+}
+
+function TradeAnalysisRail({ save, offer, evaluation }: { save: GameSave; offer: TradeOffer; evaluation: TradeEvaluation }) {
+  const warnings = evaluation.rosterPreview.flatMap((preview) => [...preview.warnings, ...preview.positionWarnings]).slice(0, 8);
+  return (
+    <aside className="table-card trade-analysis-rail">
+      <div className="trade-pane-header">
+        <div>
+          <p className="eyebrow">Analysis Rail</p>
+          <h3>Live deal impact</h3>
+        </div>
+        <strong className={`trade-verdict trade-verdict-${evaluation.verdict}`}>{evaluation.verdict}</strong>
+      </div>
+
+      <div className="trade-analysis-block">
+        <div className="trade-summary-metrics rail">
+          <article><span>Interest</span><strong>{evaluation.interest}</strong></article>
+          <article><span>Value Gap</span><strong>{evaluation.valueGap >= 0 ? "+" : ""}{evaluation.valueGap}</strong></article>
+          <article><span>Hard Blocks</span><strong>{evaluation.hardBlocks.length}</strong></article>
+        </div>
+        <div className="trade-interest rail">
+          <span>AI interest</span>
+          <div><i style={{ width: `${evaluation.interest}%` }} /></div>
+          <strong>{evaluation.interest}</strong>
+        </div>
+      </div>
+
+      <div className="trade-analysis-block">
+        <strong className="trade-block-title">Reasons</strong>
+        <div className="trade-reasons compact">
+          {[...evaluation.hardBlocks, ...evaluation.reasons].slice(0, 8).map((reason) => <span key={reason}>{reason}</span>)}
+          {!evaluation.hardBlocks.length && !evaluation.reasons.length ? <span>No issues detected yet.</span> : null}
+        </div>
+      </div>
+
+      <div className="trade-analysis-block">
+        <strong className="trade-block-title">Cap / Roster Preview</strong>
+        <DataTable>
+          <thead><tr><th>Team</th><th>Room</th><th>In</th><th>Out</th><th>Dead</th><th>Projected</th><th>Roster</th></tr></thead>
+          <tbody>
+            {evaluation.capPreview.map((cap) => {
+              const roster = evaluation.rosterPreview.find((preview) => preview.teamId === cap.teamId);
+              return (
+                <tr key={cap.teamId}>
+                  <td><TradeTeamIdentity save={save} teamId={cap.teamId} size={26} compact /></td>
+                  <td>{formatTradeMoney(cap.currentRoom)}</td>
+                  <td>{formatTradeMoney(cap.incomingCap)}</td>
+                  <td>{formatTradeMoney(cap.outgoingCap)}</td>
+                  <td>{formatTradeMoney(cap.deadMoney)}</td>
+                  <td><strong>{formatTradeMoney(cap.projectedRoom)}</strong></td>
+                  <td>{roster?.rosterBefore ?? 0} to {roster?.rosterAfter ?? 0}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </DataTable>
+        {warnings.length ? (
+          <div className="trade-reasons compact warnings">
+            {warnings.map((warning) => <span key={warning}>{warning}</span>)}
+          </div>
+        ) : null}
+      </div>
+
+      <details className="trade-debug">
+        <summary>Value Breakdown</summary>
+        <TradeBreakdownTable title="Partner receives" rows={evaluation.outgoingBreakdown} />
+        <TradeBreakdownTable title="User receives" rows={evaluation.incomingBreakdown} />
+        <small>Offer ID: {offer.id}</small>
+      </details>
+    </aside>
+  );
+}
+
+function TradePackageSummary({
+  save,
+  offer,
+  targetTeamId,
+  setTargetTeamId,
+  gives,
+  receives,
+  evaluation,
+  hasAssets,
+  submitDisabled,
+  clearBuilder,
+  submitTrade,
+  refreshActivity,
+  loadCounterOffer,
+  removeAsset
+}: {
+  save: GameSave;
+  offer: TradeOffer;
+  targetTeamId: string;
+  setTargetTeamId: (teamId: string) => void;
+  gives: TradeAsset[];
+  receives: TradeAsset[];
+  evaluation: TradeOffer["evaluation"];
+  hasAssets: boolean;
+  submitDisabled: boolean;
+  clearBuilder: () => void;
+  submitTrade: (offer: TradeOffer) => void;
+  refreshActivity: () => void;
+  loadCounterOffer: (offer: TradeOffer) => void;
+  removeAsset: (side: "gives" | "receives", asset: TradeAsset) => void;
+}) {
+  const userTeam = teamById(save, save.selectedTeamId);
+  const targetTeam = teamById(save, targetTeamId);
+  const firstMessage = evaluation.hardBlocks[0] ?? evaluation.reasons[0] ?? "Build a package to see partner interest.";
+
+  return (
+    <section className="table-card trade-package-summary">
+      <div className="trade-summary-topline">
+        <div>
+          <p className="eyebrow">Trading Ops Desk</p>
+          <h3>Active package</h3>
+          <TradeTeamMatchup save={save} userTeamId={userTeam.id} targetTeamId={targetTeam.id} />
+        </div>
+        <div className="trade-summary-controls">
+          <TeamScopePicker save={save} teamId={targetTeamId} setTeamId={setTargetTeamId} label="Trade partner" />
+          <button type="button" onClick={refreshActivity}>Refresh AI Activity</button>
+        </div>
+      </div>
+
+      <div className="trade-summary-metrics">
+        <article>
+          <span>Verdict</span>
+          <strong className={`trade-verdict trade-verdict-${evaluation.verdict}`}>{evaluation.verdict}</strong>
+        </article>
+        <article>
+          <span>Interest</span>
+          <strong>{evaluation.interest}</strong>
+        </article>
+        <article>
+          <span>Value Gap</span>
+          <strong>{evaluation.valueGap >= 0 ? "+" : ""}{evaluation.valueGap}</strong>
+        </article>
+        <article>
+          <span>Package</span>
+          <strong>{gives.length} for {receives.length}</strong>
+        </article>
+        <article>
+          <span>Blocks</span>
+          <strong>{evaluation.hardBlocks.length}</strong>
+        </article>
+      </div>
+
+      <div className="trade-summary-package">
+        <TradePackageColumn teamId={userTeam.id} save={save} assets={gives} side="gives" removeAsset={removeAsset} compact />
+        <TradePackageColumn teamId={targetTeam.id} save={save} assets={receives} side="receives" removeAsset={removeAsset} compact />
+      </div>
+
+      <div className="trade-interest summary">
+        <span>AI interest</span>
+        <div><i style={{ width: `${evaluation.interest}%` }} /></div>
+        <strong>{evaluation.interest}</strong>
+      </div>
+      <div className="trade-summary-footer">
+        <div className="trade-reasons">
+          <span>{firstMessage}</span>
+        </div>
+        <div className="trade-modal-actions">
+          <button type="button" disabled={submitDisabled} onClick={() => submitTrade({ ...offer, evaluation })}>Submit Trade</button>
+          {evaluation.counterOffers?.[0] ? <button type="button" onClick={() => loadCounterOffer(evaluation.counterOffers![0])}>Load Counter</button> : null}
+          <button type="button" disabled={!hasAssets} onClick={clearBuilder}>Clear Package</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function tradeAssetsForTeam(save: GameSave, teamId: string): TradeAsset[] {
+  const playerAssets = save.players
+    .filter((player) => player.teamId === teamId && !isPracticeSquadPlayer(player))
+    .map((player) => ({ type: "player" as const, id: player.id }));
+  const pickAssets = save.draftPicks
+    .filter((pick) => pick.currentTeamId === teamId && !pick.usedByProspectId)
+    .map((pick) => ({ type: "pick" as const, id: pick.id }));
+  return [...playerAssets, ...pickAssets].sort((a, b) => tradeAssetSortLabel(save, a).localeCompare(tradeAssetSortLabel(save, b)));
+}
+
+function filterTradeAssets(save: GameSave, assets: TradeAsset[], tab: "players" | "picks", search: string, position: Position | "all"): TradeAsset[] {
+  const query = search.trim().toLowerCase();
+  return assets.filter((asset) => {
+    if (tab === "players" && asset.type !== "player") return false;
+    if (tab === "picks" && asset.type !== "pick") return false;
+    const player = asset.type === "player" ? save.players.find((candidate) => candidate.id === asset.id) : undefined;
+    if (position !== "all" && player?.position !== position) return false;
+    if (!query) return true;
+    return tradeAssetLabel(save, asset).toLowerCase().includes(query);
+  }).slice(0, 28);
+}
+
+function TradePackageColumn({
+  teamId,
+  save,
+  assets,
+  side,
+  removeAsset,
+  compact = false
+}: {
+  teamId: string;
+  save: GameSave;
+  assets: TradeAsset[];
+  side: "gives" | "receives";
+  removeAsset: (side: "gives" | "receives", asset: TradeAsset) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`trade-package-column ${compact ? "compact" : ""}`}>
+      <div className="trade-package-column-head">
+        <TradeTeamIdentity save={save} teamId={teamId} size={compact ? 28 : 34} compact={compact} />
+        <span>sends</span>
+      </div>
+      {assets.length ? assets.map((asset) => (
+        <button key={tradeAssetKey(asset)} type="button" title={`Remove ${tradeAssetLabel(save, asset)}`} onClick={() => removeAsset(side, asset)}>
+          <span className="trade-package-asset-text">
+            <strong>{tradeAssetLabel(save, asset)}</strong>
+            <small>{tradeAssetSecondaryLabel(save, asset) || "Selected asset"}</small>
+          </span>
+        </button>
+      )) : <span>No assets selected</span>}
+    </div>
+  );
+}
+
+function TradeAssetList({ teamId, save, assets, disabledKeys, addLabel, addAsset }: { teamId: string; save: GameSave; assets: TradeAsset[]; disabledKeys: Set<string>; addLabel: string; addAsset: (asset: TradeAsset) => void }) {
+  return (
+    <div className="trade-asset-list">
+      <TradeTeamIdentity save={save} teamId={teamId} compact />
+      {assets.map((asset) => (
+        <button key={tradeAssetKey(asset)} type="button" disabled={disabledKeys.has(tradeAssetKey(asset))} onClick={() => addAsset(asset)}>
+          <TradeAssetContent save={save} asset={asset} />
+          <em>{addLabel}</em>
+        </button>
+      ))}
+      {!assets.length ? <p className="roster-contract-note">No matching assets.</p> : null}
+    </div>
+  );
+}
+
+function TradeBreakdownTable({ title, rows }: { title: string; rows: TradeOffer["evaluation"]["incomingBreakdown"] }) {
+  return (
+    <div className="trade-breakdown-table">
+      <strong>{title}</strong>
+      <DataTable>
+        <thead><tr><th>Asset</th><th>Base</th><th>Need</th><th>Protect</th><th>Final</th></tr></thead>
+        <tbody>
+          {rows.length ? rows.map((row) => (
+            <tr key={`${row.assetType}-${row.assetId}`}>
+              <td>{row.label}</td>
+              <td>{row.base}</td>
+              <td>{row.need.toFixed(2)}</td>
+              <td>{row.protection.toFixed(2)}</td>
+              <td><strong>{row.final}</strong></td>
+            </tr>
+          )) : <tr><td colSpan={5}>No assets.</td></tr>}
+        </tbody>
+      </DataTable>
+    </div>
+  );
+}
+
+function TradePreviewPanel({ save, offer }: { save: GameSave; offer: TradeOffer }) {
+  const evaluation = offer.evaluation;
+  return (
+    <section className="table-card">
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">Cap / Roster Preview</p>
+          <h3>Deal impact</h3>
+        </div>
+      </div>
+      <DataTable>
+        <thead><tr><th>Team</th><th>Room</th><th>Incoming</th><th>Outgoing</th><th>Dead</th><th>Projected</th><th>Roster</th></tr></thead>
+        <tbody>
+          {evaluation.capPreview.map((cap) => {
+            const roster = evaluation.rosterPreview.find((preview) => preview.teamId === cap.teamId);
+            return (
+              <tr key={cap.teamId}>
+                <td><TradeTeamIdentity save={save} teamId={cap.teamId} size={28} compact /></td>
+                <td>{formatTradeMoney(cap.currentRoom)}</td>
+                <td>{formatTradeMoney(cap.incomingCap)}</td>
+                <td>{formatTradeMoney(cap.outgoingCap)}</td>
+                <td>{formatTradeMoney(cap.deadMoney)}</td>
+                <td><strong>{formatTradeMoney(cap.projectedRoom)}</strong></td>
+                <td>{roster?.rosterBefore ?? 0} to {roster?.rosterAfter ?? 0}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </DataTable>
+      <div className="trade-reasons">
+        {evaluation.rosterPreview.flatMap((preview) => [...preview.warnings, ...preview.positionWarnings]).slice(0, 6).map((warning) => (
+          <span key={warning}>{warning}</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TradeHistoryPanel({ save, compact = false }: { save: GameSave; compact?: boolean }) {
+  const history = (save.tradeState?.history ?? []).slice(0, 10);
+  return (
+    <section className={compact ? "trade-panel-section" : "table-card"}>
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">History</p>
+          <h3>Completed trades</h3>
+        </div>
+      </div>
+      <div className="trade-list-stack">
+        {history.length ? history.map((entry) => (
+          <article key={entry.id} className="trade-offer-card">
+            <div className="trade-offer-card-head">
+              <TradeTeamLogoStrip save={save} teamIds={[entry.fromTeamId, entry.toTeamId]} />
+              <strong>{entry.date ?? `Week ${entry.week}`}</strong>
+            </div>
+            <span>{entry.summary}</span>
+          </article>
+        )) : <p className="roster-contract-note">No completed regular trade history yet.</p>}
+      </div>
+    </section>
+  );
+}
+
+function TradeNewsPanel({ save, compact = false }: { save: GameSave; compact?: boolean }) {
+  const news = (save.tradeState?.news ?? []).slice(0, 10);
+  return (
+    <section className={compact ? "trade-panel-section" : "table-card"}>
+      <div className="section-heading compact">
+        <div>
+          <p className="eyebrow">News</p>
+          <h3>League transaction wire</h3>
+        </div>
+      </div>
+      <div className="trade-list-stack">
+        {news.length ? news.map((item) => (
+          <article key={item.id} className="trade-offer-card">
+            <div className="trade-offer-card-head">
+              <TradeTeamLogoStrip save={save} teamIds={item.teamIds} />
+              <strong>{item.title}</strong>
+            </div>
+            <span>{item.body}</span>
+            <small>{item.importance}</small>
+          </article>
+        )) : <p className="roster-contract-note">No trade news yet.</p>}
+      </div>
     </section>
   );
 }
@@ -4760,6 +6209,7 @@ function FreeAgentPlayerModal({
   const [security, setSecurity] = useState<FreeAgentSecurityLevel>("standard");
   const [role, setRole] = useState<FreeAgentRolePromise>(roleForTeamNeed(save, player, team.id));
   const interest = freeAgentInterestScore(save, player, team.id, { years, apy, security, role });
+  const projectedCapHit = projectedCapHitForOffer({ ...save, selectedTeamId: team.id }, player, years, apy, security);
   const competitors = likelyFreeAgentCompetitors(save, player)
     .filter((teamId) => teamId !== team.id)
     .map((teamId) => teamById(save, teamId).abbreviation)
@@ -4791,6 +6241,7 @@ function FreeAgentPlayerModal({
               <article><span>POT</span><strong>{player.potential}</strong></article>
               <article><span>Ask</span><strong>${expectedFreeAgentAsk(player).toFixed(1)}M</strong></article>
               <article><span>Interest</span><strong>{interest}</strong></article>
+              <article><span>Yr 1 Cap</span><strong>${projectedCapHit.toFixed(1)}M</strong></article>
             </div>
             <p className="free-agent-modal-note">
               Likely competitors: {competitors || "No obvious market pressure"}. {player.contract?.rights === "ufa" && player.previousTeamId ? "This signing can affect the comp-pick ledger." : "No current CFA tag is attached."}
@@ -4994,38 +6445,274 @@ function MedicalView({
   );
 }
 
+type NflStatsCategory = PlayerStatTableCategory | "team-offense" | "team-defense" | "team-efficiency" | "medical";
+type NflStatsBucket = "regular" | "playoffs";
+
+function playerStatsForBucket(player: Player, bucket: NflStatsBucket): PlayerStats {
+  return bucket === "playoffs" ? normalizePlayerStats(player.playoffStats) : normalizePlayerStats(player.stats);
+}
+
+function statCategoryValue(stats: PlayerStats, category: NflStatsCategory): number {
+  if (category === "passing") return stats.passYards;
+  if (category === "rushing") return stats.rushYards;
+  if (category === "receiving") return stats.receivingYards;
+  if (category === "defense") return stats.tackles + stats.sacks * 6 + stats.interceptions * 8 + stats.forcedFumbles * 5;
+  if (category === "kicking") return stats.fieldGoalsMade * 3 + stats.extraPointsMade;
+  if (category === "punting") return stats.punts;
+  return 0;
+}
+
+function aggregateTeamStats(save: GameSave, bucket: NflStatsBucket): TeamGameStats[] {
+  const rows = new Map(save.teams.map((team) => [team.id, normalizeTeamGameStats(team.id)]));
+  for (const game of save.schedule) {
+    if (game.status !== "final") continue;
+    const seasonType = game.seasonType ?? "regular";
+    if (bucket === "regular" && seasonType !== "regular") continue;
+    if (bucket === "playoffs" && seasonType !== "postseason") continue;
+    for (const [teamId, gameStats] of Object.entries(game.teamStats ?? {})) {
+      const row = rows.get(teamId) ?? normalizeTeamGameStats(teamId);
+      rows.set(teamId, mergeTeamGameStats(teamId, row, gameStats));
+    }
+  }
+  return [...rows.values()].filter((row) => row.plays || row.punts || row.fieldGoalAttempts);
+}
+
+type TeamStatColumn = {
+  key: string;
+  label: string;
+  value: (row: TeamGameStats) => string | number;
+  sortValue: (row: TeamGameStats) => number;
+};
+
+function teamStatColumns(category: NflStatsCategory): TeamStatColumn[] {
+  if (category === "team-defense") {
+    return [
+      { key: "team", label: "Team", value: (row) => row.teamId, sortValue: () => 0 },
+      { key: "plays", label: "Def Plays", value: (row) => row.defensivePlays, sortValue: (row) => row.defensivePlays },
+      { key: "takeaways", label: "Takeaways", value: (row) => row.takeaways, sortValue: (row) => row.takeaways },
+      { key: "sacks", label: "Sacks", value: (row) => row.sacks, sortValue: (row) => row.sacks },
+      { key: "sackYds", label: "SkYds", value: (row) => row.sackYards, sortValue: (row) => row.sackYards },
+      { key: "toMargin", label: "TO Margin", value: (row) => row.takeaways - row.turnovers, sortValue: (row) => row.takeaways - row.turnovers },
+      { key: "pen", label: "Pen", value: (row) => row.penalties, sortValue: (row) => row.penalties },
+      { key: "penYds", label: "PenYds", value: (row) => row.penaltyYards, sortValue: (row) => row.penaltyYards }
+    ];
+  }
+  if (category === "team-efficiency") {
+    return [
+      { key: "team", label: "Team", value: (row) => row.teamId, sortValue: () => 0 },
+      { key: "ypp", label: "Y/Play", value: (row) => formatRate(rate(row.totalYards, row.plays), 2), sortValue: (row) => rate(row.totalYards, row.plays) ?? -1 },
+      { key: "succ", label: "Succ%", value: (row) => formatRate(rate(row.successfulPlays, row.plays, 100), 1), sortValue: (row) => rate(row.successfulPlays, row.plays, 100) ?? -1 },
+      { key: "3d", label: "3D%", value: (row) => formatRate(rate(row.thirdDownConversions, row.thirdDownAttempts, 100), 1), sortValue: (row) => rate(row.thirdDownConversions, row.thirdDownAttempts, 100) ?? -1 },
+      { key: "4d", label: "4D%", value: (row) => formatRate(rate(row.fourthDownConversions, row.fourthDownAttempts, 100), 1), sortValue: (row) => rate(row.fourthDownConversions, row.fourthDownAttempts, 100) ?? -1 },
+      { key: "rz", label: "RZ TD%", value: (row) => formatRate(rate(row.redZoneTouchdowns, row.redZoneTrips, 100), 1), sortValue: (row) => rate(row.redZoneTouchdowns, row.redZoneTrips, 100) ?? -1 },
+      { key: "score", label: "Score Dr%", value: (row) => formatRate(rate(row.scoringDrives, row.drives, 100), 1), sortValue: (row) => rate(row.scoringDrives, row.drives, 100) ?? -1 },
+      { key: "expl", label: "Expl", value: (row) => row.explosivePlays, sortValue: (row) => row.explosivePlays }
+    ];
+  }
+  return [
+    { key: "team", label: "Team", value: (row) => row.teamId, sortValue: () => 0 },
+    { key: "plays", label: "Plays", value: (row) => row.plays, sortValue: (row) => row.plays },
+    { key: "drives", label: "Drives", value: (row) => row.drives, sortValue: (row) => row.drives },
+    { key: "yds", label: "Total Yds", value: (row) => row.totalYards, sortValue: (row) => row.totalYards },
+    { key: "pass", label: "Pass", value: (row) => row.passingYards, sortValue: (row) => row.passingYards },
+    { key: "rush", label: "Rush", value: (row) => row.rushingYards, sortValue: (row) => row.rushingYards },
+    { key: "first", label: "1D", value: (row) => row.firstDowns, sortValue: (row) => row.firstDowns },
+    { key: "to", label: "TO", value: (row) => row.turnovers, sortValue: (row) => -row.turnovers },
+    { key: "skA", label: "SkA", value: (row) => row.sacksAllowed, sortValue: (row) => -row.sacksAllowed },
+    { key: "top", label: "TOP", value: (row) => `${Math.floor(row.timeOfPossession / 60)}:${Math.round(row.timeOfPossession % 60).toString().padStart(2, "0")}`, sortValue: (row) => row.timeOfPossession }
+  ];
+}
+
+function playerCategoryPositions(category: PlayerStatTableCategory): Position[] | undefined {
+  if (category === "passing") return ["QB"];
+  if (category === "rushing") return ["QB", "RB", "WR"];
+  if (category === "receiving") return ["RB", "WR", "TE"];
+  if (category === "kicking") return ["K"];
+  if (category === "punting") return ["P"];
+  return undefined;
+}
+
 function StatsView({ save }: { save: GameSave }) {
+  const [category, setCategory] = useState<NflStatsCategory>("passing");
+  const [bucket, setBucket] = useState<NflStatsBucket>("regular");
+  const [teamFilter, setTeamFilter] = useState("all");
+  const [sortKey, setSortKey] = useState("default");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const records = save.careerEndedRecords ?? [];
+  const isTeamCategory = category === "team-offense" || category === "team-defense" || category === "team-efficiency";
+  const playerColumns = !isTeamCategory && category !== "medical" ? playerStatColumns(category) : [];
+  const positions = !isTeamCategory && category !== "medical" ? playerCategoryPositions(category) : undefined;
+  const playerRows = save.players
+    .filter((player) => player.teamId !== FREE_AGENT_TEAM_ID)
+    .filter((player) => teamFilter === "all" || player.teamId === teamFilter)
+    .filter((player) => !positions || positions.includes(player.position))
+    .map((player) => ({ player, stats: playerStatsForBucket(player, bucket) }))
+    .filter(({ stats }) => statCategoryValue(stats, category) > 0)
+    .map(({ player, stats }) => ({
+      player,
+      row: {
+        id: player.id,
+        season: `${save.seasonYear}`,
+        age: player.age,
+        team: teamAbbreviationFor(save, player.teamId),
+        league: "NFL",
+        position: player.position,
+        stats,
+        awards: []
+      } satisfies StatDisplayRow
+    }))
+    .sort((a, b) => {
+      const column = playerColumns.find((candidate) => candidate.key === sortKey);
+      const av = column?.sortValue?.(a.row) ?? statCategoryValue(a.row.stats, category);
+      const bv = column?.sortValue?.(b.row) ?? statCategoryValue(b.row.stats, category);
+      return sortDirection === "asc" ? av - bv : bv - av;
+    })
+    .slice(0, 75);
+  const teamColumns = isTeamCategory ? teamStatColumns(category) : [];
+  const teamRows = aggregateTeamStats(save, bucket)
+    .filter((row) => teamFilter === "all" || row.teamId === teamFilter)
+    .sort((a, b) => {
+      const column = teamColumns.find((candidate) => candidate.key === sortKey);
+      const av = column?.sortValue(a) ?? a.totalYards;
+      const bv = column?.sortValue(b) ?? b.totalYards;
+      return sortDirection === "asc" ? av - bv : bv - av;
+    });
+  const leaderCards = playerRows.slice(0, 3);
+  const setSort = (key: string) => {
+    if (sortKey === key) {
+      setSortDirection(sortDirection === "desc" ? "asc" : "desc");
+    } else {
+      setSortKey(key);
+      setSortDirection("desc");
+    }
+  };
+  const tabs: Array<[NflStatsCategory, string]> = [
+    ["passing", "Passing"],
+    ["rushing", "Rushing"],
+    ["receiving", "Receiving"],
+    ["defense", "Defense"],
+    ["kicking", "Kicking"],
+    ["punting", "Punting"],
+    ["team-offense", "Team Offense"],
+    ["team-defense", "Team Defense"],
+    ["team-efficiency", "Efficiency"],
+    ["medical", "Medical Archive"]
+  ];
   return (
     <section className="view-stack">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">League archive</p>
-          <h3>Career-Ending Medical Records</h3>
+          <p className="eyebrow">NFL Stats</p>
+          <h3>{save.seasonYear} League Production</h3>
         </div>
       </div>
-      <DataTable>
-        <thead>
-          <tr>
-            <th>Week</th>
-            <th>Player</th>
-            <th>Team</th>
-            <th>Pos</th>
-            <th>Age</th>
-            <th>Injury</th>
-            <th>Medical</th>
-            <th>OVR/POT Before</th>
-            <th>Summary</th>
-          </tr>
-        </thead>
-        <tbody>
-          {records.length ? records.map((record) => {
-            const team = teamById(save, record.teamId);
-            return (
+      <div className="segmented-tabs compact-tabs stats-category-tabs">
+        {tabs.map(([nextMode, label]) => (
+            <button key={nextMode} type="button" className={category === nextMode ? "selected" : ""} onClick={() => { setCategory(nextMode); setSortKey("default"); }}>
+              {label}
+            </button>
+        ))}
+      </div>
+      {category !== "medical" ? (
+        <div className="view-command-row">
+          <select value={bucket} onChange={(event) => setBucket(event.target.value as NflStatsBucket)}>
+            <option value="regular">Regular Season</option>
+            <option value="playoffs">Playoffs</option>
+          </select>
+          <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value)}>
+            <option value="all">All Teams</option>
+            {save.teams.map((team) => <option key={team.id} value={team.id}>{team.fullName}</option>)}
+          </select>
+        </div>
+      ) : null}
+      {!isTeamCategory && category !== "medical" ? (
+        <>
+          <div className="stats-leader-strip">
+            {leaderCards.map(({ player, row }, index) => (
+              <article key={player.id} className="stats-leader-card">
+                <span>#{index + 1}</span>
+                <strong>{playerDisplayName(player)}</strong>
+                <small>{teamAbbreviationFor(save, player.teamId)} | {primaryStatLine(row.stats, player.position)}</small>
+              </article>
+            ))}
+          </div>
+          <div className="stat-table-scroll">
+            <table className="stat-reference-table">
+              <thead>
+                <tr>
+                  <th className="sticky-col">Rank</th>
+                  <th>Player</th>
+                  {playerColumns.map((column) => (
+                    <th key={column.key}>
+                      <button type="button" className="stat-sort-button" onClick={() => setSort(column.key)}>{column.label}</button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {playerRows.length ? playerRows.map(({ player, row }, index) => (
+                  <tr key={player.id}>
+                    <td className="sticky-col">#{index + 1}</td>
+                    <td><strong>{playerDisplayName(player)}</strong></td>
+                    {playerColumns.map((column) => <td key={column.key}>{column.value(row)}</td>)}
+                  </tr>
+                )) : (
+                  <tr><td colSpan={playerColumns.length + 2}>No stats recorded for this filter yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : null}
+      {isTeamCategory ? (
+        <div className="stat-table-scroll">
+          <table className="stat-reference-table">
+            <thead>
+              <tr>
+                {teamColumns.map((column, index) => (
+                  <th key={column.key} className={index === 0 ? "sticky-col" : ""}>
+                    <button type="button" className="stat-sort-button" onClick={() => setSort(column.key)}>{column.label}</button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {teamRows.length ? teamRows.map((row) => (
+                <tr key={row.teamId}>
+                  {teamColumns.map((column, index) => (
+                    <td key={column.key} className={index === 0 ? "sticky-col" : ""}>
+                      {column.key === "team" ? <strong>{teamAbbreviationFor(save, row.teamId)}</strong> : column.value(row)}
+                    </td>
+                  ))}
+                </tr>
+              )) : (
+                <tr><td colSpan={teamColumns.length}>No team stats recorded yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {category === "medical" ? (
+        <DataTable>
+          <thead>
+            <tr>
+              <th>Week</th>
+              <th>Player</th>
+              <th>Team</th>
+              <th>Pos</th>
+              <th>Age</th>
+              <th>Injury</th>
+              <th>Medical</th>
+              <th>OVR/POT Before</th>
+              <th>Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.length ? records.map((record) => (
               <tr key={record.id}>
                 <td>{record.week}</td>
                 <td><strong>{record.playerName}</strong></td>
-                <td><TeamLogo save={save} teamId={team.id} size={30} /></td>
+                <td>{teamAbbreviationFor(save, record.teamId)}</td>
                 <td>{record.position}</td>
                 <td>{record.age}</td>
                 <td>{record.injuryName}</td>
@@ -5033,14 +6720,14 @@ function StatsView({ save }: { save: GameSave }) {
                 <td>{record.overallBefore}/{record.potentialBefore}</td>
                 <td>{record.summary}</td>
               </tr>
-            );
-          }) : (
-            <tr>
-              <td colSpan={9}>No career-ending injury records yet.</td>
-            </tr>
-          )}
-        </tbody>
-      </DataTable>
+            )) : (
+              <tr>
+                <td colSpan={9}>No career-ending injury records yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </DataTable>
+      ) : null}
     </section>
   );
 }
@@ -6697,20 +8384,48 @@ function calendarPhaseForDisplay(save: GameSave, date: string): string {
   return `${dayLabel} | ${phase.replace(/-/g, " ")}`;
 }
 
+type ScheduleTableRow =
+  | { kind: "game"; game: GameSave["schedule"][number] }
+  | { kind: "bye"; week: number };
+
+function regularSeasonGames(save: GameSave): GameSave["schedule"] {
+  return save.schedule.filter((game) => (game.seasonType ?? "regular") === "regular");
+}
+
+function teamRegularScheduleRows(save: GameSave, teamId: string): ScheduleTableRow[] {
+  const games = regularSeasonGames(save)
+    .filter((game) => game.homeTeamId === teamId || game.awayTeamId === teamId)
+    .sort((a, b) => a.week - b.week || (a.date ?? "").localeCompare(b.date ?? "") || a.id.localeCompare(b.id));
+  const gameByWeek = new Map(games.map((game) => [game.week, game]));
+  const maxWeek = Math.max(18, ...regularSeasonGames(save).map((game) => game.week));
+  return Array.from({ length: maxWeek }, (_, index) => {
+    const week = index + 1;
+    const game = gameByWeek.get(week);
+    return game ? { kind: "game" as const, game } : { kind: "bye" as const, week };
+  });
+}
+
 function ScheduleView({ save, openGame }: { save: GameSave; openGame: (gameId: string) => void }) {
   const [viewTeamId, setViewTeamId] = useState(save.selectedTeamId);
   const [mode, setMode] = useState<"team" | "week">("team");
   const [viewWeek, setViewWeek] = useState(save.currentWeek);
-  const schedule = mode === "team" ? teamSchedule(save, viewTeamId) : weekGames(save, viewWeek);
+  const teamRows = teamRegularScheduleRows(save, viewTeamId);
+  const schedule: ScheduleTableRow[] = mode === "team"
+    ? teamRows
+    : regularSeasonGames(save)
+      .filter((game) => game.week === viewWeek)
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((game) => ({ kind: "game", game }));
   const viewedTeam = teamById(save, viewTeamId);
-  const maxWeek = Math.max(18, ...save.schedule.map((game) => game.week));
+  const maxWeek = Math.max(18, ...regularSeasonGames(save).map((game) => game.week));
+  const teamGames = teamRows.flatMap((row) => (row.kind === "game" ? [row.game] : []));
   const difficulty =
     mode === "team"
       ? Math.round(
-          teamSchedule(save, viewTeamId).reduce((sum, game) => {
+          teamGames.reduce((sum, game) => {
             const opponentId = game.homeTeamId === viewTeamId ? game.awayTeamId : game.homeTeamId;
             return sum + teamOverall(save, opponentId);
-          }, 0) / Math.max(1, teamSchedule(save, viewTeamId).length)
+          }, 0) / Math.max(1, teamGames.length)
         )
       : undefined;
   return (
@@ -6733,7 +8448,7 @@ function ScheduleView({ save, openGame }: { save: GameSave; openGame: (gameId: s
         {mode === "team" ? <span className="schedule-difficulty">Schedule difficulty <strong>{difficulty}</strong></span> : null}
       </div>
       <div className="week-strip schedule-matchup-strip">
-        {weekGames(save, mode === "week" ? viewWeek : save.currentWeek).map((game) => (
+        {regularSeasonGames(save).filter((game) => game.week === (mode === "week" ? viewWeek : save.currentWeek)).map((game) => (
           <article key={game.id}>
             <span>Week {game.week}</span>
             <strong>
@@ -6757,7 +8472,21 @@ function ScheduleView({ save, openGame }: { save: GameSave; openGame: (gameId: s
           </tr>
         </thead>
         <tbody>
-          {schedule.map((game) => {
+          {schedule.map((row) => {
+            if (row.kind === "bye") {
+              return (
+                <tr key={`bye-${viewTeamId}-${row.week}`} className="schedule-bye-row">
+                  <td>{row.week}</td>
+                  <td><span className="schedule-team-cell schedule-bye-cell"><TeamLogo save={save} teamId={viewedTeam.id} size={34} /><strong>{viewedTeam.fullName}</strong></span></td>
+                  <td>Bye</td>
+                  <td>Rest week</td>
+                  <td>bye</td>
+                  <td>--</td>
+                  <td></td>
+                </tr>
+              );
+            }
+            const game = row.game;
             const home = teamById(save, game.homeTeamId);
             const away = teamById(save, game.awayTeamId);
             const isHome = game.homeTeamId === viewTeamId;
@@ -7059,6 +8788,43 @@ function GameView({ save }: { save: GameSave }) {
     .filter((item) => item.player && item.total > 0)
     .sort((a, b) => b.total - a.total)
     .slice(0, 12);
+  const gamePlayerRows = Object.entries(game.playerStats ?? {})
+    .map(([playerId, stats]) => ({ player: players.get(playerId), stats: normalizePlayerStats(stats) }))
+    .filter((row): row is { player: Player; stats: PlayerStats } => Boolean(row.player));
+  const leadersFor = (predicate: (player: Player, stats: PlayerStats) => boolean, value: (stats: PlayerStats) => number) =>
+    gamePlayerRows
+      .filter(({ player, stats }) => predicate(player, stats))
+      .sort((a, b) => value(b.stats) - value(a.stats))
+      .slice(0, 5);
+  const passingLeaders = leadersFor((player, stats) => player.position === "QB" && stats.passAttempts > 0, (stats) => stats.passYards);
+  const rushingLeaders = leadersFor((_, stats) => stats.rushAttempts > 0, (stats) => stats.rushYards);
+  const receivingLeaders = leadersFor((_, stats) => stats.targets > 0 || stats.receptions > 0, (stats) => stats.receivingYards);
+  const defensiveLeaders = leadersFor((_, stats) => stats.tackles + stats.sacks + stats.interceptions > 0, (stats) => stats.tackles + stats.sacks * 6 + stats.interceptions * 8);
+  const specialLeaders = leadersFor((_, stats) => stats.fieldGoalAttempts + stats.punts > 0, (stats) => stats.fieldGoalsMade * 3 + stats.punts);
+  const homeStats = normalizeTeamGameStats(home.id, game.teamStats?.[home.id]);
+  const awayStats = normalizeTeamGameStats(away.id, game.teamStats?.[away.id]);
+  const boxRows: Array<[string, string | number, string | number]> = [
+    ["Total yards", awayStats.totalYards, homeStats.totalYards],
+    ["Passing", awayStats.passingYards, homeStats.passingYards],
+    ["Rushing", awayStats.rushingYards, homeStats.rushingYards],
+    ["First downs", awayStats.firstDowns, homeStats.firstDowns],
+    ["Turnovers", awayStats.turnovers, homeStats.turnovers],
+    ["Sacks", `${awayStats.sacks}/${awayStats.sacksAllowed}`, `${homeStats.sacks}/${homeStats.sacksAllowed}`],
+    ["Third down", formatRate(rate(awayStats.thirdDownConversions, awayStats.thirdDownAttempts, 100), 1, "%"), formatRate(rate(homeStats.thirdDownConversions, homeStats.thirdDownAttempts, 100), 1, "%")],
+    ["Red zone TD", formatRate(rate(awayStats.redZoneTouchdowns, awayStats.redZoneTrips, 100), 1, "%"), formatRate(rate(homeStats.redZoneTouchdowns, homeStats.redZoneTrips, 100), 1, "%")]
+  ];
+  const renderLeaderGroup = (title: string, rows: typeof passingLeaders, formatter: (stats: PlayerStats) => string) => (
+    <article className="table-card">
+      <div className="section-heading compact"><div><p className="eyebrow">Game Leaders</p><h3>{title}</h3></div></div>
+      {rows.length ? rows.map(({ player, stats }) => (
+        <div className="snap-row" key={`${title}-${player.id}`}>
+          <span>{compactPlayerName(player)}</span>
+          <em>{player.position} | {teamAbbreviationFor(save, player.teamId)}</em>
+          <strong>{formatter(stats)}</strong>
+        </div>
+      )) : <p className="free-agency-empty-log">No {title.toLowerCase()} stats.</p>}
+    </article>
+  );
   return (
     <section className="game-view">
       <div className="scoreboard">
@@ -7076,6 +8842,39 @@ function GameView({ save }: { save: GameSave }) {
           <span>{home.fullName}</span>
           <strong>{game.status === "final" ? game.homeScore : "-"}</strong>
         </div>
+      </div>
+      <section className="table-card">
+        <div className="section-heading compact">
+          <div>
+            <p className="eyebrow">Box Score</p>
+            <h3>Team Stats</h3>
+          </div>
+        </div>
+        <DataTable>
+          <thead>
+            <tr>
+              <th>Stat</th>
+              <th>{away.abbreviation}</th>
+              <th>{home.abbreviation}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {boxRows.map(([label, awayValue, homeValue]) => (
+              <tr key={label}>
+                <td><strong>{label}</strong></td>
+                <td>{awayValue}</td>
+                <td>{homeValue}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      </section>
+      <div className="budget-grid-wide">
+        {renderLeaderGroup("Passing", passingLeaders, (stats) => `${stats.passCompletions}/${stats.passAttempts}, ${stats.passYards} YDS, ${stats.passTouchdowns} TD`)}
+        {renderLeaderGroup("Rushing", rushingLeaders, (stats) => `${stats.rushAttempts} CAR, ${stats.rushYards} YDS, ${stats.rushTouchdowns} TD`)}
+        {renderLeaderGroup("Receiving", receivingLeaders, (stats) => `${stats.receptions}/${stats.targets}, ${stats.receivingYards} YDS, ${stats.receivingTouchdowns} TD`)}
+        {renderLeaderGroup("Defense", defensiveLeaders, (stats) => `${stats.tackles} TKL, ${stats.sacks} SCK, ${stats.interceptions} INT`)}
+        {renderLeaderGroup("Special", specialLeaders, (stats) => stats.punts ? `${stats.punts} P, ${stats.puntYards} YDS` : `${stats.fieldGoalsMade}/${stats.fieldGoalAttempts} FG`)}
       </div>
       <div className="snap-summary">
         <h3>Snap Leaders</h3>

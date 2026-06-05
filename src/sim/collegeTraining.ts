@@ -2,7 +2,7 @@ import manifestText from "../../sports_sim_player_pipeline/data/active_file_mani
 import playerPersonalityArchetypesText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/player_personality_archetypes.csv?raw";
 import staffEffectsText from "../../sports_sim_player_pipeline/data/active_runtime_csvs/staff_effects.csv?raw";
 import { clamp, createRng } from "../lib/rng";
-import type { CollegeRosterState, CollegeSeasonResultsState, CollegeTrainingBankState } from "../types";
+import type { CollegeDevelopmentFocus, CollegeFatiguePosture, CollegeManagementState, CollegeRosterState, CollegeSeasonResultsState, CollegeTrainingBankState } from "../types";
 
 const TRAINING_FILES = [
   "data/active_runtime_csvs/staff_effects.csv",
@@ -17,58 +17,37 @@ export function generateCollegeTrainingBanks(
   seed: string,
   seasonYear: number,
   roster: CollegeRosterState | undefined,
-  results: CollegeSeasonResultsState | undefined
+  results: CollegeSeasonResultsState | undefined,
+  management?: CollegeManagementState
 ): CollegeTrainingBankState | undefined {
   if (!roster) return undefined;
-  validateTrainingFiles();
-  const staff = loadStaffEffects();
-  const personalities = loadPersonalityArchetypes();
-  const productionByPlayerId = new Map((results?.production ?? []).map((row) => [row.playerId, row]));
-  const entries = roster.players
-    .filter((player) => !player.graduatedSeason && !player.draftDeclaredSeason && !player.cutSeason)
-    .map((player) => {
-      const rng = createRng(`${seed}:college-training-bank:${seasonYear}:${player.id}`);
-      const production = productionByPlayerId.get(player.id);
-      const personality = rng.pick(personalities);
-      const snapShare = production?.snapShare ?? 0;
-      const developmentEffect = staffEffectValue(staff, "positionDevelopment", 0.25);
-      const strengthEffect = staffEffectValue(staff, "strengthCoach", 0.22);
-      const recoveryEffect = staffEffectValue(staff, "medicalStaff", 0.2);
-      const workEthic = personality.workEthicMult;
-      const coachability = personality.coachabilityMult;
-      const athleticBank = Math.round(clamp(38 + strengthEffect * 80 + workEthic * 8 + rng.normal(0, 6), 1, 100));
-      const technicalBank = Math.round(clamp(36 + developmentEffect * 90 + coachability * 9 + snapShare * 18 + rng.normal(0, 6), 1, 100));
-      const mentalBank = Math.round(clamp(34 + coachability * 18 + personality.loyaltyMult * 4 + (production?.productionScore ?? player.collegeOverall) * 0.18 + rng.normal(0, 6), 1, 100));
-      const fatigue = Math.round(clamp(snapShare * (48 + personality.playingTimeSensitivity * 14) + (player.rosterStatus === "redshirt" ? -12 : 0) + rng.normal(0, 5), 0, 100));
-      const recoveryBank = Math.round(clamp(42 + recoveryEffect * 90 - fatigue * 0.25 + rng.normal(0, 5), 1, 100));
-      const regressionPressure = Math.round(clamp((player.collegeOverall - player.collegePotential) * 1.8 + fatigue * 0.18 - recoveryBank * 0.08 + (personality.portalRiskMult - 1) * 5, 0, 100));
-      return {
-        playerId: player.id,
-        schoolId: player.schoolId,
-        seasonYear,
-        personality: personality.personality,
-        nilSensitivity: personality.nilSensitivity,
-        playingTimeSensitivity: personality.playingTimeSensitivity,
-        distanceSensitivity: personality.distanceSensitivity,
-        loyaltyMult: personality.loyaltyMult,
-        decommitRiskMult: personality.decommitRiskMult,
-        portalRiskMult: personality.portalRiskMult,
-        earlyDeclareAggression: personality.earlyDeclareAggression,
-        athleticBank,
-        technicalBank,
-        mentalBank,
-        recoveryBank,
-        fatigue,
-        regressionPressure,
-        debug: `${personality.personality}: snap ${Math.round(snapShare * 100)}%, staff dev ${developmentEffect}, strength ${strengthEffect}, portal ${personality.portalRiskMult}.`
-      };
-    });
   return {
     seasonYear,
-    entries,
-    runtimeCsvs: [...TRAINING_FILES],
+    entries: [],
+    runtimeCsvs: [],
     usesYearZeroBundles: false
   };
+}
+
+function normalizeCollegeDevelopmentFocus(focus?: CollegeDevelopmentFocus): Exclude<CollegeDevelopmentFocus, "athletic"> {
+  if (focus === "athletic") return "physical";
+  return focus ?? "balanced";
+}
+
+function collegePlanModifiers(plan: Exclude<CollegeDevelopmentFocus, "athletic">): { athletic: number; technical: number; mental: number; recovery: number; fatigue: number } {
+  if (plan === "physical") return { athletic: 10, technical: 0, mental: -1, recovery: -2, fatigue: 6 };
+  if (plan === "technical") return { athletic: 0, technical: 10, mental: 1, recovery: -1, fatigue: 4 };
+  if (plan === "mental") return { athletic: -1, technical: 2, mental: 11, recovery: 1, fatigue: 1 };
+  if (plan === "recovery") return { athletic: -2, technical: -1, mental: 2, recovery: 12, fatigue: -8 };
+  if (plan === "position-switch") return { athletic: 1, technical: 8, mental: 4, recovery: -2, fatigue: 5 };
+  if (plan === "auto") return { athletic: 3, technical: 3, mental: 3, recovery: 3, fatigue: 0 };
+  return { athletic: 3, technical: 3, mental: 3, recovery: 3, fatigue: 0 };
+}
+
+function fatiguePostureModifiers(posture: CollegeFatiguePosture): { gain: number; fatigue: number } {
+  if (posture === "aggressive") return { gain: 5, fatigue: 10 };
+  if (posture === "conservative") return { gain: -2, fatigue: -10 };
+  return { gain: 0, fatigue: 0 };
 }
 
 function validateTrainingFiles(): void {

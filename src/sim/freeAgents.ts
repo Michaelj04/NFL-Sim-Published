@@ -1,5 +1,5 @@
-import { POSITIONS, type FreeAgencyMove, type GameSave, type Player, type PlayerContract, type Position } from "../types";
-import { addDeadMoneyCharge, contractOfferForPlayer, playerCapHit, recalculateBudgets, recordCompPickSigning } from "./cap";
+import { POSITIONS, type FreeAgencyMove, type GameSave, type Player, type PlayerContract, type Position, type ReleaseDesignation } from "../types";
+import { addReleaseDeadMoneyCharges, contractOfferForPlayer, currentCapSeason, playerCapHit, recalculateBudgets, recordCompPickSigning, syncPlayerContractFields } from "./cap";
 import { activeRosterLimitForDate } from "./calendar";
 import { activeRosterSize, clearIrState, isOnIr } from "./ir";
 import { clearPracticeSquadState, isPracticeSquadPlayer } from "./practiceSquad";
@@ -46,7 +46,7 @@ export function canSignFreeAgent(save: GameSave, playerId: string, teamId = save
   if (!save.teams.some((team) => team.id === teamId)) return { ok: false, reason: "Team not found." };
   if (rosterSize(save, teamId) >= Math.min(MAX_ROSTER_SIZE, rosterLimit(save))) return { ok: false, reason: "Release a player to open a roster spot." };
   const offer = contractOfferForPlayer(save, player, teamId);
-  const firstYear = offer.seasons.find((season) => season.seasonYear === save.seasonYear) ?? offer.seasons[0];
+  const firstYear = offer.seasons.find((season) => season.seasonYear === save.seasonYear && !season.voidYear) ?? offer.seasons.find((season) => !season.voidYear);
   const capHit = (firstYear?.baseSalary ?? player.salary) + (firstYear?.signingBonusProration ?? 0);
   if ((save.budget[teamId] ?? 0) < capHit) return { ok: false, reason: "Not enough cap room." };
   return { ok: true };
@@ -55,7 +55,7 @@ export function canSignFreeAgent(save: GameSave, playerId: string, teamId = save
 export function canSignFreeAgentWithContract(save: GameSave, playerId: string, teamId: string, contract: PlayerContract): FreeAgentActionCheck {
   const base = canSignFreeAgent(save, playerId, teamId);
   if (!base.ok && base.reason !== "Not enough cap room.") return base;
-  const firstYear = contract.seasons.find((season) => season.seasonYear === save.seasonYear) ?? contract.seasons[0];
+  const firstYear = contract.seasons.find((season) => season.seasonYear === save.seasonYear && !season.voidYear) ?? contract.seasons.find((season) => !season.voidYear);
   const capHit = (firstYear?.baseSalary ?? contract.apy) + (firstYear?.signingBonusProration ?? 0);
   if ((save.budget[teamId] ?? 0) < capHit) return { ok: false, reason: "Not enough cap room." };
   return { ok: true };
@@ -85,16 +85,14 @@ export function signFreeAgentWithContract(
   const check = canSignFreeAgentWithContract(save, playerId, teamId, contract);
   if (!check.ok) return save;
   const player = save.players.find((candidate) => candidate.id === playerId)!;
-  const signedPlayer = clearPracticeSquadState(clearIrState({
+  const signedPlayer = syncPlayerContractFields(clearPracticeSquadState(clearIrState({
     ...player,
     teamId,
     teamStartSeason: save.seasonYear,
     previousTeamId: undefined,
-    salary: contract.apy,
-    contractYears: contract.years,
     contract: { ...contract, rights: "none" as const },
     status: isPracticeSquadPlayer(player) ? "active" as const : player.status
-  }));
+  })), save.seasonYear);
   const signedSave = {
     ...save,
     players: save.players.map((candidate) => (candidate.id === playerId ? signedPlayer : candidate)),
@@ -106,11 +104,11 @@ export function signFreeAgentWithContract(
   return recalculateBudgets(recordCompPickSigning(signedSave, player, teamId));
 }
 
-export function releasePlayerToFreeAgency(save: GameSave, playerId: string, teamId = save.selectedTeamId): GameSave {
+export function releasePlayerToFreeAgency(save: GameSave, playerId: string, teamId = save.selectedTeamId, designation: ReleaseDesignation = "standard"): GameSave {
   const check = canReleasePlayer(save, playerId, teamId);
   if (!check.ok) return save;
   const player = save.players.find((candidate) => candidate.id === playerId)!;
-  const withDeadMoney = addDeadMoneyCharge(save, player, teamId, "release");
+  const withDeadMoney = addReleaseDeadMoneyCharges(save, player, teamId, designation);
   const releasedPlayer = clearPracticeSquadState(clearIrState({
     ...player,
     teamId: FREE_AGENT_TEAM_ID,
@@ -123,7 +121,7 @@ export function releasePlayerToFreeAgency(save: GameSave, playerId: string, team
     ...withDeadMoney,
     players: withDeadMoney.players.map((candidate) => (candidate.id === playerId ? releasedPlayer : candidate)),
     depthOverrides: removePlayerFromDepthOverrides(save, teamId, playerId),
-    freeAgencyLog: [makeFreeAgencyMove(save, player, teamId, "release"), ...(save.freeAgencyLog ?? [])]
+    freeAgencyLog: [makeFreeAgencyMove(save, player, teamId, "release", { details: designation === "post-june" ? "Post-June release designation" : undefined }), ...(save.freeAgencyLog ?? [])]
   });
   return playerWaiverEligible(save, player) ? placePlayerOnWaivers(releasedSave, releasedPlayer, teamId) : releasedSave;
 }
@@ -146,7 +144,7 @@ export function makeFreeAgencyMove(
     playerName: `${player.firstName} ${player.lastName}`,
     position: player.position,
     teamId,
-    salary: playerCapHit(player, save.seasonYear) || player.salary,
+    salary: playerCapHit(player, save.seasonYear) || currentCapSeason(player, save.seasonYear)?.baseSalary || player.salary,
     contractYears: player.contractYears,
     source: options.source,
     details: options.details

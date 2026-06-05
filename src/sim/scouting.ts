@@ -84,6 +84,46 @@ export function positionDraftValue(position: Position): number {
   return Math.round((value.draftPositionValue - 1) * 28 + value.round1Bonus * 18 - value.day3Discount * 8);
 }
 
+function cappedRawPositionValue(position: Position): number {
+  return clamp(positionDraftValue(position), -5, 17);
+}
+
+export function prospectAbilityGrade(prospect: Prospect, school?: CollegeProgram): number {
+  const weights = annualDraftBoardWeightsForPosition(prospect.position);
+  const athletic = (prospect.combine.speed + prospect.combine.strength + prospect.combine.agility + prospect.combine.explosion) / 4;
+  const ageGrade = clamp(90 - Math.max(0, prospect.age - 21) * 8, 35, 95);
+  const characterGrade = (prospect.character + prospect.workEthic) / 2;
+  const competition = annualCompetitionTranslation(competitionTierForSchool(school));
+  const competitionGrade = clamp(((school?.competition ?? 50) + (school?.subdivision === "FBS" ? 8 : -2)) * competition.draftEvalMult, 20, 95);
+  const scoutedOverall = (prospect.scouted.low + prospect.scouted.high) / 2;
+  const scoutedPotential = (prospect.scouted.potentialLow + prospect.scouted.potentialHigh) / 2;
+  return Number((
+    scoutedOverall * 0.38 +
+    scoutedPotential * 0.2 +
+    prospect.production * weights.filmProdW * 0.62 +
+    athletic * weights.athleticW * 0.62 +
+    ageGrade * weights.ageW * 0.55 +
+    prospect.medical * weights.medicalW * 0.5 +
+    competitionGrade * weights.competitionW * 0.45 +
+    characterGrade * weights.characterW * 0.45 +
+    prospect.stock * 0.06 +
+    versatilityBonus(prospect) * 0.25
+  ).toFixed(2));
+}
+
+export function prospectPositionPremium(position: Position, abilityGrade: number): number {
+  if (position === "K" || position === "P") return -12;
+  const maxPremium =
+    position === "QB" ? 4.5 :
+      ["EDGE", "LT"].includes(position) ? 3 :
+        ["CB", "WR"].includes(position) ? 2.5 :
+          ["RT", "DL", "S", "LB"].includes(position) ? 1.5 : 1;
+  const gate = position === "QB" ? 57 : 54;
+  if (abilityGrade < gate) return 0;
+  const gateScale = clamp((abilityGrade - gate) / 8, 0, 1);
+  return Number(clamp(cappedRawPositionValue(position) * 0.24, 0, maxPremium * gateScale).toFixed(2));
+}
+
 function average(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 50;
 }
@@ -158,64 +198,35 @@ function consensusGradeFor(prospect: Prospect, school: CollegeProgram | undefine
   const progress = prospect.consensusProgress ?? 45;
   const noise = rng.normal(0, clamp((92 - progress) / 7, 1.8, 10.5));
   const tierBonus = clamp((school?.prestige ?? 50) / 18 + (school?.competition ?? 50) / 26, 2, 8);
-  const weights = annualDraftBoardWeightsForPosition(prospect.position);
   const hitRate = annualDraftHitRate(starBucketForProspect(prospect), prospect.position);
-  const athletic = (prospect.combine.speed + prospect.combine.strength + prospect.combine.agility + prospect.combine.explosion) / 4;
-  const ageGrade = clamp(90 - Math.max(0, prospect.age - 21) * 8, 35, 95);
-  const allstarSignal = prospect.scoutReports?.some((report) => report.includes("All-star invite")) ? 78 : 55;
-  const characterGrade = (prospect.character + prospect.workEthic) / 2;
-  const competition = annualCompetitionTranslation(competitionTierForSchool(school));
-  const competitionGrade = clamp(((school?.competition ?? 50) + (school?.subdivision === "FBS" ? 8 : -2)) * competition.draftEvalMult, 20, 95);
+  const ability = prospectAbilityGrade(prospect, school);
+  const premium = prospectPositionPremium(prospect.position, ability);
   const score =
-    prospect.production * weights.filmProdW +
-    athletic * weights.athleticW +
-    ageGrade * weights.ageW +
-    prospect.medical * weights.medicalW +
-    competitionGrade * weights.competitionW +
-    allstarSignal * weights.allstarW +
-    characterGrade * weights.characterW +
-    (prospect.trueOverall + noise) * 0.22 +
-    (prospect.potential + noise * 0.65) * 0.14 +
-    prospect.stock * 0.06 +
+    ability +
+    noise * 0.12 +
     hitRate.starterHitProb * 12 +
     hitRate.impactHitProb * 20 +
-    positionDraftValue(prospect.position) +
-    versatilityBonus(prospect) * 0.25 +
+    premium +
     tierBonus +
     consensusConcernAdjustment(prospect, school, seed);
   return Number(score.toFixed(2));
 }
 
 function teamGradeFor(prospect: Prospect): number {
-  const ovrMid = (prospect.scouted.low + prospect.scouted.high) / 2;
-  const potMid = (prospect.scouted.potentialLow + prospect.scouted.potentialHigh) / 2;
-  const weights = annualDraftBoardWeightsForPosition(prospect.position);
-  const athletic = (prospect.combine.speed + prospect.combine.strength + prospect.combine.agility + prospect.combine.explosion) / 4;
-  const ageGrade = clamp(90 - Math.max(0, prospect.age - 21) * 8, 35, 95);
-  const allstarSignal = prospect.scoutReports?.some((report) => report.includes("All-star invite")) ? 78 : 55;
-  const characterGrade = (prospect.character + prospect.workEthic) / 2;
+  const ability = prospectAbilityGrade(prospect);
   const uncertaintyPenalty =
     (prospect.scouted.high - prospect.scouted.low) * 0.06 +
     (prospect.scouted.potentialHigh - prospect.scouted.potentialLow) * 0.035;
   const score =
-    ovrMid * 0.34 +
-    potMid * 0.2 +
-    prospect.production * weights.filmProdW +
-    athletic * weights.athleticW +
-    ageGrade * weights.ageW +
-    prospect.medical * weights.medicalW +
-    allstarSignal * weights.allstarW +
-    characterGrade * weights.characterW +
-    prospect.stock * 0.05 +
-    positionDraftValue(prospect.position) +
-    versatilityBonus(prospect) * 0.3 +
+    ability +
+    prospectPositionPremium(prospect.position, ability) +
     teamConcernAdjustment(prospect.scouted.concerns) -
     uncertaintyPenalty;
   return Number(score.toFixed(2));
 }
 
 function starBucketForProspect(prospect: Prospect): string {
-  const grade = prospect.trueOverall * 0.58 + prospect.potential * 0.42;
+  const grade = ((prospect.scouted.low + prospect.scouted.high) / 2) * 0.58 + ((prospect.scouted.potentialLow + prospect.scouted.potentialHigh) / 2) * 0.42;
   if (grade >= 82) return "5";
   if (grade >= 74) return "4";
   if (grade >= 64) return "3";
@@ -277,7 +288,7 @@ export function prospectBoardLensScore(prospect: Prospect, lens: ProspectBoardLe
       prospect.scouted.high * 0.22 +
       Math.max(0, prospect.scouted.potentialHigh - prospect.scouted.low) * 0.12 +
       prospect.production * 0.05 +
-      positionDraftValue(prospect.position) -
+      prospectPositionPremium(prospect.position, prospectAbilityGrade(prospect)) -
       makeupFloorConcernPenalty(prospect.scouted.concerns) * 0.35
     );
   }
@@ -287,7 +298,7 @@ export function prospectBoardLensScore(prospect: Prospect, lens: ProspectBoardLe
       prospect.scouted.potentialLow * 0.18 +
       prospect.production * 0.12 +
       progress * 0.03 +
-      positionDraftValue(prospect.position) -
+      prospectPositionPremium(prospect.position, prospectAbilityGrade(prospect)) -
       makeupFloorConcernPenalty(prospect.scouted.concerns) -
       uncertainty
     );

@@ -1,4 +1,4 @@
-import type { GameSave, InboxItem, Player } from "../types";
+import type { GameSave, Player } from "../types";
 import { addDays } from "./calendar";
 
 const FREE_AGENT_TEAM_ID = "FA";
@@ -85,19 +85,6 @@ export function canActivatePlayerFromIr(save: GameSave, playerId: string, teamId
   return { ok: true };
 }
 
-function irInbox(save: GameSave, player: Player, title: string, body: string, priority: InboxItem["priority"] = "normal"): InboxItem | undefined {
-  if (player.teamId !== save.selectedTeamId) return undefined;
-  return {
-    id: `ir-${save.seasonYear}-${save.currentWeek}-${player.id}-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-    week: save.currentWeek,
-    category: "injury",
-    title,
-    body,
-    priority,
-    read: false
-  };
-}
-
 export function placePlayerOnIr(save: GameSave, playerId: string, teamId = save.selectedTeamId): GameSave {
   if (!canPlacePlayerOnIr(save, playerId, teamId).ok) return save;
   let placedPlayer: Player | undefined;
@@ -117,14 +104,11 @@ export function placePlayerOnIr(save: GameSave, playerId: string, teamId = save.
     };
     return placedPlayer;
   });
-  const inboxItem = placedPlayer
-    ? irInbox(save, placedPlayer, `${placedPlayer.position} placed on IR: ${placedPlayer.firstName} ${placedPlayer.lastName}`, `${placedPlayer.firstName} ${placedPlayer.lastName} no longer counts against the active roster and is eligible to return after Week ${placedPlayer.irEligibleWeek}.`)
-    : undefined;
   return {
     ...save,
     players,
     depthOverrides: removePlayerFromDepthOverrides(save, teamId, playerId),
-    inbox: inboxItem ? [inboxItem, ...save.inbox] : save.inbox
+    inbox: []
   };
 }
 
@@ -143,9 +127,6 @@ export function designatePlayerToReturn(save: GameSave, playerId: string, teamId
     };
     return designated;
   });
-  const inboxItem = designated
-    ? irInbox(save, designated, `${designated.position} return window opened: ${designated.firstName} ${designated.lastName}`, `The 3-week IR return window is open through Week ${designated.irPracticeWindowDeadlineWeek}.`, "high")
-    : undefined;
   return {
     ...save,
     players,
@@ -153,7 +134,7 @@ export function designatePlayerToReturn(save: GameSave, playerId: string, teamId
       ...(save.irReturnUsage ?? {}),
       [teamId]: irReturnUsage(save, teamId) + 1
     },
-    inbox: inboxItem ? [inboxItem, ...save.inbox] : save.inbox
+    inbox: []
   };
 }
 
@@ -165,27 +146,17 @@ export function activatePlayerFromIr(save: GameSave, playerId: string, teamId = 
     activated = clearIrState(player);
     return activated;
   });
-  const inboxItem = activated
-    ? irInbox(save, activated, `${activated.position} activated from IR: ${activated.firstName} ${activated.lastName}`, `${activated.firstName} ${activated.lastName} has returned to the active roster.`, "high")
-    : undefined;
   return {
     ...save,
     players,
-    inbox: inboxItem ? [inboxItem, ...save.inbox] : save.inbox
+    inbox: []
   };
 }
 
 export function processIrWindows(save: GameSave): GameSave {
-  const inbox: InboxItem[] = [];
   const players = save.players.map((player) => {
     if (!isOnIr(player)) return player;
-    if (player.teamId === save.selectedTeamId && player.irEligibleWeek === save.currentWeek && !player.irReturnDesignatedWeek) {
-      const item = irInbox(save, player, `${player.position} eligible from IR: ${player.firstName} ${player.lastName}`, `${player.firstName} ${player.lastName} has met the four-week IR minimum and can be designated to return once medically cleared.`);
-      if (item) inbox.push(item);
-    }
     if (player.irPracticeWindowDeadlineWeek && save.currentWeek > player.irPracticeWindowDeadlineWeek) {
-      const item = irInbox(save, player, `${player.position} return window expired: ${player.firstName} ${player.lastName}`, `${player.firstName} ${player.lastName} remains on IR after the 3-week return window expired.`, "high");
-      if (item) inbox.push(item);
       return {
         ...player,
         irReturnDesignatedWeek: undefined,
@@ -197,7 +168,7 @@ export function processIrWindows(save: GameSave): GameSave {
   return {
     ...save,
     players,
-    inbox: inbox.length ? [...inbox, ...save.inbox] : save.inbox
+    inbox: []
   };
 }
 

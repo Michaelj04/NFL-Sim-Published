@@ -73,18 +73,7 @@ export function interviewStaffCandidate(save: GameSave, candidateId: string): Ga
           : item
       )
     },
-    inbox: [
-      {
-        id: `staff-interview-${candidateId}-${next.currentWeek}-${next.inbox.length}`,
-        week: next.currentWeek,
-        category: "staff",
-        title: `${candidate.role} interview completed`,
-        body: `${candidate.firstName} ${candidate.lastName} completed the interview. Role fit improved to ${Math.min(99, candidate.roleFit + 6)} and value improved to ${Math.min(99, candidate.valueScore + 3)}.`,
-        priority: "low",
-        read: false
-      },
-      ...next.inbox
-    ]
+    inbox: []
   };
 }
 
@@ -123,36 +112,14 @@ export function hireStaffCandidate(save: GameSave, candidateId: string, slotId?:
         item.id === candidateId ? { ...item, hired: true, teamId: team.id } : item
       )
     },
-    inbox: [
-      {
-        id: `staff-hire-${candidateId}-${next.currentWeek}-${next.inbox.length}`,
-        week: next.currentWeek,
-        category: "staff",
-        title: `${targetSlot.label} hire completed`,
-        body: `${candidate.firstName} ${candidate.lastName} joins as ${targetSlot.label} for $${candidate.demandSalary.toFixed(1)}M over ${candidate.demandYears} year${candidate.demandYears === 1 ? "" : "s"}. Value score: ${candidate.valueScore}.`,
-        priority: "normal",
-        read: false
-      },
-      ...next.inbox
-    ]
+    inbox: []
   };
 }
 
 export function refreshStaffMarket(save: GameSave): GameSave {
   return {
     ...save,
-    staffMarket: generateStaffMarket(save.teams, save.seed, save.currentWeek + save.inbox.length),
-    inbox: [
-      {
-        id: `staff-market-refresh-${save.currentWeek}-${save.inbox.length}`,
-        week: save.currentWeek,
-        category: "staff",
-        title: "Staff search refreshed",
-        body: "The candidate pool was refreshed with new coaches, scouts, and training staff.",
-        priority: "low",
-        read: false
-      },
-      ...save.inbox
-    ]
+    staffMarket: generateStaffMarket(save.teams, save.seed, save.currentWeek + (save.staffMarket?.candidates.length ?? 0)),
+    inbox: []
   };
 }

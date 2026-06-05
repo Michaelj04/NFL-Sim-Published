@@ -2,6 +2,7 @@ import { clamp, createRng, type Rng } from "../lib/rng";
 import {
   POSITIONS,
   type BodyProfile,
+  type DevelopmentPlan,
   type GameSave,
   type Player,
   type PlayerTrainingState,
@@ -117,6 +118,54 @@ const skillPlanDisplay: Record<TrainingSkillPlan, string> = {
   "pass-rush": "Rush work emphasized counters and close speed.",
   specialist: "Specialist work refined operation consistency."
 };
+
+export const developmentPlanLabels: Record<DevelopmentPlan, string> = {
+  auto: "Auto",
+  balanced: "Balanced",
+  physical: "Physical",
+  technical: "Technical",
+  mental: "Mental",
+  recovery: "Recovery",
+  "position-switch": "Position Switch"
+};
+
+const technicalSkillPlanByPosition: Record<Position, TrainingSkillPlan> = {
+  QB: "passing",
+  RB: "ball-skills",
+  WR: "ball-skills",
+  TE: "ball-skills",
+  LT: "trench",
+  LG: "trench",
+  C: "trench",
+  RG: "trench",
+  RT: "trench",
+  EDGE: "pass-rush",
+  DL: "pass-rush",
+  LB: "coverage",
+  CB: "coverage",
+  S: "coverage",
+  K: "specialist",
+  P: "specialist"
+};
+
+export function developmentPlanForTraining(training: Partial<PlayerTrainingState> | undefined, position: Position): DevelopmentPlan {
+  if (training?.developmentPlan) return training.developmentPlan;
+  if (training?.targetPosition && training.targetPosition !== position) return "position-switch";
+  if (training?.bodyPlan === "conditioning" || training?.bodyPlan === "mobility" || training?.bodyPlan === "lean-bulk" || training?.bodyPlan === "power-bulk" || training?.skillPlan === "athlete") return "physical";
+  if (training?.bodyPlan === "cut") return "recovery";
+  if (training?.skillPlan && !["auto", "maintain", "position-technique"].includes(training.skillPlan)) return "technical";
+  return "balanced";
+}
+
+function settingsForDevelopmentPlan(plan: DevelopmentPlan, position: Position, targetPosition?: Position): Pick<PlayerTrainingState, "bodyPlan" | "skillPlan" | "targetPosition" | "autoPosition"> {
+  if (plan === "auto") return { bodyPlan: "auto", skillPlan: "auto", targetPosition: position, autoPosition: true };
+  if (plan === "physical") return { bodyPlan: "conditioning", skillPlan: "athlete", targetPosition: position, autoPosition: true };
+  if (plan === "technical") return { bodyPlan: "maintain", skillPlan: technicalSkillPlanByPosition[position] ?? "position-technique", targetPosition: position, autoPosition: true };
+  if (plan === "mental") return { bodyPlan: "maintain", skillPlan: "position-technique", targetPosition: position, autoPosition: true };
+  if (plan === "recovery") return { bodyPlan: "conditioning", skillPlan: "maintain", targetPosition: position, autoPosition: false };
+  if (plan === "position-switch") return { bodyPlan: "maintain", skillPlan: "position-technique", targetPosition: targetPosition ?? position, autoPosition: true };
+  return { bodyPlan: "maintain", skillPlan: "position-technique", targetPosition: position, autoPosition: true };
+}
 
 function average(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
@@ -316,6 +365,7 @@ function bucketsFromRatings(ratings: RatingVector): SkillBuckets {
 
 function blankTraining(position: Position): PlayerTrainingState {
   return {
+    developmentPlan: "balanced",
     bodyPlan: "auto",
     skillPlan: "auto",
     targetPosition: position,
@@ -467,6 +517,7 @@ export function normalizePlayerModel(player: Player, seed: string): Player {
   const training = {
     ...blankTraining(player.position),
     ...player.training,
+    developmentPlan: developmentPlanForTraining(player.training, player.position),
     targetPosition: player.training?.targetPosition ?? player.position,
     autoPosition: player.training?.autoPosition ?? true,
     conversionProgress: {
@@ -499,6 +550,7 @@ export function normalizeProspectModel(prospect: Prospect, seed: string): Prospe
   const training = {
     ...blankTraining(prospect.position),
     ...prospect.training,
+    developmentPlan: developmentPlanForTraining(prospect.training, prospect.position),
     targetPosition: prospect.training?.targetPosition ?? prospect.position,
     autoPosition: prospect.training?.autoPosition ?? true,
     conversionProgress: {
@@ -533,6 +585,7 @@ export function syncPlayerModelFromRatings(player: Player, seed: string): Player
   const training = {
     ...blankTraining(player.position),
     ...player.training,
+    developmentPlan: developmentPlanForTraining(player.training, player.position),
     conversionProgress: {
       [player.position]: 100,
       ...(player.training?.conversionProgress ?? {})
@@ -553,19 +606,11 @@ export function syncPlayerModelFromRatings(player: Player, seed: string): Player
 
 export function updatePlayerTrainingSettings(
   player: Player,
-  updates: Partial<Pick<PlayerTrainingState, "bodyPlan" | "skillPlan" | "targetPosition" | "autoPosition">>,
+  updates: Partial<Pick<PlayerTrainingState, "developmentPlan" | "bodyPlan" | "skillPlan" | "targetPosition" | "autoPosition">>,
   seed: string
 ): Player {
-  return normalizePlayerModel(
-    {
-      ...player,
-      training: {
-        ...player.training,
-        ...updates
-      }
-    },
-    seed
-  );
+  void updates;
+  return normalizePlayerModel(player, seed);
 }
 
 function skillPlanKeys(plan: TrainingSkillPlan, position: Position): SkillBucketKey[] {
@@ -626,6 +671,7 @@ function weeklySkillAdjustments(
   plan: TrainingSkillPlan,
   position: Position,
   targetPosition: Position,
+  developmentPlan: DevelopmentPlan,
   intensity: number,
   rng: Rng
 ): SkillBuckets {
@@ -633,6 +679,13 @@ function weeklySkillAdjustments(
   const keys = skillPlanKeys(plan, targetPosition);
   for (const key of keys) {
     next[key] += rng.normal(0.28 + intensity * 0.16, 0.16);
+  }
+  if (developmentPlan === "mental") {
+    next.processing += rng.normal(0.26 + intensity * 0.12, 0.12);
+    next.discipline += rng.normal(0.22 + intensity * 0.1, 0.12);
+  } else if (developmentPlan === "recovery") {
+    next.stamina += rng.normal(0.14 + intensity * 0.07, 0.1);
+    next.discipline += rng.normal(0.08, 0.08);
   }
   if (plan === "maintain" || plan === "auto") {
     const homeKeys = skillPlanKeys("position-technique", position);
@@ -679,55 +732,5 @@ function developTrainingState(
 }
 
 export function runWeeklyTraining(save: GameSave): GameSave {
-  const seasonYear = save.seasonYear ?? ((save.draftState?.draftYear ?? 2027) - 1);
-  const players = save.players.map((player) => {
-    const normalized = normalizePlayerModel(player, save.seed);
-    const rng = createRng(`${save.seed}:weekly-training:${save.currentWeek}:${normalized.id}`);
-    const staffGrade = coachDevelopmentGrade(save.staff, normalized.teamId, normalized.position);
-    const workDrive = clamp(normalized.development.workEthic * 0.52 + normalized.makeup.workEthic * 0.48, 20, 99);
-    const learning = normalized.development.learning;
-    const volatility = normalized.development.volatility;
-    const responsiveness = clamp((workDrive - 55) * 0.012 + (learning - 55) * 0.01 + (staffGrade - 60) * 0.006, -0.45, 1.2);
-    const lazyDrag = workDrive < 48 ? clamp((48 - workDrive) * 0.014, 0.04, 0.35) : 0;
-    const setbackRisk = clamp(0.02 + (volatility - 50) * 0.0015 + lazyDrag * 0.35, 0.01, 0.18);
-    const setback = rng.bool(setbackRisk);
-    const intensity = Math.max(0, responsiveness - lazyDrag - (setback ? rng.float(0.25, 0.55) : 0));
-    const body = weeklyBodyAdjustments(normalized.body, normalized.training.bodyPlan, intensity, rng);
-    const skillBuckets = weeklySkillAdjustments(normalized.skillBuckets, normalized.training.skillPlan, normalized.position, normalized.training.targetPosition ?? normalized.position, intensity, rng);
-    const training = developTrainingState(normalized.position, body, skillBuckets, normalized.training, intensity, rng);
-    const nextPosition = training.autoPosition ? bestPositionForModel(normalized.position, body, skillBuckets, training) : normalized.position;
-    const report = {
-      seasonYear,
-      week: save.currentWeek,
-      summary: setback ? "Progress stalled this week and the staff flagged a rough workload response." : "The weekly plan produced steady gains.",
-      bodySummary: bodyPlanDisplay[normalized.training.bodyPlan],
-      footballSummary: skillPlanDisplay[normalized.training.skillPlan],
-      risk: setback ? "Readiness dip risk triggered." : intensity < 0.08 ? "Low-engagement week blunted gains." : "Risk stayed manageable.",
-      readinessDelta: Math.round((body.explosiveReadiness - normalized.body.explosiveReadiness) * 10) / 10,
-      changedPrimaryPosition: nextPosition !== normalized.position,
-      previousPrimaryPosition: normalized.position,
-      nextPrimaryPosition: nextPosition
-    };
-    return normalizePlayerModel(
-      {
-        ...normalized,
-        position: nextPosition,
-        body,
-        skillBuckets,
-        training: {
-          ...training,
-          lastReport: report
-        }
-      },
-      save.seed
-    );
-  });
-
-  const prospects = save.prospects.map((prospect) => normalizeProspectModel(prospect, `${save.seed}:prospect`));
-
-  return {
-    ...save,
-    players,
-    prospects
-  };
+  return save;
 }

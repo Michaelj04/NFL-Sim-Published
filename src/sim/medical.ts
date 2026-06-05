@@ -1,5 +1,5 @@
 import { clamp, createRng, type Rng } from "../lib/rng";
-import type { CareerEndedMedicalRecord, GameSave, InboxItem, InjurySeverity, MedicalEvent, MedicalHistoryEntry, Player, Position, RatingVector } from "../types";
+import type { CareerEndedMedicalRecord, GameSave, InjurySeverity, MedicalEvent, MedicalHistoryEntry, Player, Position, RatingVector } from "../types";
 import { FREE_AGENT_TEAM_ID } from "./freeAgents";
 import { syncPlayerModelFromRatings } from "./playerModel";
 import { calibrateOverall, calibratePotential, calculateOverallFromRatings, legacyAttributesFromRatings, ratingRegistry } from "./ratings";
@@ -302,22 +302,6 @@ export function tickMedicalRecovery(player: Player): Player {
   return player;
 }
 
-export function medicalInboxItem(save: GameSave, event: MedicalEvent): InboxItem {
-  const selected = event.teamId === save.selectedTeamId;
-  const important = event.careerEnding;
-  return {
-    id: `inbox-${event.id}`,
-    week: event.occurredWeek,
-    category: "injury",
-    title: event.careerEnding ? `Career-ending injury: ${event.playerName}` : `${event.position} medical update: ${event.playerName}`,
-    body: `${event.description} Depth chart will use the next eligible player automatically.`,
-    priority: event.careerEnding || event.severity === "catastrophic" || event.severity === "major" ? "high" : selected ? "normal" : "low",
-    read: false,
-    important,
-    blocking: important
-  };
-}
-
 export function historyEntryForMedicalEvent(event: MedicalEvent): MedicalHistoryEntry {
   return { ...event, resolved: event.status === "limited" && event.limitedWeeksRemaining <= 1 };
 }
@@ -337,14 +321,12 @@ export function applyMedicalEvents(save: GameSave, events: MedicalEvent[]): Game
     if (result.player) players.push(result.player);
     if (result.careerEndedRecord) careerEnded.push(result.careerEndedRecord);
   }
-  const selectedEvents = events.filter((event) => event.teamId === save.selectedTeamId || event.careerEnding);
-  const inbox = selectedEvents.map((event) => medicalInboxItem(save, event));
   return {
     ...save,
     players,
     medicalHistory: [...events.map(historyEntryForMedicalEvent), ...(save.medicalHistory ?? [])].slice(0, 500),
     careerEndedRecords: [...careerEnded, ...(save.careerEndedRecords ?? [])],
-    inbox: [...inbox, ...save.inbox]
+    inbox: []
   };
 }
 

@@ -37,6 +37,8 @@ export function generateAnnualRecruitingState(
     const schoolNeeds = needsBySchool.get(school.id) ?? new Map<Position, number>();
     const candidatePool = sampleRecruitPool(recruits, Math.max(boardSize * 2, 50), rng.fork(`pool:${school.id}`));
     const schoolProspects = candidatePool.map((prospect) => {
+      const visibleOverall = (prospect.visibleOverallRange[0] + prospect.visibleOverallRange[1]) / 2;
+      const visiblePotential = (prospect.visiblePotentialRange[0] + prospect.visiblePotentialRange[1]) / 2;
       const pipelineType = pipelineTypeFor(school, prospect);
       const pipeline = config.pipelineWeights.find((row) => row.pipelineType === pipelineType);
       const positionNeed = schoolNeeds.get(prospect.position) ?? 45;
@@ -60,7 +62,7 @@ export function generateAnnualRecruitingState(
       }, 0);
       const pipelineBonus = pipelineType === "national" ? (pipeline?.nationalPenalty ?? 0) : (pipeline?.regionalBonus ?? 0);
       const academicFit = academicFitScore(profile?.academicStrictness ?? 55, prospect);
-      const interestScore = Math.round(clamp(basePower * 0.32 + prospect.trueOverall * 0.17 + prospect.truePotential * 0.12 + positionNeed * 0.12 + nilScore * 0.12 + academicFit * 0.06 + componentScore + pipelineBonus * 100 + visitImpact + rng.normal(0, 6), 1, 100));
+      const interestScore = Math.round(clamp(basePower * 0.32 + visibleOverall * 0.17 + visiblePotential * 0.12 + positionNeed * 0.12 + nilScore * 0.12 + academicFit * 0.06 + componentScore + pipelineBonus * 100 + visitImpact + rng.normal(0, 6), 1, 100));
       const targetPriority = Math.round(clamp(interestScore * 0.7 + positionNeed * 0.3 + (prospect.stars - 2) * 4, 1, 100));
       const promiseType = positionNeed >= 76 ? "early_playing_time" : nilScore >= 78 ? "nil_pathway" : academicFit >= 78 ? "academic_fit" : undefined;
       return {

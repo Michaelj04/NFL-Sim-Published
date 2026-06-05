@@ -47,6 +47,10 @@ export function regularWeekSunday(seasonYear: number, week: number): string {
   return addDays(regularSeasonStartDate(seasonYear), 4 + (week - 1) * 7);
 }
 
+export function tradeDeadlineDate(seasonYear: number): string {
+  return addDays(regularWeekSunday(seasonYear, 9), 2);
+}
+
 export function finalCutdownDate(seasonYear: number): string {
   return `${seasonYear}-${FINAL_CUTDOWN_MONTH_DAY}`;
 }
@@ -165,6 +169,7 @@ export function buildSeasonCalendar(save: CalendarSaveContext): CalendarEvent[] 
     milestone(seasonYear, `${seasonYear}-08-31`, "waivers", "Cutdown waivers process", "Waiver claims process before practice squads form.", "preseason", "roster", { important: true }),
     milestone(seasonYear, `${seasonYear}-09-01`, "practice-squad", "Practice squads form", "Teams can fill 16-player practice squads.", "preseason", "roster"),
     milestone(seasonYear, regularSeasonStartDate(seasonYear), "game", "Regular season kicks off", "The regular season begins.", "regular-season", "schedule", { important: true }),
+    milestone(seasonYear, tradeDeadlineDate(seasonYear), "deadline", "NFL trade deadline", "Regular-season trades close after Week 9.", "regular-season", "trading", { important: true }),
     milestone(seasonYear, addDays(regularWeekSunday(seasonYear, 18), 1), "postseason", "Regular season complete", "Playoff bracket locks after Week 18.", "regular-season", "standings", { important: true }),
     milestone(seasonYear, superBowlDate(seasonYear), "postseason", "Super Bowl", "The league champion is crowned.", "postseason", "standings", { important: true })
   ];

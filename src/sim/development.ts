@@ -17,7 +17,7 @@ import {
   type RatingKey
 } from "./ratings";
 import { normalizePlayerMakeup } from "./concerns";
-import { syncPlayerModelFromRatings } from "./playerModel";
+import { developmentPlanForTraining, syncPlayerModelFromRatings } from "./playerModel";
 import { coachDevelopmentGrade } from "./staffModel";
 import { annualDevelopmentCurveForPosition, annualProgressionGates } from "./annualRuntime";
 
@@ -158,114 +158,8 @@ function reportCategory(deltaOverall: number, deltaPotential: number, injuryDrag
 }
 
 export function runAnnualDevelopment(save: GameSave): GameSave {
-  const seasonYear = save.draftState?.draftYear ?? 2027;
-  const gates = annualProgressionGates();
-  const reports: PlayerDevelopmentReport[] = [];
-  const players = save.players.map((player) => {
-    const rng = createRng(`${save.seed}:annual-development:${seasonYear}:${player.id}`);
-    const makeup = normalizePlayerMakeup(player, save.seed);
-    const baseProfile = ensureDevelopmentProfile(player.development, `${save.seed}:${player.id}`, player.age, ratingValue(player.ratings, "workEthic"));
-    const profile: PlayerDevelopmentProfile = {
-      ...baseProfile,
-      workEthic: Math.round(clamp(baseProfile.workEthic * 0.45 + makeup.workEthic * 0.55, 20, 99)),
-      learning: Math.round(clamp(baseProfile.learning * 0.72 + makeup.workEthic * 0.28, 20, 99))
-    };
-    const staffGrade = coachDevelopmentGrade(save.staff, player.teamId, player.position);
-    const developmentCurve = annualDevelopmentCurveForPosition(player.position);
-    const experience = experienceYear(player, seasonYear);
-    const csvGainBaseline = developmentCurve.yearGains[experience - 1] ?? developmentCurve.yearGains[3];
-    const snapTarget = player.position === "K" || player.position === "P" ? 85 : 850;
-    const snapFactor = clamp((player.stats.snaps ?? 0) / snapTarget, 0, 1);
-    const potentialGap = Math.max(0, player.potential - player.overall);
-    const healthDrag = player.injuryWeeks > 0 || player.status === "injured" ? clamp(player.injuryWeeks || 3, 1, 8) * 0.25 : 0;
-    const medicalDrag = player.status === "injured" ? clamp((70 - makeup.medical) * 0.018, -0.18, 0.65) : 0;
-    const injuryDrag = Math.max(0, healthDrag + medicalDrag);
-    const variance = rng.normal(0, 0.55 + profile.volatility * 0.018);
-    const makeupWork = clamp((makeup.workEthic - 70) * 0.032, -0.9, 0.75);
-    let rawDelta =
-      potentialGap * 0.12 +
-      (staffGrade - 60) * 0.045 +
-      (profile.learning - 60) * 0.042 +
-      (profile.workEthic - 60) * 0.035 +
-      makeupWork +
-      snapFactor * (0.75 + developmentCurve.playingTimeWeight) +
-      (csvGainBaseline - 3.2) * 0.22 +
-      ageCurve(player, profile) -
-      injuryDrag +
-      variance;
-
-    if (player.age >= profile.declineAge && rawDelta > 0) rawDelta *= 0.35;
-    if (player.age >= profile.declineAge + 3) rawDelta -= 1.1;
-    if (player.status === "injured" && player.age >= profile.declineAge) rawDelta -= 0.9;
-    const positiveCap = player.age >= 24 ? gates.upperclassMaxGain : gates.defaultMaxGain;
-    const gatedCap = injuryDrag > 0 ? Math.min(positiveCap, gates.injuryRegressionMaxGain) : positiveCap;
-    const targetDelta = Math.round(clamp(rawDelta, -5, Math.min(6, gatedCap)));
-    const ratings = updatePlayerRatings(player, targetDelta, injuryDrag, rng);
-    const calculatedOverall = calculateOverallFromRatings(player.position, ratings);
-    const newOverall = targetDelta < 0 ? Math.min(calculatedOverall, calibrateOverall(player.overall + targetDelta)) : calculatedOverall;
-    let newPotential = player.potential;
-    const breakoutChance = clamp((profile.volatility - 38) * 0.0025 + (profile.workEthic - 58) * 0.0015 + (newOverall >= player.potential - 1 ? 0.05 : 0.01), 0.004, 0.16);
-    if (targetDelta >= 3 && rng.bool(breakoutChance)) {
-      newPotential += rng.int(1, 4);
-    }
-    if (player.age > profile.declineAge && newPotential > newOverall + 2) {
-      newPotential -= rng.int(0, Math.min(2, Math.max(0, player.age - profile.declineAge)));
-    }
-    newPotential = calibratePotential(newOverall, newPotential);
-
-    const deltaOverall = newOverall - player.overall;
-    const deltaPotential = newPotential - player.potential;
-    const category = reportCategory(deltaOverall, deltaPotential, injuryDrag);
-    if (player.teamId === save.selectedTeamId || category === "breakout" || Math.abs(deltaOverall) >= 2 || Math.abs(deltaPotential) >= 2) {
-      reports.push({
-        id: `dev-${seasonYear}-${player.id}`,
-        seasonYear,
-        week: save.currentWeek,
-        playerId: player.id,
-        teamId: player.teamId,
-        playerName: `${player.firstName} ${player.lastName}`,
-        position: player.position,
-        age: player.age,
-        previousOverall: player.overall,
-        newOverall,
-        previousPotential: player.potential,
-        newPotential,
-        deltaOverall,
-        deltaPotential,
-        category,
-        summary:
-          category === "breakout"
-            ? `${player.lastName} flashed a new ceiling during offseason work.`
-            : category === "improved"
-              ? `${player.lastName} made steady gains with the staff.`
-              : category === "injury"
-                ? `${player.lastName}'s offseason was slowed by health and recovery work.`
-                : category === "decline"
-                  ? `${player.lastName} lost ground physically entering the offseason.`
-                  : `${player.lastName} held steady through offseason evaluation.`
-      });
-    }
-
-    const synced = syncPlayerModelFromRatings({
-      ...player,
-      ratings,
-      overall: newOverall,
-      potential: newPotential,
-      development: profile,
-      makeup,
-      attributes: legacyAttributesFromRatings(player.position, ratings)
-    }, save.seed);
-    return { ...synced, overall: newOverall, potential: newPotential };
-  });
-
-  const reportImpact = (report: PlayerDevelopmentReport) => Math.abs(report.deltaOverall) + Math.abs(report.deltaPotential);
-  const selectedReports = reports.filter((report) => report.teamId === save.selectedTeamId).sort((a, b) => reportImpact(b) - reportImpact(a));
-  const leagueReports = reports.filter((report) => report.teamId !== save.selectedTeamId).sort((a, b) => reportImpact(b) - reportImpact(a));
-  const sortedReports = [...selectedReports, ...leagueReports].slice(0, 120);
-
   return {
     ...save,
-    players,
-    developmentReports: [...sortedReports, ...(save.developmentReports ?? [])].slice(0, 180)
+    developmentReports: []
   };
 }

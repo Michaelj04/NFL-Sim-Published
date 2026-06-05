@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "dev:local": "vite --host 127.0.0.1 --port 5173",
+    "dev:local": "vite --host 127.0.0.1 --port 5187 --strictPort",
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm test && npm run build",
     "build": "tsc --noEmit && vite build",

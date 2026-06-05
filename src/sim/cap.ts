@@ -2,14 +2,17 @@ import type {
   CompPickLedger,
   CompPickLedgerEntry,
   CompPickProjection,
+  ContractSeason,
   ContractOrigin,
   DeadMoneyCharge,
   DraftPick,
+  FreeAgentSecurityLevel,
   FreeAgentRights,
   GameSave,
   Player,
   PlayerContract,
   Position,
+  ReleaseDesignation,
   TagType,
   TeamCapSettings,
   TenderLevel
@@ -69,6 +72,12 @@ const TENDER_APY: Record<TenderLevel, number> = {
   "first-round": 7.05
 };
 
+const SECURITY_STRUCTURE: Record<FreeAgentSecurityLevel, { bonusRate: number; guaranteeRate: number }> = {
+  low: { bonusRate: 0.12, guaranteeRate: 0.42 },
+  standard: { bonusRate: 0.2, guaranteeRate: 0.62 },
+  strong: { bonusRate: 0.28, guaranteeRate: 0.78 }
+};
+
 function money(value: number): number {
   return Number(Math.max(0, value).toFixed(2));
 }
@@ -88,62 +97,131 @@ export function freeAgentRightsFor(save: Pick<GameSave, "seasonYear">, player: P
 export function makeContract(
   player: Pick<Player, "salary" | "contractYears" | "position" | "age" | "overall" | "potential">,
   seasonYear: number,
-  options: Partial<Pick<PlayerContract, "origin" | "rights" | "apy" | "years" | "signingBonus" | "guaranteedTotal" | "tagType" | "tenderLevel">> = {}
+  options: Partial<Pick<PlayerContract, "origin" | "rights" | "apy" | "years" | "signingBonus" | "guaranteedTotal" | "tagType" | "tenderLevel" | "security" | "voidYears" | "optionYear" | "fifthYearOption">> = {}
 ): PlayerContract {
   const years = Math.max(1, Math.round(options.years ?? player.contractYears ?? 1));
   const apy = money(options.apy ?? player.salary ?? 1);
   const origin = options.origin ?? "generated";
-  const signingBonus = money(options.signingBonus ?? (origin === "practice-squad" ? 0 : apy * years * (origin === "rookie" ? 0.16 : 0.22)));
-  const guaranteedTotal = money(options.guaranteedTotal ?? signingBonus + (origin === "practice-squad" ? 0 : apy * Math.min(2, years) * 0.28));
-  const annualProration = years > 0 ? money(signingBonus / years) : 0;
-  const baseSalary = money(Math.max(0.25, apy - annualProration));
+  const security = options.security ?? "standard";
+  const structure = SECURITY_STRUCTURE[security];
+  const voidYears = origin === "free-agent" || origin === "extension" ? Math.max(0, Math.min(3, Math.round(options.voidYears ?? 0))) : 0;
+  const totalValue = money(apy * years);
+  const defaultBonusRate = origin === "practice-squad" ? 0 : origin === "rookie" || origin === "udfa" ? 0.16 : structure.bonusRate;
+  const signingBonus = money(Math.min(totalValue, options.signingBonus ?? totalValue * defaultBonusRate));
+  const defaultGuarantee = origin === "practice-squad" ? 0 : origin === "tag" || origin === "tender" ? totalValue : totalValue * structure.guaranteeRate;
+  const guaranteedTotal = money(Math.min(totalValue, Math.max(signingBonus, options.guaranteedTotal ?? defaultGuarantee)));
+  const prorationYears = Math.max(1, years + voidYears);
+  const annualProration = money(signingBonus / prorationYears);
+  const basePool = money(Math.max(0, totalValue - signingBonus));
+  const weights = Array.from({ length: years }, (_, index) => 1 + index * 0.035);
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0) || 1;
+  const baseSalaries = weights.map((weight) => money(basePool * weight / weightTotal));
+  const baseAdjustment = money(basePool - baseSalaries.reduce((sum, value) => sum + value, 0));
+  baseSalaries[baseSalaries.length - 1] = money((baseSalaries[baseSalaries.length - 1] ?? 0) + baseAdjustment);
+  let remainingGuaranteedSalary = money(Math.max(0, guaranteedTotal - signingBonus));
+  const activeSeasons: ContractSeason[] = Array.from({ length: years }, (_, index) => {
+    const baseSalary = baseSalaries[index] ?? 0;
+    const guaranteedSalary = money(Math.min(baseSalary, remainingGuaranteedSalary));
+    remainingGuaranteedSalary = money(remainingGuaranteedSalary - guaranteedSalary);
+    return {
+      seasonYear: seasonYear + index,
+      baseSalary,
+      signingBonusProration: annualProration,
+      guaranteedSalary,
+      optionYear: options.optionYear === seasonYear + index
+    };
+  });
+  const voidSeasons: ContractSeason[] = Array.from({ length: voidYears }, (_, index) => ({
+    seasonYear: seasonYear + years + index,
+    baseSalary: 0,
+    signingBonusProration: annualProration,
+    guaranteedSalary: 0,
+    voidYear: true
+  }));
   return {
     startYear: seasonYear,
     endYear: seasonYear + years - 1,
     years,
     apy,
+    totalValue,
     signingBonus,
     guaranteedTotal,
+    security,
     origin,
     rights: options.rights ?? "none",
     tagType: options.tagType,
     tenderLevel: options.tenderLevel,
-    seasons: Array.from({ length: years }, (_, index) => ({
-      seasonYear: seasonYear + index,
-      baseSalary: money(baseSalary * (1 + index * 0.035)),
-      signingBonusProration: annualProration,
-      guaranteedSalary: money(index === 0 ? Math.min(baseSalary, Math.max(0, guaranteedTotal - signingBonus)) : 0)
-    })),
+    voidYears,
+    optionYear: options.optionYear,
+    fifthYearOption: options.fifthYearOption,
+    seasons: [...activeSeasons, ...voidSeasons],
     restructureHistory: []
   };
 }
 
 export function ensurePlayerContract(player: Player, seasonYear: number): Player {
-  if (player.contract?.seasons?.length) return player;
-  return {
+  if (player.contract?.seasons?.length) {
+    return syncPlayerContractFields({
+      ...player,
+      contract: {
+        ...player.contract,
+        totalValue: player.contract.totalValue ?? contractTotalValue(player.contract),
+        security: player.contract.security ?? "standard",
+        voidYears: player.contract.voidYears ?? player.contract.seasons.filter((season) => season.voidYear).length,
+        restructureHistory: player.contract.restructureHistory ?? []
+      }
+    }, seasonYear);
+  }
+  return syncPlayerContractFields({
     ...player,
     contract: makeContract(player, seasonYear, {
       origin: isPracticeSquadPlayer(player) ? "practice-squad" : player.traits?.includes("Rookie") ? "rookie" : "generated",
       rights: player.teamId === FREE_AGENT_TEAM_ID ? "ufa" : "none"
     })
+  }, seasonYear);
+}
+
+export function contractTotalValue(contract: PlayerContract): number {
+  return money(contract.totalValue ?? contract.seasons
+    .filter((season) => !season.voidYear)
+    .reduce((sum, season) => sum + season.baseSalary, 0) + contract.signingBonus);
+}
+
+export function remainingContractYears(player: Player, seasonYear: number): number {
+  const contract = player.contract;
+  if (!contract) return Math.max(0, player.contractYears);
+  return contract.seasons.filter((season) => !season.voidYear && season.seasonYear >= seasonYear).length;
+}
+
+export function syncPlayerContractFields(player: Player, seasonYear: number): Player {
+  if (!player.contract) return player;
+  return {
+    ...player,
+    salary: player.contract.apy,
+    contractYears: remainingContractYears(player, seasonYear)
   };
 }
 
+export function currentCapSeason(player: Player, seasonYear: number) {
+  return player.contract?.seasons.find((season) => season.seasonYear === seasonYear && !season.voidYear);
+}
+
 export function currentContractSeason(player: Player, seasonYear: number) {
-  const contract = player.contract;
-  return contract?.seasons.find((season) => season.seasonYear === seasonYear) ?? contract?.seasons[0];
+  return currentCapSeason(player, seasonYear);
 }
 
 export function playerCapHit(player: Player, seasonYear: number): number {
   if (player.teamId === FREE_AGENT_TEAM_ID) return 0;
+  if (player.contract && seasonYear > player.contract.endYear) return 0;
   const season = currentContractSeason(player, seasonYear);
-  if (!season) return money(player.salary);
+  if (!season) return player.contract ? 0 : money(player.salary);
   return money(season.baseSalary + season.signingBonusProration);
 }
 
 export function playerCashDue(player: Player, seasonYear: number): number {
   const season = currentContractSeason(player, seasonYear);
-  return money(season?.baseSalary ?? player.salary);
+  if (!season) return player.contract ? 0 : money(player.salary);
+  return money(season.baseSalary);
 }
 
 export function remainingBonusProration(player: Player, seasonYear: number): number {
@@ -262,31 +340,58 @@ export function normalizeCapState(save: GameSave): GameSave {
   return recalculateBudgets(normalized);
 }
 
-export function addDeadMoneyCharge(save: GameSave, player: Player, teamId: string, source: DeadMoneyCharge["source"]): GameSave {
-  const amount = deadMoneyIfMoved(player, save.seasonYear);
+export function addDeadMoneyCharge(save: GameSave, player: Player, teamId: string, source: DeadMoneyCharge["source"], options: { amount?: number; seasonYear?: number } = {}): GameSave {
+  const amount = money(options.amount ?? deadMoneyIfMoved(player, save.seasonYear));
   if (amount <= 0) return save;
+  const chargeYear = options.seasonYear ?? save.seasonYear;
   const charge: DeadMoneyCharge = {
-    id: `dead-${source}-${save.seasonYear}-${save.currentWeek}-${player.id}-${(save.deadMoney ?? []).length}`,
+    id: `dead-${source}-${chargeYear}-${save.currentWeek}-${player.id}-${(save.deadMoney ?? []).length}`,
     teamId,
     playerId: player.id,
     playerName: playerName(player),
-    seasonYear: save.seasonYear,
+    seasonYear: chargeYear,
     amount,
     source
   };
   return { ...save, deadMoney: [charge, ...(save.deadMoney ?? [])] };
 }
 
-export function contractOfferForPlayer(save: GameSave, player: Player, teamId: string, options: { years?: number; apy?: number; origin?: ContractOrigin } = {}): PlayerContract {
+export function deadMoneyByReleaseDesignation(player: Player, seasonYear: number, designation: ReleaseDesignation = "standard"): { current: number; deferred: number } {
+  const remainingBonus = remainingBonusProration(player, seasonYear);
+  const guaranteed = guaranteedSalaryRemaining(player, seasonYear);
+  if (designation !== "post-june") return { current: money(remainingBonus + guaranteed), deferred: 0 };
+  const currentSeason = currentCapSeason(player, seasonYear);
+  const currentBonus = money(currentSeason?.signingBonusProration ?? 0);
+  return {
+    current: money(currentBonus + guaranteed),
+    deferred: money(Math.max(0, remainingBonus - currentBonus))
+  };
+}
+
+export function addReleaseDeadMoneyCharges(save: GameSave, player: Player, teamId: string, designation: ReleaseDesignation = "standard"): GameSave {
+  const split = deadMoneyByReleaseDesignation(player, save.seasonYear, designation);
+  let next = addDeadMoneyCharge(save, player, teamId, designation === "post-june" ? "post-june-release" : "release", { amount: split.current });
+  if (split.deferred > 0) {
+    next = addDeadMoneyCharge(next, player, teamId, "post-june-release", { amount: split.deferred, seasonYear: save.seasonYear + 1 });
+  }
+  return next;
+}
+
+export function contractOfferForPlayer(save: GameSave, player: Player, teamId: string, options: { years?: number; apy?: number; origin?: ContractOrigin; security?: FreeAgentSecurityLevel; voidYears?: number } = {}): PlayerContract {
   const demand = suggestedApy(player);
   const years = options.years ?? (player.age <= 25 ? 4 : player.age >= 31 ? 1 : 3);
+  const apy = money(options.apy ?? demand);
+  const security = options.security ?? "standard";
+  const structure = SECURITY_STRUCTURE[security];
   return makeContract(player, save.seasonYear, {
     origin: options.origin ?? "free-agent",
     rights: "none",
     years,
-    apy: options.apy ?? demand,
-    signingBonus: demand * years * 0.2,
-    guaranteedTotal: demand * Math.min(2, years) * 0.62
+    apy,
+    security,
+    voidYears: options.voidYears,
+    signingBonus: apy * years * structure.bonusRate,
+    guaranteedTotal: apy * years * structure.guaranteeRate
   });
 }
 
@@ -297,18 +402,25 @@ export function suggestedApy(player: Pick<Player, "overall" | "potential" | "age
   };
   const grade = Math.max(player.overall, player.potential * 0.6 + player.overall * 0.4);
   const ageDrag = player.age > 30 ? (player.age - 30) * 0.07 : 0;
-  const base = Math.pow(Math.max(0.02, (grade - 38) / 45), 2.08) * 23 * premium[player.position];
+  const base = Math.pow(Math.max(0.015, (grade - 42) / 38), 2.12) * 21 * premium[player.position];
   return money(Math.max(0.84, Math.min(player.position === "QB" ? 56 : 34, base * (1 - ageDrag) + 0.9)));
 }
 
 export function canFitContract(save: GameSave, teamId: string, contract: PlayerContract, ignorePlayerId?: string): boolean {
-  const currentYear = contract.seasons.find((season) => season.seasonYear === save.seasonYear) ?? contract.seasons[0];
+  const currentYear = contract.seasons.find((season) => season.seasonYear === save.seasonYear && !season.voidYear) ?? contract.seasons.find((season) => !season.voidYear);
   if (!currentYear) return true;
+  const newHit = money(currentYear.baseSalary + currentYear.signingBonusProration);
+  if (ignorePlayerId) {
+    const existing = save.players.find((player) => player.id === ignorePlayerId);
+    const currentHit = existing ? playerCapHit(existing, save.seasonYear) : 0;
+    if (teamCapLedger(save, teamId).capRoom + currentHit < newHit) return false;
+  }
   const simulated = {
     ...save,
-    players: save.players.map((player) => player.id === ignorePlayerId ? { ...player, contract } : player)
+    players: save.players.map((player) => player.id === ignorePlayerId ? syncPlayerContractFields({ ...player, contract }, save.seasonYear) : player)
   };
-  return teamCapLedger(simulated, teamId).capRoom >= currentYear.baseSalary + currentYear.signingBonusProration || teamCapLedger(save, teamId).capRoom >= currentYear.baseSalary + currentYear.signingBonusProration;
+  if (ignorePlayerId) return teamCapLedger(simulated, teamId).compliant;
+  return teamCapLedger(save, teamId).capRoom >= newHit;
 }
 
 export function restructurePlayerContract(save: GameSave, playerId: string, teamId = save.selectedTeamId): GameSave {
@@ -336,16 +448,17 @@ export function restructurePlayerContract(save: GameSave, playerId: string, team
   };
   return recalculateBudgets({
     ...save,
-    players: save.players.map((candidate) => candidate.id === playerId ? { ...candidate, contract, salary: contract.apy } : candidate)
+    players: save.players.map((candidate) => candidate.id === playerId ? syncPlayerContractFields({ ...candidate, contract }, save.seasonYear) : candidate)
   });
 }
 
-export function applyTagOrTender(save: GameSave, playerId: string, teamId: string, kind: TagType | TenderLevel): GameSave {
+export function canApplyTagOrTender(save: GameSave, playerId: string, teamId: string, kind: TagType | TenderLevel): { ok: boolean; reason?: string; contract?: PlayerContract } {
   const player = save.players.find((candidate) => candidate.id === playerId && candidate.teamId === teamId);
-  if (!player) return save;
+  if (!player) return { ok: false, reason: "Player is not on this roster." };
+  if (save.phase !== "contract-decisions") return { ok: false, reason: "Available during contract decisions." };
   const isTag = kind === "franchise" || kind === "transition";
   const settings = teamCapSettings(save, teamId);
-  if (isTag && (kind === "franchise" ? settings.franchiseTagUsed : settings.transitionTagUsed)) return save;
+  if (isTag && (kind === "franchise" ? settings.franchiseTagUsed : settings.transitionTagUsed)) return { ok: false, reason: `${kind === "franchise" ? "Franchise" : "Transition"} tag already used.` };
   const apy = isTag ? TAG_APY[kind][player.position] ?? 12 : TENDER_APY[kind];
   const contract = makeContract(player, save.seasonYear, {
     origin: isTag ? "tag" : "tender",
@@ -357,6 +470,16 @@ export function applyTagOrTender(save: GameSave, playerId: string, teamId: strin
     tagType: isTag ? kind : undefined,
     tenderLevel: isTag ? undefined : kind
   });
+  if (!canFitContract(save, teamId, contract, playerId)) return { ok: false, reason: "Not enough cap room.", contract };
+  return { ok: true, contract };
+}
+
+export function applyTagOrTender(save: GameSave, playerId: string, teamId: string, kind: TagType | TenderLevel): GameSave {
+  const check = canApplyTagOrTender(save, playerId, teamId, kind);
+  if (!check.ok || !check.contract) return save;
+  const isTag = kind === "franchise" || kind === "transition";
+  const settings = teamCapSettings(save, teamId);
+  const contract = check.contract;
   return recalculateBudgets({
     ...save,
     capSettings: {
@@ -367,7 +490,89 @@ export function applyTagOrTender(save: GameSave, playerId: string, teamId: strin
         transitionTagUsed: settings.transitionTagUsed || kind === "transition"
       }
     },
-    players: save.players.map((candidate) => candidate.id === playerId ? { ...candidate, contract, salary: contract.apy, contractYears: 1 } : candidate)
+    players: save.players.map((candidate) => candidate.id === playerId ? syncPlayerContractFields({ ...candidate, contract }, save.seasonYear) : candidate)
+  });
+}
+
+export function canExtendPlayerContract(save: GameSave, playerId: string, teamId = save.selectedTeamId): { ok: boolean; reason?: string } {
+  const player = save.players.find((candidate) => candidate.id === playerId && candidate.teamId === teamId);
+  if (!player?.contract) return { ok: false, reason: "No active contract." };
+  if (save.phase !== "contract-decisions") return { ok: false, reason: "Available during contract decisions." };
+  if (remainingContractYears(player, save.seasonYear) > 2) return { ok: false, reason: "Extension window opens with two years or fewer remaining." };
+  return { ok: true };
+}
+
+export function extendPlayerContract(save: GameSave, playerId: string, teamId = save.selectedTeamId, options: { years?: number; apy?: number; security?: FreeAgentSecurityLevel; voidYears?: number } = {}): GameSave {
+  const check = canExtendPlayerContract(save, playerId, teamId);
+  if (!check.ok) return save;
+  const player = save.players.find((candidate) => candidate.id === playerId && candidate.teamId === teamId)!;
+  const current = player.contract!;
+  const years = options.years ?? (player.age <= 27 ? 4 : player.age >= 31 ? 2 : 3);
+  const apy = options.apy ?? money(suggestedApy(player) * (player.overall >= 72 ? 1.04 : 0.96));
+  const extension = makeContract(player, current.endYear + 1, {
+    origin: "extension",
+    rights: "none",
+    years,
+    apy,
+    security: options.security ?? "standard",
+    voidYears: options.voidYears ?? (apy >= 12 && years >= 3 ? 1 : 0)
+  });
+  const contract: PlayerContract = {
+    ...extension,
+    startYear: current.startYear,
+    years: current.years + extension.years,
+    seasons: [
+      ...current.seasons.filter((season) => season.seasonYear <= current.endYear),
+      ...extension.seasons
+    ],
+    signingBonus: money(current.signingBonus + extension.signingBonus),
+    guaranteedTotal: money(current.guaranteedTotal + extension.guaranteedTotal),
+    totalValue: money(contractTotalValue(current) + contractTotalValue(extension)),
+    origin: "extension",
+    restructureHistory: current.restructureHistory ?? []
+  };
+  return recalculateBudgets({
+    ...save,
+    players: save.players.map((candidate) => candidate.id === playerId ? syncPlayerContractFields({ ...candidate, contract }, save.seasonYear) : candidate)
+  });
+}
+
+export function canExerciseFifthYearOption(save: GameSave, playerId: string, teamId = save.selectedTeamId): { ok: boolean; reason?: string } {
+  const player = save.players.find((candidate) => candidate.id === playerId && candidate.teamId === teamId);
+  if (!player?.contract) return { ok: false, reason: "No active contract." };
+  if (save.phase !== "contract-decisions") return { ok: false, reason: "Available during contract decisions." };
+  if (player.draftRound !== 1 || player.contract.origin !== "rookie") return { ok: false, reason: "Only first-round rookie contracts are eligible." };
+  if (player.contract.fifthYearOption?.exercised || player.contract.seasons.some((season) => season.optionYear)) return { ok: false, reason: "Fifth-year option already exercised." };
+  if (player.contract.endYear - save.seasonYear > 1) return { ok: false, reason: "Option window opens near the final rookie-contract seasons." };
+  return { ok: true };
+}
+
+export function exerciseFifthYearOption(save: GameSave, playerId: string, teamId = save.selectedTeamId): GameSave {
+  const check = canExerciseFifthYearOption(save, playerId, teamId);
+  if (!check.ok) return save;
+  const player = save.players.find((candidate) => candidate.id === playerId && candidate.teamId === teamId)!;
+  const current = player.contract!;
+  const optionYear = current.endYear + 1;
+  const apy = money(Math.max(suggestedApy(player) * 0.78, player.salary * 1.18, 1.2));
+  const optionSeason: ContractSeason = {
+    seasonYear: optionYear,
+    baseSalary: apy,
+    signingBonusProration: 0,
+    guaranteedSalary: apy,
+    optionYear: true
+  };
+  const contract: PlayerContract = {
+    ...current,
+    endYear: optionYear,
+    years: current.years + 1,
+    totalValue: money(contractTotalValue(current) + apy),
+    guaranteedTotal: money(current.guaranteedTotal + apy),
+    seasons: [...current.seasons.filter((season) => !season.voidYear), optionSeason, ...current.seasons.filter((season) => season.voidYear).map((season) => ({ ...season, seasonYear: season.seasonYear + 1 }))],
+    fifthYearOption: { eligible: true, exercised: true, seasonYear: optionYear, apy }
+  };
+  return recalculateBudgets({
+    ...save,
+    players: save.players.map((candidate) => candidate.id === playerId ? syncPlayerContractFields({ ...candidate, contract }, save.seasonYear) : candidate)
   });
 }
 
@@ -540,33 +745,36 @@ export function openOffseasonContracts(save: GameSave): GameSave {
   const players = save.players.map((player) => {
     if (player.teamId === FREE_AGENT_TEAM_ID) return player;
     const contract = ensurePlayerContract(player, save.seasonYear).contract!;
-    if (contract.endYear > save.seasonYear) return { ...player, contract };
-    return {
+    if (contract.endYear > save.seasonYear) return syncPlayerContractFields({ ...player, contract }, save.seasonYear);
+    return syncPlayerContractFields({
       ...player,
       contract: {
         ...contract,
         rights: freeAgentRightsFor(save, player)
       }
-    };
+    }, save.seasonYear);
   });
   return normalizeCapState({ ...save, players, phase: "contract-decisions" });
 }
 
 export function advanceToFreeAgency(save: GameSave): GameSave {
   if (save.phase !== "contract-decisions") return save;
-  const players = save.players.map((player) => {
+  let workingSave = save;
+  const players = workingSave.players.map((player) => {
     if (player.teamId === FREE_AGENT_TEAM_ID) return player;
     const rights = player.contract?.rights ?? "none";
-    if ((player.contract?.endYear ?? save.seasonYear) > save.seasonYear || rights === "none") return player;
+    if ((player.contract?.endYear ?? workingSave.seasonYear) > workingSave.seasonYear || rights === "none") return player;
     if (rights === "erfa") {
-      const contract = makeContract(player, save.seasonYear, { origin: "tender", rights: "none", years: 1, apy: TENDER_APY.erfa, signingBonus: 0, guaranteedTotal: TENDER_APY.erfa, tenderLevel: "erfa" });
-      return { ...player, contract, salary: contract.apy, contractYears: 1 };
+      const contract = makeContract(player, workingSave.seasonYear, { origin: "tender", rights: "none", years: 1, apy: TENDER_APY.erfa, signingBonus: 0, guaranteedTotal: TENDER_APY.erfa, tenderLevel: "erfa" });
+      if (canFitContract(workingSave, player.teamId, contract, player.id)) return syncPlayerContractFields({ ...player, contract }, workingSave.seasonYear);
     }
+    const voidDead = remainingBonusProration(player, workingSave.seasonYear + 1);
+    if (voidDead > 0) workingSave = addDeadMoneyCharge(workingSave, player, player.teamId, "guarantee", { amount: voidDead });
     return {
       ...player,
       previousTeamId: player.teamId,
       teamId: FREE_AGENT_TEAM_ID,
-      teamStartSeason: save.seasonYear,
+      teamStartSeason: workingSave.seasonYear,
       contract: {
         ...player.contract!,
         rights
@@ -574,22 +782,11 @@ export function advanceToFreeAgency(save: GameSave): GameSave {
     } as Player & { previousTeamId?: string };
   });
   return normalizeCapState(projectCompPicks({
-    ...save,
+    ...workingSave,
     players,
     phase: "free-agency",
-    freeAgencyMarket: { seasonYear: save.seasonYear, currentWave: 1, offers: [], decisions: [] },
-    inbox: [
-      {
-        id: `free-agency-open-${save.seasonYear}-${save.inbox.length}`,
-        week: save.currentWeek,
-        category: "budget",
-        title: "Free agency is open",
-        body: "Expired UFAs have hit the market. The comp-pick ledger is now tracking qualifying gains and losses.",
-        priority: "high",
-        read: false
-      },
-      ...save.inbox
-    ]
+    freeAgencyMarket: { seasonYear: workingSave.seasonYear, currentWave: 1, offers: [], decisions: [] },
+    inbox: []
   }));
 }
 
@@ -599,18 +796,7 @@ export function advanceToDraftPrep(save: GameSave): GameSave {
   return normalizeCapState({
     ...projected,
     phase: "draft-prep",
-    inbox: [
-      {
-        id: `draft-prep-open-${save.seasonYear}-${save.inbox.length}`,
-        week: save.currentWeek,
-        category: "draft",
-        title: "Draft prep is open",
-        body: "Compensatory picks are finalized and the front office can move into the draft room.",
-        priority: "high",
-        read: false
-      },
-      ...save.inbox
-    ]
+    inbox: []
   });
 }
 

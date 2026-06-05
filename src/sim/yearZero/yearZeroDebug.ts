@@ -81,6 +81,9 @@ export interface YearZeroDebugExport {
     runtimeCsvs: string[];
     schemaValidatedCsvs: number;
     schemaValidatedColumns: number;
+    parserRulesApplied: number;
+    fallbackAuditCount: number;
+    validationErrors: string[];
     usesYearZeroBundles: false;
   };
   annualTransferPortal?: {
@@ -365,6 +368,9 @@ export function buildYearZeroDebugExport(save: Pick<GameSave, "yearZero" | "coll
       runtimeCsvs: save.annualPipeline.runtimeCsvs,
       schemaValidatedCsvs: save.annualPipeline.schemaValidatedCsvs ?? 0,
       schemaValidatedColumns: save.annualPipeline.schemaValidatedColumns ?? 0,
+      parserRulesApplied: save.annualPipeline.parserRulesApplied ?? 0,
+      fallbackAuditCount: save.annualPipeline.fallbackAuditCount ?? 0,
+      validationErrors: save.annualPipeline.validationErrors ?? [],
       usesYearZeroBundles: save.annualPipeline.usesYearZeroBundles
     } : undefined,
     annualTransferPortal: save.annualTransferPortal ? {

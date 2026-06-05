@@ -541,7 +541,9 @@ export function compactSaveForStorage(save: GameSave): GameSave {
       return {
         ...game,
         log: [],
-        snapCounts: {}
+        snapCounts: {},
+        playerStats: {},
+        teamStats: {}
       };
     })
   };

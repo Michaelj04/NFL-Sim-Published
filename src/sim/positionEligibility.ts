@@ -6,7 +6,7 @@ import { calculateOverallFromRatings, ratingValue } from "./ratings";
 export type PositionEligible = Pick<Player | Prospect, "position" | "ratings" | "positionFits" | "traits">;
 
 const minimumNormalFit = 64;
-const emergencyFit = 35;
+const emergencyFit = 30;
 
 const offensiveLine = new Set<Position>(["LT", "LG", "C", "RG", "RT"]);
 const specialists = new Set<Position>(["K", "P"]);
@@ -192,7 +192,7 @@ export function familiarityPenaltyForFit(fit: number): number {
   if (fit >= 60) return Math.round(11 + (70 - fit) * 0.55);
   if (fit >= 50) return Math.round(18 + (60 - fit) * 0.8);
   if (fit >= 40) return Math.round(28 + (50 - fit) * 1.1);
-  return Math.round(clamp(42 + (40 - fit) * 0.8, 42, 58));
+  return Math.round(clamp(52 + (40 - fit), 52, 68));
 }
 
 export function effectiveOverallAtPosition(
@@ -201,7 +201,10 @@ export function effectiveOverallAtPosition(
   options: { emergency?: boolean } = {}
 ): number {
   const targetOverall = skillOverallAtPosition(entity, position);
-  const fit = positionFitFor(entity, position);
+  const rawFit = positionFitFor(entity, position);
+  const fit = (entity.position === "QB" || specialists.has(entity.position)) && position !== entity.position
+    ? Math.min(rawFit, emergencyFit)
+    : rawFit;
   const penalty = familiarityPenaltyForFit(options.emergency && fit < emergencyFit ? emergencyFit : fit);
   const floor = fit >= minimumNormalFit || options.emergency ? 20 : 10;
   return Math.round(clamp(targetOverall - penalty, floor, 99));
