@@ -80,7 +80,7 @@ export function signFreeAgentWithContract(
   playerId: string,
   teamId: string,
   contract: PlayerContract,
-  options: { source?: FreeAgencyMove["source"]; details?: string; type?: FreeAgencyMove["type"] } = {}
+  options: { source?: FreeAgencyMove["source"]; details?: string; type?: FreeAgencyMove["type"]; deferPostSignRefresh?: boolean } = {}
 ): GameSave {
   const check = canSignFreeAgentWithContract(save, playerId, teamId, contract);
   if (!check.ok) return save;
@@ -101,7 +101,16 @@ export function signFreeAgentWithContract(
       ...(save.freeAgencyLog ?? [])
     ]
   };
-  return recalculateBudgets(recordCompPickSigning(signedSave, player, teamId));
+  const compSave = recordCompPickSigning(signedSave, player, teamId, { project: !options.deferPostSignRefresh });
+  if (!options.deferPostSignRefresh) return recalculateBudgets(compSave);
+  const capHit = playerCapHit(signedPlayer, save.seasonYear) || currentCapSeason(signedPlayer, save.seasonYear)?.baseSalary || signedPlayer.salary;
+  return {
+    ...compSave,
+    budget: {
+      ...compSave.budget,
+      [teamId]: Number(((compSave.budget[teamId] ?? 0) - capHit).toFixed(2))
+    }
+  };
 }
 
 export function releasePlayerToFreeAgency(save: GameSave, playerId: string, teamId = save.selectedTeamId, designation: ReleaseDesignation = "standard"): GameSave {

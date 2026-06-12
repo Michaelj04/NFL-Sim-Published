@@ -517,12 +517,8 @@ export function compactSaveForStorage(save: GameSave): GameSave {
           udfaPaths: []
         }
       : undefined,
-    annualRecruitClass: save.annualRecruitClass
-      ? { ...save.annualRecruitClass, recruits: [] }
-      : undefined,
-    annualRecruiting: save.annualRecruiting
-      ? { ...save.annualRecruiting, board: [] }
-      : undefined,
+    annualRecruitClass: save.annualRecruitClass,
+    annualRecruiting: save.annualRecruiting,
     collegeRoster: save.collegeRoster
       ? { ...save.collegeRoster, players: [] }
       : undefined,

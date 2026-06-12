@@ -590,7 +590,7 @@ export function newTeamContractForAcquiredPlayer(player: Player, seasonYear: num
   };
 }
 
-export function recordCompPickSigning(save: GameSave, player: Player, signingTeamId: string): GameSave {
+export function recordCompPickSigning(save: GameSave, player: Player, signingTeamId: string, options: { project?: boolean } = {}): GameSave {
   const originalTeamId = player.contract?.rights === "ufa" ? (player as Player & { previousTeamId?: string }).previousTeamId : undefined;
   const lostTeamId = originalTeamId;
   if (!lostTeamId || lostTeamId === signingTeamId || player.contract?.rights !== "ufa") return save;
@@ -624,13 +624,14 @@ export function recordCompPickSigning(save: GameSave, player: Player, signingTea
     }
   ];
   const ledger = save.compPickLedger ?? { seasonYear: save.seasonYear, entries: [], projections: [] };
-  return projectCompPicks({
+  const next = {
     ...save,
     compPickLedger: {
       ...ledger,
       entries: [...entries, ...ledger.entries.filter((entry) => !entries.some((next) => next.id === entry.id))]
     }
-  });
+  };
+  return options.project === false ? next : projectCompPicks(next);
 }
 
 function compPickValue(player: Player, apy: number): number {

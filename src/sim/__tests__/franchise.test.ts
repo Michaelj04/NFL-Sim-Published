@@ -3,6 +3,7 @@ import { collegePrograms } from "../../data/collegePrograms";
 import { collegeImageFor } from "../../data/collegeImages";
 import { firstNames, lastNames } from "../../data/names";
 import { nflTeams } from "../../data/nflTeams";
+import { prospectTierForSchool } from "../../data/prospectTierRankings";
 import { createRng } from "../../lib/rng";
 import { createRoot } from "react-dom/client";
 import { act, createElement } from "react";
@@ -96,6 +97,7 @@ import {
 import { developmentPlanForTraining, normalizePlayerModel, runWeeklyTraining, updatePlayerTrainingSettings } from "../playerModel";
 import { generateCollegeTrainingBanks } from "../collegeTraining";
 import { generateCollegeMoraleState } from "../collegeMorale";
+import { resolveWeeklyRecruiting, updateRecruitingPitch, updateRecruitingScoutAssignment } from "../annualRecruiting";
 import { autoManageCpuRoster, buildRosterMoveRecommendations } from "../rosterAi";
 import {
   applyScoutingProjection,
@@ -457,6 +459,51 @@ describe("franchise generator", () => {
     expect(avgRisk(nilMorale)).toBeLessThan(avgRisk(baseMorale));
     expect(avgMorale(nilMorale)).toBeGreaterThan(avgMorale(baseMorale));
   });
+
+  it("runs star-based weekly recruiting with points, commits, and class summaries", () => {
+    let save = createNewSave({ selectedTeamId: "chi", selectedSchoolId: "alabama", careerType: "college", mode: "goals", seed: "star-recruiting-weekly-seed", scenario: "neutral" });
+    const schoolId = save.selectedSchoolId!;
+    const recruit = save.annualRecruitClass!.recruits.find((candidate) => candidate.stars >= 4)!;
+
+    save = updateRecruitingPitch(save, recruit.id, {
+      target: true,
+      scholarshipOffered: true,
+      status: "visited",
+      visitScheduledWeek: 12,
+      promiseType: "early_playing_time",
+      nilOffer: 80,
+      weeklyPoints: 110
+    });
+    const before = save.annualRecruiting!.board.find((entry) => entry.schoolId === schoolId && entry.prospectId === recruit.id)!;
+    save = { ...save, currentWeek: 12 };
+    const resolved = resolveWeeklyRecruiting(save);
+    const after = resolved.annualRecruiting!.board.find((entry) => entry.schoolId === schoolId && entry.prospectId === recruit.id)!;
+
+    expect(after.interestScore).toBeGreaterThanOrEqual(before.interestScore);
+    expect(resolved.annualRecruiting!.targetIdsBySchool![schoolId]).toContain(recruit.id);
+    expect(resolved.annualRecruiting!.classSummaries?.length).toBe(save.schools.length);
+    expect(resolved.annualRecruiting!.history?.some((entry) => entry.type === "scout" || entry.type === "commit")).toBe(true);
+  }, 20000);
+
+  it("state-based recruiting scouts improve team-specific recruit grades", () => {
+    let save = createNewSave({ selectedTeamId: "chi", selectedSchoolId: "alabama", careerType: "college", mode: "goals", seed: "state-recruiting-scout-seed", scenario: "neutral" });
+    const schoolId = save.selectedSchoolId!;
+    const recruit = save.annualRecruitClass!.recruits.find((candidate) => candidate.homeState === "California" && candidate.stars >= 3) ?? save.annualRecruitClass!.recruits[0];
+    const assignment = save.annualRecruiting!.scoutAssignments!.find((candidate) => candidate.schoolId === schoolId)!;
+    save = updateRecruitingScoutAssignment(save, assignment.id, {
+      stateFocus: recruit.homeState,
+      positionFocus: recruit.position,
+      targetProspectId: recruit.id
+    });
+    save = updateRecruitingPitch(save, recruit.id, { target: true });
+    const before = save.annualRecruiting!.evaluations!.find((entry) => entry.schoolId === schoolId && entry.prospectId === recruit.id);
+    const resolved = resolveWeeklyRecruiting({ ...save, currentWeek: 5 });
+    const after = resolved.annualRecruiting!.evaluations!.find((entry) => entry.schoolId === schoolId && entry.prospectId === recruit.id)!;
+
+    expect(after.progress).toBeGreaterThan(before?.progress ?? 0);
+    expect(after.confidence).toBeGreaterThan(before?.confidence ?? 0);
+    expect(after.evaluatedStarsLow).toBeLessThanOrEqual(after.evaluatedStarsHigh);
+  }, 20000);
 
   it("can auto-switch a player to a better trained position", () => {
     const save = createNewSave("chi", "goals", "position-switch-seed");
@@ -2585,6 +2632,47 @@ describe("expanded ratings", () => {
     }
   });
 
+  it("generates believable year-zero active specialists on the starter baseline", () => {
+    const save = createNewSave({ selectedTeamId: "lac", mode: "goals", seed: "year-zero-specialist-baseline", scenario: "neutral" });
+    const activeSpecialists = save.players.filter((player) => !player.practiceSquad && player.teamId !== "FA" && (player.position === "K" || player.position === "P"));
+    const practiceAndMarketSpecialists = save.players.filter((player) => (player.practiceSquad || player.teamId === "FA") && (player.position === "K" || player.position === "P"));
+    const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
+    const activeGrades = activeSpecialists.map((player) => effectiveOverallAtPosition(player, player.position));
+    const reserveGrades = practiceAndMarketSpecialists.map((player) => effectiveOverallAtPosition(player, player.position));
+
+    for (const team of save.teams) {
+      const specialists = activeSpecialists.filter((player) => player.teamId === team.id);
+      expect(specialists.filter((player) => player.position === "K")).toHaveLength(1);
+      expect(specialists.filter((player) => player.position === "P")).toHaveLength(1);
+    }
+
+    expect(activeSpecialists).toHaveLength(save.teams.length * 2);
+    expect(Math.min(...activeGrades)).toBeGreaterThanOrEqual(52);
+    expect(average(activeGrades)).toBeGreaterThanOrEqual(58);
+    expect(average(activeGrades)).toBeLessThanOrEqual(64);
+    expect(average(reserveGrades)).toBeLessThan(average(activeGrades));
+    expect(activeSpecialists.every((player) => player.overall === skillOverallAtPosition(player, player.position))).toBe(true);
+    expect(activeSpecialists.every((player) => player.overall === effectiveOverallAtPosition(player, player.position))).toBe(true);
+
+    const contender = createNewSave({ selectedTeamId: "lac", mode: "goals", seed: "year-zero-specialist-baseline", scenario: "contender" });
+    const selectedTeamSpecialists = playersForTeam(contender, "lac").filter((player) => !player.practiceSquad && (player.position === "K" || player.position === "P"));
+    expect(selectedTeamSpecialists.every((player) => player.overall === skillOverallAtPosition(player, player.position))).toBe(true);
+    expect(selectedTeamSpecialists.every((player) => player.overall === effectiveOverallAtPosition(player, player.position))).toBe(true);
+  });
+
+  it("keeps year-zero special teams power grades on the K/P starter scale", () => {
+    const first = createNewSave({ selectedTeamId: "lac", mode: "goals", seed: "year-zero-specialist-power", scenario: "neutral" });
+    const second = createNewSave({ selectedTeamId: "lac", mode: "goals", seed: "year-zero-specialist-power", scenario: "neutral" });
+    const firstRows = powerRankings(first);
+    const secondRows = powerRankings(second);
+    const average = firstRows.reduce((sum, row) => sum + row.specialTeams, 0) / firstRows.length;
+
+    expect(Math.min(...firstRows.map((row) => row.specialTeams))).toBeGreaterThanOrEqual(52);
+    expect(average).toBeGreaterThanOrEqual(58);
+    expect(average).toBeLessThanOrEqual(64);
+    expect(firstRows.map((row) => [row.team.id, row.specialTeams])).toEqual(secondRows.map((row) => [row.team.id, row.specialTeams]));
+  });
+
   it("keeps new-career team cap sheets within realistic year-zero commitments", () => {
     const save = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-cap-sanity", scenario: "neutral" });
 
@@ -2595,6 +2683,31 @@ describe("expanded ratings", () => {
       expect(save.budget[team.id]).toBeCloseTo(ledger.capRoom, 2);
     }
   });
+
+  it("weights Year Zero NFL college origins toward football power schools without erasing small schools", () => {
+    expect(prospectTierForSchool("Hawaii")?.weight).toBeCloseTo(0.7);
+    expect(prospectTierForSchool("ETSU")?.weight).toBeCloseTo(0.3);
+    expect(prospectTierForSchool("UAPB")?.weight).toBeCloseTo(0.15);
+
+    const saves = ["year-zero-college-origin-a", "year-zero-college-origin-b"].map((seed) =>
+      createNewSave({ selectedTeamId: "chi", mode: "goals", seed, scenario: "neutral" })
+    );
+    const schoolById = new Map(saves[0].schools.map((school) => [school.id, school]));
+    const tierForPlayer = (player: Player) => prospectTierForSchool(schoolById.get(player.collegeId)?.name ?? "");
+    const players = saves.flatMap((save) => save.players);
+    const highTierSchools = saves[0].schools.filter((school) => ["S+", "S", "A"].includes(prospectTierForSchool(school.name)?.tier ?? "")).length;
+    const lowTierSchools = saves[0].schools.filter((school) => ["D", "FCS+", "FCS", "FCS-"].includes(prospectTierForSchool(school.name)?.tier ?? "")).length;
+    const highTierPlayers = players.filter((player) => ["S+", "S", "A"].includes(tierForPlayer(player)?.tier ?? "")).length;
+    const lowTierPlayers = players.filter((player) => ["D", "FCS+", "FCS", "FCS-"].includes(tierForPlayer(player)?.tier ?? "")).length;
+    const fcsPlayers = players.filter((player) => tierForPlayer(player)?.subdivision === "FCS").length;
+    const elitePlayers = players.filter((player) => player.overall >= 68 && !isPracticeSquadPlayer(player));
+    const depthPlayers = players.filter((player) => player.overall <= 55 || isPracticeSquadPlayer(player));
+    const highTierShare = (pool: Player[]) => pool.filter((player) => ["S+", "S", "A"].includes(tierForPlayer(player)?.tier ?? "")).length / Math.max(1, pool.length);
+
+    expect(highTierPlayers / Math.max(1, highTierSchools)).toBeGreaterThan((lowTierPlayers / Math.max(1, lowTierSchools)) * 3);
+    expect(fcsPlayers).toBeGreaterThan(10);
+    expect(highTierShare(elitePlayers)).toBeGreaterThan(highTierShare(depthPlayers) + 0.04);
+  }, 60000);
 
   it("generates synthetic prior NFL stat history for year-zero veterans only", () => {
     const first = createNewSave({ selectedTeamId: "chi", mode: "goals", seed: "year-zero-history-seed", scenario: "neutral" });

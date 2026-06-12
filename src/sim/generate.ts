@@ -1647,8 +1647,10 @@ export function createNewSave(
       ? qbRank === 1 ? Math.min(3, Math.round(scenarioProfile.rosterBias * 0.35)) : Math.min(1, Math.round(scenarioProfile.rosterBias * 0.15))
       : scenarioProfile.rosterBias;
     const qbCap = player.position === "QB" && qbRank !== undefined && qbRank > 0 ? qbRank === 1 ? 66 : 58 : 95;
-    const overall = Math.round(clamp(player.overall + appliedBias, 35, qbCap));
-    const ratings = generateRatings(player.position, overall, playerRng.fork("ratings"));
+    const targetOverall = Math.round(clamp(player.overall + appliedBias, 35, qbCap));
+    const calibrated = calibrateYearZeroRatings(player.position, targetOverall, playerRng.fork("ratings"), Math.min(qbCap, targetOverall + 1));
+    const overall = calibrated.overall;
+    const ratings = calibrated.ratings;
     return resyncScenarioContract({
       ...player,
       overall,

@@ -16,9 +16,8 @@ export function generateAnnualRosterImportPlan(save: GameSave, seasonYear = save
   const recruitsById = new Map(save.annualRecruitClass?.recruits.map((recruit) => [recruit.id, recruit]) ?? []);
   const playersById = new Map(save.players.map((player) => [player.id, player]));
   const recruitingEntries: AnnualRosterImportPlanEntry[] = (save.annualRecruiting?.board ?? [])
-    .filter((entry) => entry.status === "committed" || entry.status === "signed" || entry.status === "offered")
+    .filter((entry) => entry.status === "committed" || entry.status === "signed")
     .sort((a, b) => b.interestScore - a.interestScore || a.id.localeCompare(b.id))
-    .slice(0, Math.max(64, save.schools.length))
     .flatMap((entry, index) => {
       const prospect = recruitsById.get(entry.prospectId);
       if (!prospect) return [];

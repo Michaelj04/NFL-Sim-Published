@@ -3,7 +3,7 @@ import type { Game, GameLogEntry, GameResult, GameSave, Player, PlayerSnapCount,
 import { calculateSnapPlan, type SnapPhase, type SnapPlan, type SnapPlanEntry, weightedEntryPick } from "./personnel";
 import { buildMedicalEvent, injuryRiskWeight, pickInjuryCandidate } from "./medical";
 import { ratingValue } from "./ratings";
-import { depthChart, medicalQuality, teamById, teamOverall, unitGrade } from "./selectors";
+import { medicalQuality, teamById, teamOverall } from "./selectors";
 import { staffGameModifier } from "./staffModel";
 import { emptyPlayerStats, emptyTeamGameStats } from "./stats";
 
@@ -22,27 +22,34 @@ function clockText(seconds: number): string {
   return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }
 
-function offensiveGrade(save: GameSave, teamId: string): number {
-  const qbPlayer = depthChart(save, teamId).QB[0];
+function planUnitGrade(plan: SnapPlan, positions: Position[], fallback = 60): number {
+  const entries = plan.entries.filter((entry) => entry.player && positions.includes(entry.position) && entry.snapShare > 0);
+  const totalWeight = entries.reduce((sum, entry) => sum + entry.snapShare, 0);
+  if (totalWeight <= 0) return fallback;
+  return Math.round(entries.reduce((sum, entry) => sum + entry.effectiveOverall * entry.snapShare, 0) / totalWeight);
+}
+
+function offensiveGrade(save: GameSave, teamId: string, plan = calculateSnapPlan(save, teamId)): number {
+  const qbPlayer = plan.entries.find((entry) => entry.position === "QB" && entry.starter)?.player;
   const qb = qbPlayer?.overall ?? 55;
-  const skill = unitGrade(save, teamId, ["RB", "WR", "TE"]);
-  const line = unitGrade(save, teamId, ["LT", "LG", "C", "RG", "RT"]);
+  const skill = planUnitGrade(plan, ["RB", "WR", "TE"]);
+  const line = planUnitGrade(plan, ["LT", "LG", "C", "RG", "RT"]);
   return Math.round(qb * 0.36 + skill * 0.34 + line * 0.3 + staffGameModifier(save.staff, teamId, "offense"));
 }
 
-function defensiveGrade(save: GameSave, teamId: string): number {
-  const front = unitGrade(save, teamId, ["EDGE", "DL", "LB"]);
-  const coverage = unitGrade(save, teamId, ["CB", "S"]);
+function defensiveGrade(save: GameSave, teamId: string, plan = calculateSnapPlan(save, teamId)): number {
+  const front = planUnitGrade(plan, ["EDGE", "DL", "LB"]);
+  const coverage = planUnitGrade(plan, ["CB", "S"]);
   return Math.round(front * 0.52 + coverage * 0.48 + staffGameModifier(save.staff, teamId, "defense"));
 }
 
-function kickerGrade(save: GameSave, teamId: string): number {
-  const kicker = depthChart(save, teamId).K[0];
+function kickerGrade(save: GameSave, teamId: string, plan = calculateSnapPlan(save, teamId)): number {
+  const kicker = plan.entries.find((entry) => entry.position === "K" && entry.starter)?.player;
   return (kicker?.overall ?? 62) + staffGameModifier(save.staff, teamId, "special");
 }
 
-function punterGrade(save: GameSave, teamId: string): number {
-  const punter = depthChart(save, teamId).P[0];
+function punterGrade(save: GameSave, teamId: string, plan = calculateSnapPlan(save, teamId)): number {
+  const punter = plan.entries.find((entry) => entry.position === "P" && entry.starter)?.player;
   return (punter?.overall ?? 62) + staffGameModifier(save.staff, teamId, "special");
 }
 
@@ -149,18 +156,19 @@ function maybeInjury(
   injuries: GameResult["injuries"],
   activeEntries: SnapPlanEntry[],
   snapCounts: Record<string, PlayerSnapCount>,
-  gameId: string
+  gameId: string,
+  medicalQualityForTeam: (teamId: string) => number
 ): GameResult["injuries"][number] | undefined {
   const pool = activeEntries.map((entry) => entry.player).filter(Boolean) as Player[];
   if (pool.length === 0) return undefined;
   const averageRisk =
-    pool.reduce((sum, player) => sum + injuryRiskWeight(player, medicalQuality(save, player.teamId), ((snapCounts[player.id]?.offense ?? 0) + (snapCounts[player.id]?.defense ?? 0)) / 72), 0) /
+    pool.reduce((sum, player) => sum + injuryRiskWeight(player, medicalQualityForTeam(player.teamId), ((snapCounts[player.id]?.offense ?? 0) + (snapCounts[player.id]?.defense ?? 0)) / 72), 0) /
     pool.length;
   if (!rng.bool(clamp(GAME_INJURY_BASE_CHANCE * averageRisk, GAME_INJURY_MIN_CHANCE, GAME_INJURY_MAX_CHANCE))) return undefined;
   const player = pickInjuryCandidate(
     pool,
     rng,
-    (teamId) => medicalQuality(save, teamId),
+    medicalQualityForTeam,
     (playerId) => ((snapCounts[playerId]?.offense ?? 0) + (snapCounts[playerId]?.defense ?? 0) + (snapCounts[playerId]?.specialTeams ?? 0)) / 72
   );
   if (!player) return undefined;
@@ -168,7 +176,7 @@ function maybeInjury(
     week: save.currentWeek,
     source: "game",
     gameId,
-    trainerQuality: medicalQuality(save, player.teamId)
+    trainerQuality: medicalQualityForTeam(player.teamId)
   });
   injuries.push(event);
   log.push({
@@ -211,6 +219,11 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
     [home.id]: emptyTeamGameStats(home.id),
     [away.id]: emptyTeamGameStats(away.id)
   };
+  const medicalQualityByTeam = new Map<string, number>([
+    [home.id, medicalQuality(save, home.id)],
+    [away.id, medicalQuality(save, away.id)]
+  ]);
+  const medicalQualityForTeam = (teamId: string) => medicalQualityByTeam.get(teamId) ?? 60;
   const medicalOverrides = new Map<string, Partial<Player>>();
   let simSave: GameSave = save;
   const rebuildSimSave = () => {
@@ -226,12 +239,13 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
   const gameGrades: Record<string, { offense: number; defense: number; kicker: number; punter: number }> = {};
   const rebuildSnapPlan = (teamId: string) => {
     rebuildSimSave();
-    snapPlans[teamId] = calculateSnapPlan(simSave, teamId);
+    const plan = calculateSnapPlan(simSave, teamId);
+    snapPlans[teamId] = plan;
     gameGrades[teamId] = {
-      offense: offensiveGrade(simSave, teamId),
-      defense: defensiveGrade(simSave, teamId),
-      kicker: kickerGrade(simSave, teamId),
-      punter: punterGrade(simSave, teamId)
+      offense: offensiveGrade(simSave, teamId, plan),
+      defense: defensiveGrade(simSave, teamId, plan),
+      kicker: kickerGrade(simSave, teamId, plan),
+      punter: punterGrade(simSave, teamId, plan)
     };
   };
   rebuildSnapPlan(home.id);
@@ -755,7 +769,7 @@ export function simulateGame(save: GameSave, game: Game): GameResult {
     }
 
     log.push({ quarter, clock: clockText(clock), offenseTeamId, defenseTeamId, down, distance, yardLine, type, text });
-    const injury = maybeInjury(simSave, offenseTeamId, defenseTeamId, rng, quarter, clock, log, injuries, [...offensiveSnapEntries, ...defensiveSnapEntries], snapCounts, game.id);
+    const injury = maybeInjury(simSave, offenseTeamId, defenseTeamId, rng, quarter, clock, log, injuries, [...offensiveSnapEntries, ...defensiveSnapEntries], snapCounts, game.id, medicalQualityForTeam);
     if (injury) {
       medicalOverrides.set(injury.playerId, {
         status: injury.status === "limited" ? "limited" : "injured",

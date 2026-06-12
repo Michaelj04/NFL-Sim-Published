@@ -1,14 +1,14 @@
 import { clamp, createRng } from "../lib/rng";
 import type { Game, GameSave, Player, PlayerStats, TeamRecord } from "../types";
-import { advanceToDraftPrep, normalizeCapState, openOffseasonContracts, recalculateBudgets, teamCapLedger } from "./cap";
+import { advanceToDraftPrep, deadMoneyForTeam, normalizeCapState, openOffseasonContracts, playerCapHit, recalculateBudgets, teamCapLedger, teamCapSettings } from "./cap";
 import { generateAnnualTransferPortalState } from "./annualTransfer";
 import { applyAnnualRosterImportPlan, generateAnnualRosterImportPlan } from "./annualRosterImport";
-import { finalizeAnnualRecruitingState } from "./annualRecruiting";
+import { finalizeAnnualRecruitingState, resolveWeeklyRecruiting } from "./annualRecruiting";
 import { activeRosterLimitForDate, addDays, buildSeasonCalendar, calendarPhaseForDate, currentFootballWeek, finalCutdownDate, gamesOnDate, leagueYearStartDate, refreshCalendar, regularSeasonStartDate } from "./calendar";
 import { normalizePlayerMakeup } from "./concerns";
 import { ensureDraftState } from "./draft";
 import { FREE_AGENT_TEAM_ID, releasePlayerToFreeAgency, rosterSize } from "./freeAgents";
-import { clearIrState, processIrWindows } from "./ir";
+import { clearIrState, isOnIr, processIrWindows } from "./ir";
 import { autoManageCpuPracticeSquads, clearPracticeSquadState, fillPracticeSquadsFromFreeAgency, isPracticeSquadPlayer, processPracticeSquadWeek } from "./practiceSquad";
 import { autoManageCpuRoster } from "./rosterAi";
 import { createDraftState, createRecords, generateSeasonDraftAssets } from "./generate";
@@ -31,6 +31,52 @@ import { addGameStatsToPlayer, archivePlayerSeasonStats, emptyPlayerStats } from
 
 function cloneSave(save: GameSave): GameSave {
   return JSON.parse(JSON.stringify(save)) as GameSave;
+}
+
+function cloneSaveForDailyAdvance(save: GameSave): GameSave {
+  return {
+    ...save,
+    players: save.players.map((player) => ({ ...player })),
+    schedule: save.schedule.map((game) => ({ ...game })),
+    records: Object.fromEntries(Object.entries(save.records).map(([teamId, record]) => [teamId, { ...record }])),
+    budget: { ...save.budget },
+    depthOverrides: { ...save.depthOverrides },
+    freeAgencyLog: [...(save.freeAgencyLog ?? [])],
+    medicalHistory: [...(save.medicalHistory ?? [])],
+    careerEndedRecords: [...(save.careerEndedRecords ?? [])],
+    irReturnUsage: { ...save.irReturnUsage },
+    injuryReports: save.injuryReports ? [...save.injuryReports] : undefined,
+    freeAgencyMarket: save.freeAgencyMarket ? {
+      ...save.freeAgencyMarket,
+      offers: [...save.freeAgencyMarket.offers],
+      decisions: [...save.freeAgencyMarket.decisions]
+    } : undefined,
+    annualRecruiting: save.annualRecruiting ? {
+      ...save.annualRecruiting,
+      board: save.annualRecruiting.board.map((entry) => ({ ...entry, debugFactors: [...(entry.debugFactors ?? [])] })),
+      evaluations: save.annualRecruiting.evaluations?.map((evaluation) => ({ ...evaluation, notes: [...evaluation.notes], riskFlags: [...evaluation.riskFlags] })),
+      scoutAssignments: save.annualRecruiting.scoutAssignments?.map((assignment) => ({ ...assignment })),
+      weeklyPointsBySchool: { ...(save.annualRecruiting.weeklyPointsBySchool ?? {}) },
+      targetIdsBySchool: Object.fromEntries(Object.entries(save.annualRecruiting.targetIdsBySchool ?? {}).map(([schoolId, ids]) => [schoolId, [...ids]])),
+      removedTargetIdsBySchool: Object.fromEntries(Object.entries(save.annualRecruiting.removedTargetIdsBySchool ?? {}).map(([schoolId, ids]) => [schoolId, [...ids]])),
+      history: save.annualRecruiting.history?.map((entry) => ({ ...entry })),
+      classSummaries: save.annualRecruiting.classSummaries?.map((summary) => ({ ...summary, positionCounts: { ...summary.positionCounts } }))
+    } : undefined,
+    tradeState: save.tradeState ? {
+      ...save.tradeState,
+      offers: [...save.tradeState.offers],
+      history: [...save.tradeState.history],
+      news: [...save.tradeState.news],
+      tradeBlock: [...save.tradeState.tradeBlock],
+      availabilityOverrides: { ...save.tradeState.availabilityOverrides },
+      teamPreferences: { ...save.tradeState.teamPreferences }
+    } : undefined,
+    waiverState: save.waiverState ? {
+      ...save.waiverState,
+      order: [...save.waiverState.order],
+      players: save.waiverState.players.map((player) => ({ ...player, claims: [...player.claims] }))
+    } : undefined
+  };
 }
 
 function updateRecord(record: TeamRecord, scored: number, allowed: number): TeamRecord {
@@ -139,7 +185,30 @@ function applyGameStats(player: Player, stats: PlayerStats | undefined, bucket: 
 }
 
 function budgetRefresh(save: GameSave): Record<string, number> {
-  return Object.fromEntries(save.teams.map((team) => [team.id, teamCapLedger(save, team.id).capRoom]));
+  const activeCap = new Map<string, number>();
+  const practiceSquadCap = new Map<string, number>();
+  const irCap = new Map<string, number>();
+  for (const player of save.players) {
+    const hit = playerCapHit(player, save.seasonYear);
+    if (!hit) continue;
+    if (isOnIr(player)) {
+      irCap.set(player.teamId, (irCap.get(player.teamId) ?? 0) + hit);
+    } else if (isPracticeSquadPlayer(player)) {
+      practiceSquadCap.set(player.teamId, (practiceSquadCap.get(player.teamId) ?? 0) + hit);
+    } else {
+      activeCap.set(player.teamId, (activeCap.get(player.teamId) ?? 0) + hit);
+    }
+  }
+  return Object.fromEntries(save.teams.map((team) => {
+    const settings = teamCapSettings(save, team.id);
+    const commitments =
+      (activeCap.get(team.id) ?? 0) +
+      (practiceSquadCap.get(team.id) ?? 0) +
+      (irCap.get(team.id) ?? 0) +
+      deadMoneyForTeam(save, team.id, save.seasonYear) +
+      (settings.rookieReserve ?? 0);
+    return [team.id, Math.round((settings.salaryCap - commitments) * 100) / 100];
+  }));
 }
 
 function processRosterWeek(save: GameSave): GameSave {
@@ -158,17 +227,46 @@ function shouldRunWeeklyReportProcessors(save: GameSave): boolean {
   return day === 1;
 }
 
+function shouldRunCpuRosterManagement(save: GameSave): boolean {
+  if (shouldRunWeeklyReportProcessors(save)) return true;
+  const rosterState = new Map<string, { active: number; practice: number; pressure: number; readyIr: boolean }>();
+  for (const team of save.teams) {
+    if (team.id !== save.selectedTeamId) rosterState.set(team.id, { active: 0, practice: 0, pressure: 0, readyIr: false });
+  }
+  for (const player of save.players) {
+    const state = rosterState.get(player.teamId);
+    if (!state) continue;
+    if (isOnIr(player)) {
+      if (player.status !== "injured") state.readyIr = true;
+      continue;
+    }
+    if (isPracticeSquadPlayer(player)) {
+      state.practice += 1;
+      continue;
+    }
+    state.active += 1;
+    if (player.status === "injured" || player.status === "limited" || player.status === "suspended") state.pressure += 1;
+  }
+  for (const state of rosterState.values()) {
+    if (state.readyIr || state.active < 53 || state.pressure >= 2 || state.practice < 16) return true;
+  }
+  return false;
+}
+
 function processDailyRoster(save: GameSave): GameSave {
   let next = refreshCalendar(save);
   next = processPracticeSquadWeek(next);
   next.players = next.players.map(availabilityDailyTick);
   next = processIrWindows(next);
   next = processWaiversForDate(next);
-  next = autoManageCpuPracticeSquads(autoManageCpuRoster(next));
+  if (shouldRunCpuRosterManagement(next)) {
+    next = autoManageCpuPracticeSquads(autoManageCpuRoster(next));
+  }
   if (shouldRunWeeklyReportProcessors(next)) {
     next = runWeeklyTraining(next);
     next = applyCharacterEvents(next);
     next = applyWeeklyScoutingPlan(next);
+    next = resolveWeeklyRecruiting(next);
   }
   const phase = calendarPhaseForDate(next.seasonYear, next.currentDate);
   if (["training-camp", "preseason", "regular-season", "postseason"].includes(phase)) {
@@ -274,9 +372,13 @@ function regularWeekSundayCompat(seasonYear: number, week: number): string {
 function simulateGamesForDate(save: GameSave): GameSave {
   let next = save;
   const todaysGames = gamesOnDate(next, next.currentDate).filter((game) => game.status === "scheduled");
+  if (!todaysGames.length) return next;
+  const scheduleById = new Map(next.schedule.map((game) => [game.id, game]));
+  const playerStatsById = new Map<string, { stats: PlayerStats; bucket: "stats" | "playoffStats" | "preseason" }>();
+  const injuryEvents: ReturnType<typeof simulateGame>["injuries"] = [];
   for (const game of todaysGames) {
     const result = simulateGame(next, game);
-    const target = next.schedule.find((candidate) => candidate.id === game.id);
+    const target = scheduleById.get(game.id);
     if (!target) continue;
     target.status = "final";
     target.homeScore = result.homeScore;
@@ -292,19 +394,22 @@ function simulateGamesForDate(save: GameSave): GameSave {
       next.records[target.awayTeamId] = updateRecord(next.records[target.awayTeamId], result.awayScore, result.homeScore);
     }
 
-    next = applyMedicalEvents(next, result.injuries.map((event) => ({ ...event, occurredDate: next.currentDate })));
-    next.players = next.players.map((player) => {
-      const stats = result.playerStats[player.id];
-      if (!stats) return player;
-      if (target.seasonType === "postseason") return applyGameStats(player, stats, "playoffStats");
-      if (target.seasonType === "preseason") return player;
-      return applyGameStats(player, stats);
-    });
+    injuryEvents.push(...result.injuries.map((event) => ({ ...event, occurredDate: next.currentDate })));
+    const bucket = target.seasonType === "postseason" ? "playoffStats" : target.seasonType === "preseason" ? "preseason" : "stats";
+    for (const [playerId, stats] of Object.entries(result.playerStats)) {
+      playerStatsById.set(playerId, { stats, bucket });
+    }
 
     if (target.homeTeamId === next.selectedTeamId || target.awayTeamId === next.selectedTeamId) {
       next.lastViewedGameId = target.id;
     }
   }
+  next = applyMedicalEvents(next, injuryEvents);
+  next.players = next.players.map((player) => {
+    const entry = playerStatsById.get(player.id);
+    if (!entry || entry.bucket === "preseason") return player;
+    return applyGameStats(player, entry.stats, entry.bucket);
+  });
   return next;
 }
 
@@ -325,7 +430,7 @@ function progressPostseasonAfterGames(save: GameSave): GameSave {
 }
 
 export function advanceDay(save: GameSave): GameSave {
-  let next = refreshCalendar(cloneSave(save));
+  let next = refreshCalendar(cloneSaveForDailyAdvance(save));
   next = processCalendarDeadlines(next);
   if (selectedTeamOverActiveLimit(next)) return next;
   next = processDailyRoster(next);
@@ -394,6 +499,7 @@ export function advanceWeek(save: GameSave): GameSave {
   }
 
   next = applyWeeklyScoutingPlan(next);
+  next = resolveWeeklyRecruiting(next);
   next = autoManageCpuPracticeSquads(processPracticeSquadWeek(processIrWindows(autoManageCpuRoster(next))));
   next.budget = budgetRefresh(next);
   next.goals = updateGoals(next);

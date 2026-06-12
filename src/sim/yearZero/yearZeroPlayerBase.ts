@@ -1,4 +1,5 @@
 import { generatedName } from "../../data/names";
+import { weightedProspectSchool, type ProspectSchoolTalentContext } from "../../data/prospectTierRankings";
 import { clamp, createRng, type Rng } from "../../lib/rng";
 import type { CollegeProgram, ContractOrigin, InjurySeverity, NFLTeam, PlayerStats, Position, ScoutingRegion, YearZeroAwardHistory, YearZeroCollegePlayer, YearZeroDraftProspect, YearZeroHighSchoolRecruit, YearZeroInjuryHistory, YearZeroNflAgingSnapshot, YearZeroNflContractHistoryEvent, YearZeroNflPlayer, YearZeroNflReserveStatus, YearZeroProductionSeason, YearZeroScoutingView, YearZeroTeamStrengthContext, YearZeroTransferPortalEntry, YearZeroUdfaPath } from "../../types";
 import { emptyPlayerStats } from "../stats";
@@ -586,7 +587,7 @@ function calibrateYearZeroActiveRoster(players: YearZeroNflPlayer[], teamContext
 
 function nflRoleRatingBand(roleTier: string, rosterBias: number, position: Position, sourceBand: ActiveRosterQualityBand): ActiveRosterQualityBand {
   const teamShift = clamp(rosterBias * 0.28, -3, 3);
-  const premiumShift = ["QB", "EDGE", "LT", "CB", "WR"].includes(position) ? 1 : position === "K" || position === "P" ? -2 : 0;
+  const premiumShift = ["QB", "EDGE", "LT", "CB", "WR"].includes(position) ? 1 : 0;
   const normalizedRole = roleTier.includes("star") && roleTier.includes("quality")
     ? "quality_starter"
     : roleTier.includes("star") || roleTier.includes("elite")
@@ -614,6 +615,25 @@ function nflRoleRatingBand(roleTier: string, rosterBias: number, position: Posit
   return { ...sourceBand, overallMin: min, overallMax: max };
 }
 
+function activeSpecialistRatingBand(position: Position, rosterBias: number, rng: Rng): ActiveRosterQualityBand {
+  const teamShift = clamp(rosterBias * 0.22, -2, 2);
+  const roll = rng.float(0, 1) + clamp(rosterBias * 0.012, -0.04, 0.04);
+  const tier =
+    roll >= 0.94 ? { roleTier: "star_specialist", min: 68, max: 74, weight: 0.06 } :
+    roll >= 0.76 ? { roleTier: "quality_specialist", min: 62, max: 68, weight: 0.18 } :
+    roll >= 0.18 ? { roleTier: "starter_specialist", min: 56, max: 64, weight: 0.58 } :
+    { roleTier: "shaky_specialist", min: 52, max: 58, weight: 0.18 };
+  const min = Math.round(clamp(tier.min + teamShift, 50, 74));
+  const max = Math.round(clamp(tier.max + teamShift, min, 76));
+  return {
+    positionGroup: "Specialist",
+    roleTier: tier.roleTier,
+    overallMin: min,
+    overallMax: max,
+    weight: tier.weight
+  };
+}
+
 function weightedPick<T>(items: T[], rng: Rng, weightFor: (item: T) => number): T {
   const total = items.reduce((sum, item) => sum + Math.max(0, weightFor(item)), 0);
   if (items.length === 0) {
@@ -626,6 +646,26 @@ function weightedPick<T>(items: T[], rng: Rng, weightFor: (item: T) => number): 
     if (roll <= 0) return item;
   }
   return items[items.length - 1];
+}
+
+function yearZeroNflCollegeContext(pool: YearZeroNflPlayer["pool"], roleTier: string | undefined, overall: number): ProspectSchoolTalentContext {
+  if (pool === "practice_squad") return "practice";
+  if (pool === "free_agent") return "free-agent";
+  const normalizedRole = roleTier ?? "";
+  if (normalizedRole.includes("star") || normalizedRole.includes("elite") || overall >= 72) return "elite";
+  if (normalizedRole.includes("quality") || normalizedRole.includes("starter") || overall >= 62) return "starter";
+  if (normalizedRole.includes("rotation") || overall >= 54) return "rotation";
+  return "depth";
+}
+
+function yearZeroNflCollegeId(
+  schools: CollegeProgram[],
+  rng: Rng,
+  pool: YearZeroNflPlayer["pool"],
+  overall: number,
+  roleTier?: string
+): string {
+  return weightedProspectSchool(schools, rng.fork("college-origin"), yearZeroNflCollegeContext(pool, roleTier, overall)).id;
 }
 
 type PracticeSquadTeamContext =
@@ -923,7 +963,7 @@ function makePracticeSquadPlayer(
     position,
     age,
     experience,
-    collegeId: rng.pick(schools).id,
+    collegeId: yearZeroNflCollegeId(schools, rng, "practice_squad", overall),
     overall,
     potential,
     salary: 0.25,
@@ -1030,7 +1070,7 @@ export function generateYearZeroNflPlayers(
       position,
       age,
       experience,
-      collegeId: rng.pick(schools).id,
+      collegeId: yearZeroNflCollegeId(schools, rng, pool, overall),
       overall,
       potential,
       salary: 1,
@@ -1049,9 +1089,12 @@ export function generateYearZeroNflPlayers(
     usedNames: Set<string>
   ): YearZeroNflPlayer => {
     const identity = generatedName(rng, usedNames);
-    const cappedRoleTier = capRole(roleTier, activeSlotRoleCap(position, slot));
-    const rawBand = activeRosterQualityBand(position, cappedRoleTier, activeQualityBands, rng.fork("quality-band"));
-    const band = nflRoleRatingBand(cappedRoleTier, teamStrength.find((context) => context.teamId === teamId)?.rosterBias ?? 0, position, rawBand);
+    const rosterBias = teamStrength.find((context) => context.teamId === teamId)?.rosterBias ?? 0;
+    const cappedRoleTier = position === "K" || position === "P" ? "starter" : capRole(roleTier, activeSlotRoleCap(position, slot));
+    const rawBand = position === "K" || position === "P"
+      ? activeSpecialistRatingBand(position, rosterBias, rng.fork("specialist-quality-band"))
+      : activeRosterQualityBand(position, cappedRoleTier, activeQualityBands, rng.fork("quality-band"));
+    const band = position === "K" || position === "P" ? rawBand : nflRoleRatingBand(cappedRoleTier, rosterBias, position, rawBand);
     const midpoint = (band.overallMin + band.overallMax) / 2;
     const spread = Math.max(1.8, (band.overallMax - band.overallMin) / 5);
     const overall = Math.round(clamp(rng.normal(midpoint, spread), band.overallMin, band.overallMax));
@@ -1072,7 +1115,7 @@ export function generateYearZeroNflPlayers(
       position,
       age,
       experience,
-      collegeId: rng.pick(schools).id,
+      collegeId: yearZeroNflCollegeId(schools, rng, "active_roster", overall, band.roleTier),
       overall,
       potential,
       salary: 1,

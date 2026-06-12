@@ -9,6 +9,7 @@ import { generateCollegeMoraleState } from "./sim/collegeMorale";
 import { generateCollegeTrainingBanks } from "./sim/collegeTraining";
 import { generateDraftEvaluationState } from "./sim/draftEvaluation";
 import { generateAnnualRecruitClass } from "./sim/annualRecruitClass";
+import { normalizeAnnualRecruitingState, updateRecruitingPitch, updateRecruitingScoutAssignment } from "./sim/annualRecruiting";
 import { buildSchoolProfileState } from "./sim/schoolProfiles";
 import { loadYearZeroProgressTemplate } from "./sim/yearZero/yearZeroBootstrap";
 import { buildYearZeroDebugExport } from "./sim/yearZero/yearZeroDebug";
@@ -117,9 +118,7 @@ import {
   MAX_ROSTER_SIZE,
   releasePlayerToFreeAgency,
   rosterLimit,
-  rosterSize,
-  sortFreeAgents,
-  type FreeAgentSort
+  rosterSize
 } from "./sim/freeAgents";
 import {
   expectedFreeAgentAsk,
@@ -253,7 +252,7 @@ import {
   staffValueScore,
   slotDefinitionFor
 } from "./sim/staff";
-import type { AnnualRecruitingBoardEntry, CareerScenario, CareerType, CollegeDevelopmentFocus, CollegeFatiguePosture, CollegeProgram, CollegeRosterPlayer, Conference, DevelopmentPlan, DraftPick, DraftTradeAsset, DraftTradeOffer, FreeAgentOffer, FreeAgentRolePromise, FreeAgentSecurityLevel, GameSave, Player, PlayerStats, Position, Prospect, ProspectBoardLens, ProspectConcernKey, RookieAcquisitionResult, RookieClassResults, RosterMoveRecommendation, SaveMode, ScoutingAssignmentType, ScoutingRecapEntry, ScoutingRegion, StaffCandidate, StaffMember, StaffSlotId, TeamGameStats, TradeAsset, TradeEvaluation, TradeHistoryEntry, TradeNewsItem, TradeOffer, TrainingBodyPlan, TrainingSkillPlan, UdfaOffer } from "./types";
+import type { AnnualRecruit, AnnualRecruitEvaluation, AnnualRecruitingBoardEntry, CareerScenario, CareerType, CollegeDevelopmentFocus, CollegeFatiguePosture, CollegeProgram, CollegeRosterPlayer, Conference, DevelopmentPlan, DraftPick, DraftTradeAsset, DraftTradeOffer, FreeAgentOffer, FreeAgentRolePromise, FreeAgentSecurityLevel, GameSave, Player, PlayerStats, Position, Prospect, ProspectBoardLens, ProspectConcernKey, RookieAcquisitionResult, RookieClassResults, RosterMoveRecommendation, SaveMode, ScoutingAssignment, ScoutingAssignmentType, ScoutingRecapEntry, ScoutingRegion, StaffCandidate, StaffMember, StaffSlotId, TeamGameStats, TradeAsset, TradeEvaluation, TradeHistoryEntry, TradeNewsItem, TradeOffer, TrainingBodyPlan, TrainingSkillPlan, UdfaOffer } from "./types";
 import { POSITIONS } from "./types";
 
 type Tab =
@@ -285,6 +284,23 @@ type Tab =
   | "college-draft"
   | "college-jobs";
 type SaveStatus = "Saved" | "Saving" | "Unsaved" | "Save failed";
+type SchoolPrestigeBand = "all" | "elite" | "strong" | "solid" | "builder";
+
+const schoolPrestigeBandLabels: Record<SchoolPrestigeBand, string> = {
+  all: "All Prestige",
+  elite: "Elite 85+",
+  strong: "Strong 75-84",
+  solid: "Solid 65-74",
+  builder: "Builder <65"
+};
+
+function matchesSchoolPrestigeBand(prestige: number, band: SchoolPrestigeBand) {
+  if (band === "elite") return prestige >= 85;
+  if (band === "strong") return prestige >= 75 && prestige < 85;
+  if (band === "solid") return prestige >= 65 && prestige < 75;
+  if (band === "builder") return prestige < 65;
+  return true;
+}
 
 const nflNavGroups: Array<{ label: string; tabs: Array<{ id: Tab; label: string }> }> = [
   {
@@ -446,6 +462,15 @@ export function normalizeSave(save: GameSave): GameSave {
   const schoolById = new Map(normalizedSchools.map((school) => [school.id, school]));
   const normalizedCollegeRoster = save.collegeRoster ?? (save.yearZero ? createInitialCollegeRosterState(save.yearZero, seasonYear) : undefined);
   const normalizedCollegeSeasonResults = save.collegeSeasonResults ?? generateCollegeSeasonResults(save.seed, normalizedCollegeRoster, seasonYear);
+  const normalizedAnnualRecruitClass = save.annualRecruitClass ?? generateAnnualRecruitClass(save.seed, seasonYear);
+  const normalizedAnnualRecruiting = normalizeAnnualRecruitingState(
+    save.annualRecruiting,
+    save.seed,
+    seasonYear,
+    normalizedSchools,
+    normalizedAnnualRecruitClass.recruits,
+    save.currentWeek ?? 1
+  );
   const rawPlayers = save.players ?? [];
   const playersToNormalize = rawPlayers.some((player) => player.teamId === FREE_AGENT_TEAM_ID)
     ? rawPlayers
@@ -495,11 +520,12 @@ export function normalizeSave(save: GameSave): GameSave {
         ...(save.collegeManagement?.nilAllocationByPosition ?? {})
       }
     },
-    annualRecruitClass: save.annualRecruitClass ?? generateAnnualRecruitClass(save.seed, seasonYear),
+    annualRecruitClass: normalizedAnnualRecruitClass,
+    annualRecruiting: normalizedAnnualRecruiting,
     collegeRoster: normalizedCollegeRoster,
     collegeTraining: save.collegeTraining ?? generateCollegeTrainingBanks(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.collegeManagement),
     collegeSeasonResults: normalizedCollegeSeasonResults,
-    collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, save.annualRecruiting, save.collegeTraining, save.collegeManagement),
+    collegeMorale: save.collegeMorale ?? generateCollegeMoraleState(save.seed, seasonYear, normalizedCollegeRoster, normalizedCollegeSeasonResults, normalizedAnnualRecruiting, save.collegeTraining, save.collegeManagement),
     draftEvaluation: save.draftEvaluation ?? generateDraftEvaluationState(save.seed, normalizedDraftState.draftYear, save.prospects ?? [], save.currentWeek ?? 1, save.schools),
     previousSeasonRanks: save.previousSeasonRanks,
     scenario: save.scenario ?? "neutral",
@@ -766,6 +792,10 @@ export default function App() {
   const [teamConference, setTeamConference] = useState<Conference | "all">("all");
   const [schoolSearch, setSchoolSearch] = useState("");
   const [schoolSubdivision, setSchoolSubdivision] = useState<"all" | "FBS" | "FCS">("all");
+  const [schoolConference, setSchoolConference] = useState<string>("all");
+  const [schoolPrestigeBand, setSchoolPrestigeBand] = useState<SchoolPrestigeBand>("all");
+  const [expandedSchoolConferences, setExpandedSchoolConferences] = useState<Set<string>>(new Set());
+  const [schoolConferenceTogglesTouched, setSchoolConferenceTogglesTouched] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("roster");
   const [tradePrefillPlayerId, setTradePrefillPlayerId] = useState<string>();
   const [pendingRosterRecommendations, setPendingRosterRecommendations] = useState<RosterMoveRecommendation[]>([]);
@@ -861,6 +891,23 @@ export default function App() {
     () => setupSchools.find((school) => school.id === setupSchoolId) ?? setupSchools[0],
     [setupSchoolId, setupSchools]
   );
+  const setupSchoolConferences = useMemo(() => {
+    return Array.from(new Set(setupSchools.map((school) => school.conference))).sort((a, b) => a.localeCompare(b));
+  }, [setupSchools]);
+  const defaultOpenSchoolConferences = useMemo(() => {
+    const conferenceStats = new Map<string, { total: number; count: number }>();
+    setupSchools.forEach((school) => {
+      const current = conferenceStats.get(school.conference) ?? { total: 0, count: 0 };
+      current.total += school.prestige;
+      current.count += 1;
+      conferenceStats.set(school.conference, current);
+    });
+    const topConferences = Array.from(conferenceStats.entries())
+      .sort((a, b) => b[1].total / b[1].count - a[1].total / a[1].count || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([conference]) => conference);
+    return new Set([selectedSetupSchool?.conference, ...topConferences].filter(Boolean) as string[]);
+  }, [selectedSetupSchool?.conference, setupSchools]);
 
   const filteredSetupTeams = useMemo(() => {
     const query = teamSearch.trim().toLowerCase();
@@ -881,15 +928,46 @@ export default function App() {
     return setupSchools
       .filter((school) => {
         const matchesSubdivision = schoolSubdivision === "all" || school.subdivision === schoolSubdivision;
+        const matchesConference = schoolConference === "all" || school.conference === schoolConference;
+        const matchesPrestige = matchesSchoolPrestigeBand(school.prestige, schoolPrestigeBand);
         const matchesQuery =
           !query ||
           school.name.toLowerCase().includes(query) ||
           school.mascot.toLowerCase().includes(query) ||
           school.conference.toLowerCase().includes(query);
-        return matchesSubdivision && matchesQuery;
+        return matchesSubdivision && matchesConference && matchesPrestige && matchesQuery;
       })
       .sort((a, b) => b.prestige - a.prestige || a.name.localeCompare(b.name));
-  }, [schoolSearch, schoolSubdivision, setupSchools]);
+  }, [schoolConference, schoolPrestigeBand, schoolSearch, schoolSubdivision, setupSchools]);
+  const setupSchoolConferenceGroups = useMemo(() => {
+    const groups = new Map<string, typeof filteredSetupSchools>();
+    filteredSetupSchools.forEach((school) => {
+      const current = groups.get(school.conference) ?? [];
+      current.push(school);
+      groups.set(school.conference, current);
+    });
+    return Array.from(groups.entries())
+      .map(([conference, schools]) => ({
+        conference,
+        schools,
+        averagePrestige: Math.round(schools.reduce((total, school) => total + school.prestige, 0) / Math.max(1, schools.length))
+      }))
+      .sort((a, b) => b.averagePrestige - a.averagePrestige || a.conference.localeCompare(b.conference));
+  }, [filteredSetupSchools]);
+  const schoolFiltersActive = Boolean(schoolSearch.trim()) || schoolSubdivision !== "all" || schoolConference !== "all" || schoolPrestigeBand !== "all";
+
+  function toggleSchoolConferenceGroup(conference: string) {
+    setSchoolConferenceTogglesTouched(true);
+    setExpandedSchoolConferences((current) => {
+      const next = new Set(schoolConferenceTogglesTouched ? current : defaultOpenSchoolConferences);
+      if (next.has(conference)) {
+        next.delete(conference);
+      } else {
+        next.add(conference);
+      }
+      return next;
+    });
+  }
 
   async function refreshCareerSlots() {
     setCareerSlots(await listCareers());
@@ -1334,6 +1412,14 @@ export default function App() {
     } : current);
   }
 
+  function updateCollegeRecruitPitch(prospectId: string, updates: Parameters<typeof updateRecruitingPitch>[2]) {
+    setSave((current) => current ? updateRecruitingPitch(current, prospectId, updates) : current);
+  }
+
+  function updateCollegeRecruitScout(assignmentId: string, updates: Parameters<typeof updateRecruitingScoutAssignment>[2]) {
+    setSave((current) => current ? updateRecruitingScoutAssignment(current, assignmentId, updates) : current);
+  }
+
   function setCollegeRecruitPriority(entryId: string, priority: number) {
     setSave((current) => {
       if (!current) return current;
@@ -1563,6 +1649,7 @@ export default function App() {
   }
 
   if (!save) {
+    const hideOpeningSummary = openingMenuMode === "new" && setupCareerType === "college";
     const selectedOpeningIdentity = setupCareerType === "college" ? selectedSetupSchool?.name ?? "College Program" : selectedSetupTeam.fullName;
     const selectedOpeningSubline = setupCareerType === "college"
       ? `${selectedSetupSchool?.conference ?? "Independent"} | ${selectedSetupSchool?.subdivision ?? "College"} | Prestige ${selectedSetupSchool?.prestige ?? "--"}`
@@ -1677,7 +1764,7 @@ export default function App() {
             </div>
             {setupCareerType === "college" ? (
               <>
-                <div className="team-browser-tools">
+                <div className="team-browser-tools college-program-tools">
                   <input
                     type="search"
                     value={schoolSearch}
@@ -1685,6 +1772,18 @@ export default function App() {
                     placeholder="Search schools"
                     aria-label="Search schools"
                   />
+                  <select
+                    value={schoolConference}
+                    onChange={(event) => setSchoolConference(event.target.value)}
+                    aria-label="Filter conference"
+                  >
+                    <option value="all">All Conferences</option>
+                    {setupSchoolConferences.map((conference) => (
+                      <option key={conference} value={conference}>
+                        {conference}
+                      </option>
+                    ))}
+                  </select>
                   <select
                     value={schoolSubdivision}
                     onChange={(event) => setSchoolSubdivision(event.target.value as "all" | "FBS" | "FCS")}
@@ -1694,22 +1793,77 @@ export default function App() {
                     <option value="FBS">FBS</option>
                     <option value="FCS">FCS</option>
                   </select>
+                  <select
+                    value={schoolPrestigeBand}
+                    onChange={(event) => setSchoolPrestigeBand(event.target.value as SchoolPrestigeBand)}
+                    aria-label="Filter prestige"
+                  >
+                    {(Object.keys(schoolPrestigeBandLabels) as SchoolPrestigeBand[]).map((band) => (
+                      <option key={band} value={band}>
+                        {schoolPrestigeBandLabels[band]}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <div className="team-grid college-program-grid">
-                  {filteredSetupSchools.slice(0, 96).map((school) => (
-                    <button
-                      key={school.id}
-                      className={`team-tile college-program-tile ${setupSchoolId === school.id ? "selected" : ""}`}
-                      style={{ "--tile-color": school.primaryColor } as CSSProperties & Record<string, string>}
-                      onClick={() => setSetupSchoolId(school.id)}
-                    >
-                      <CollegeLogo school={school} size={44} />
-                      <span>{school.name}</span>
-                      <small>
-                        {school.conference} | {school.subdivision} | Prestige {school.prestige}
-                      </small>
-                    </button>
-                  ))}
+                <div className="college-program-browser">
+                  <div className="college-program-browser-summary">
+                    <strong>{filteredSetupSchools.length} programs</strong>
+                    <span>{schoolFiltersActive ? "Filtered by your current choices" : "Top conferences are open by default"}</span>
+                  </div>
+                  {setupSchoolConferenceGroups.length ? (
+                    setupSchoolConferenceGroups.map((group) => {
+                      const isOpen =
+                        schoolFiltersActive ||
+                        (!schoolConferenceTogglesTouched
+                          ? defaultOpenSchoolConferences.has(group.conference)
+                          : expandedSchoolConferences.has(group.conference));
+                      return (
+                        <section className="college-conference-group" key={group.conference}>
+                          <button
+                            className="college-conference-toggle"
+                            onClick={() => toggleSchoolConferenceGroup(group.conference)}
+                            aria-expanded={isOpen}
+                          >
+                            <span>{isOpen ? "-" : "+"}</span>
+                            <strong>{group.conference}</strong>
+                            <small>{group.schools.length} programs | Avg prestige {group.averagePrestige}</small>
+                          </button>
+                          {isOpen ? (
+                            <div className="college-program-list">
+                              {group.schools.map((school) => {
+                                const isSelected = setupSchoolId === school.id;
+                                return (
+                                  <div
+                                    key={school.id}
+                                    className={`college-program-row ${isSelected ? "selected" : ""}`}
+                                    style={{ "--tile-color": school.primaryColor } as CSSProperties & Record<string, string>}
+                                  >
+                                    <button className="college-program-identity" onClick={() => setSetupSchoolId(school.id)}>
+                                      <CollegeLogo school={school} size={34} />
+                                      <span title={school.name}>{school.name}</span>
+                                    </button>
+                                    <strong className="college-program-prestige">Prestige {school.prestige}</strong>
+                                    <button
+                                      className="college-program-select"
+                                      onClick={() => setSetupSchoolId(school.id)}
+                                      aria-pressed={isSelected}
+                                    >
+                                      {isSelected ? "Selected" : "Select"}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </section>
+                      );
+                    })
+                  ) : (
+                    <div className="college-program-empty">
+                      <strong>No programs match those filters.</strong>
+                      <span>Try clearing search or widening prestige and subdivision filters.</span>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -1826,8 +1980,8 @@ export default function App() {
         className="setup-screen opening-screen"
         style={
           {
-            "--team-primary": selectedSetupTeam.colors.primary,
-            "--team-secondary": selectedSetupTeam.colors.secondary
+            "--team-primary": setupCareerType === "college" ? selectedSetupSchool?.primaryColor ?? selectedSetupTeam.colors.primary : selectedSetupTeam.colors.primary,
+            "--team-secondary": setupCareerType === "college" ? selectedSetupSchool?.secondaryColor ?? selectedSetupTeam.colors.secondary : selectedSetupTeam.colors.secondary
           } as CSSProperties & Record<string, string>
         }
       >
@@ -1854,11 +2008,11 @@ export default function App() {
             ))}
           </div>
 
-          <div className="opening-main-layout">
+          <div className={`opening-main-layout ${hideOpeningSummary ? "opening-main-layout-full" : ""}`}>
             <div className="opening-active-workspace">
               {openingMenuMode === "new" ? newCareerSection : loadSaveSection}
             </div>
-            {openingSummary}
+            {hideOpeningSummary ? null : openingSummary}
           </div>
         </section>
       </div>
@@ -1937,7 +2091,11 @@ export default function App() {
 
         {activeTab === "college-hub" && <CollegeHubView save={save} openTab={setActiveTab} />}
         {activeTab === "college-recruiting" && (
-          <CollegeRecruitingView save={save} updateRecruit={updateCollegeRecruit} setPriority={setCollegeRecruitPriority} />
+          <CollegeRecruitingView
+            save={save}
+            updatePitch={updateCollegeRecruitPitch}
+            updateScout={updateCollegeRecruitScout}
+          />
         )}
         {activeTab === "college-roster" && <CollegeRosterView save={save} updatePlayer={updateCollegeRosterPlayer} />}
         {activeTab === "college-depth" && <CollegeDepthView save={save} movePlayer={moveCollegeDepthPlayer} autoSort={autoCollegeDepth} />}
@@ -2137,66 +2295,444 @@ function CollegeHubView({ save, openTab }: { save: GameSave; openTab: (tab: Tab)
   );
 }
 
+const RECRUITING_TAB_ITEMS = [
+  ["board", "Board"],
+  ["targets", "Targets"],
+  ["class", "Class"],
+  ["scouts", "Scouts"]
+] as const;
+
+const RECRUITING_STATUSES: AnnualRecruitingBoardEntry["status"][] = ["evaluating", "offered", "visited", "committed", "signed", "decommitted", "withdrawn"];
+const RECRUITING_LANES = ["Watchlist", "Offered", "Visits", "Committed", "Signed", "Dropped"] as const;
+type RecruitingModalTab = "overview" | "recruitment" | "scouting" | "pitch";
+
+function RecruitStars({ value, title = `${value}-star` }: { value: number; title?: string }) {
+  return (
+    <span className="recruit-stars" title={title} aria-label={title}>
+      {"★".repeat(value)}
+    </span>
+  );
+}
+
 function CollegeRecruitingView({
   save,
-  updateRecruit,
-  setPriority
+  updatePitch,
+  updateScout
 }: {
   save: GameSave;
-  updateRecruit: (entryId: string, updates: Partial<AnnualRecruitingBoardEntry>) => void;
-  setPriority: (entryId: string, priority: number) => void;
+  updatePitch: (prospectId: string, updates: Parameters<typeof updateRecruitingPitch>[2]) => void;
+  updateScout: (assignmentId: string, updates: Parameters<typeof updateRecruitingScoutAssignment>[2]) => void;
 }) {
-  const { school, recruiting } = selectedSchoolContext(save);
+  const { school } = selectedSchoolContext(save);
+  const schoolId = managedSchoolId(save);
+  const recruitingState = save.annualRecruiting;
+  const recruits = save.annualRecruitClass?.recruits ?? [];
+  const [activeRecruitingTab, setActiveRecruitingTab] = useState<"board" | "targets" | "class" | "scouts">("board");
   const [position, setPosition] = useState<Position | "all">("all");
+  const [stars, setStars] = useState<"all" | "5" | "4" | "3" | "2">("all");
   const [status, setStatus] = useState<AnnualRecruitingBoardEntry["status"] | "all">("all");
-  if (!school || !save.annualRecruitClass) return <CollegeEmptyState title="No recruiting board" />;
-  const recruitById = new Map(save.annualRecruitClass.recruits.map((recruit) => [recruit.id, recruit]));
-  const hidden = new Set(save.collegeManagement?.hiddenRecruitIds ?? []);
-  const rows = recruiting
-    .filter((entry) => !hidden.has(entry.id))
-    .filter((entry) => status === "all" || entry.status === status)
-    .filter((entry) => {
-      const recruit = recruitById.get(entry.prospectId);
-      return position === "all" || recruit?.position === position;
+  const [search, setSearch] = useState("");
+  const [visibleRows, setVisibleRows] = useState(120);
+  const [selectedRecruitId, setSelectedRecruitId] = useState<string>();
+  const [modalInitialTab, setModalInitialTab] = useState<RecruitingModalTab>("overview");
+  const [sortKey, setSortKey] = useState<"rank" | "stars" | "interest" | "gap">("rank");
+  if (!school || !save.annualRecruitClass || !recruitingState) return <CollegeEmptyState title="No recruiting board" />;
+
+  const recruitingIndexes = useMemo(() => {
+    const recruitMap = new Map(recruits.map((recruit) => [recruit.id, recruit]));
+    const schoolMap = new Map(save.schools.map((candidate) => [candidate.id, candidate]));
+    const selectedEntryMap = new Map<string, AnnualRecruitingBoardEntry>();
+    const entriesByProspect = new Map<string, AnnualRecruitingBoardEntry[]>();
+    let selectedPointUsage = 0;
+
+    for (const entry of recruitingState.board) {
+      if (entry.schoolId === schoolId) {
+        selectedEntryMap.set(entry.prospectId, entry);
+        selectedPointUsage += entry.weeklyPoints ?? 0;
+      }
+      if (entry.status === "withdrawn") continue;
+      const prospectEntries = entriesByProspect.get(entry.prospectId);
+      if (prospectEntries) prospectEntries.push(entry);
+      else entriesByProspect.set(entry.prospectId, [entry]);
+    }
+
+    for (const entries of entriesByProspect.values()) {
+      entries.sort((a, b) => b.interestScore - a.interestScore || a.id.localeCompare(b.id));
+    }
+
+    const evaluationMap = new Map(
+      (recruitingState.evaluations ?? [])
+        .filter((evaluation) => evaluation.schoolId === schoolId)
+        .map((evaluation) => [evaluation.prospectId, evaluation])
+    );
+    const selectedTargetIds = new Set(recruitingState.targetIdsBySchool?.[schoolId] ?? []);
+    const removedTargetIds = new Set(recruitingState.removedTargetIdsBySchool?.[schoolId] ?? []);
+    const targetSet = new Set<string>(selectedTargetIds);
+    for (const entry of selectedEntryMap.values()) {
+      if (!removedTargetIds.has(entry.prospectId) && ["offered", "visited", "committed", "signed"].includes(entry.status)) {
+        targetSet.add(entry.prospectId);
+      }
+    }
+
+    const recruitStateMap = new Map<string, typeof recruits>();
+    for (const recruit of recruits) {
+      const stateRecruits = recruitStateMap.get(recruit.homeState);
+      if (stateRecruits) stateRecruits.push(recruit);
+      else recruitStateMap.set(recruit.homeState, [recruit]);
+    }
+    const states = [...recruitStateMap.keys()].sort();
+    for (const stateRecruits of recruitStateMap.values()) {
+      stateRecruits.sort((a, b) => a.nationalRank - b.nationalRank);
+    }
+
+    const assignments = (recruitingState.scoutAssignments ?? []).filter((assignment) => assignment.schoolId === schoolId);
+    const coverageByState = new Map<string, number>();
+    const coverageCounts = new Map<string, number>();
+    for (const assignment of assignments) {
+      coverageByState.set(assignment.stateFocus, (coverageByState.get(assignment.stateFocus) ?? 0) + assignment.coverage);
+      coverageCounts.set(assignment.stateFocus, (coverageCounts.get(assignment.stateFocus) ?? 0) + 1);
+    }
+    for (const [state, coverage] of coverageByState) {
+      coverageByState.set(state, Math.round(coverage / Math.max(1, coverageCounts.get(state) ?? 1)));
+    }
+
+    return {
+      recruitById: recruitMap,
+      schoolById: schoolMap,
+      selectedEntries: selectedEntryMap,
+      entriesByProspect,
+      evaluationByRecruit: evaluationMap,
+      targetIds: targetSet,
+      usedPoints: selectedPointUsage,
+      recruitsByState: recruitStateMap,
+      recruitStates: states,
+      scoutAssignments: assignments,
+      scoutCoverageByState: coverageByState
+    };
+  }, [recruitingState.board, recruitingState.evaluations, recruitingState.removedTargetIdsBySchool, recruitingState.scoutAssignments, recruitingState.targetIdsBySchool, recruits, save.schools, schoolId]);
+
+  const filteredRecruitIds = useMemo(() => recruits
+    .filter((recruit) => position === "all" || recruit.position === position)
+    .filter((recruit) => stars === "all" || recruit.stars === Number(stars))
+    .filter((recruit) => status === "all" || recruitingIndexes.selectedEntries.get(recruit.id)?.status === status)
+    .filter((recruit) => {
+      const query = search.trim().toLowerCase();
+      if (!query) return true;
+      return `${recruit.firstName} ${recruit.lastName}`.toLowerCase().includes(query)
+        || recruit.homeState.toLowerCase().includes(query)
+        || recruit.position.toLowerCase().includes(query);
     })
-    .sort((a, b) => (save.collegeManagement?.recruitingPriorities?.[b.id] ?? b.targetPriority) - (save.collegeManagement?.recruitingPriorities?.[a.id] ?? a.targetPriority))
-    .slice(0, 120);
+    .sort((a, b) => {
+      if (sortKey === "stars") return b.stars - a.stars || a.nationalRank - b.nationalRank;
+      if (sortKey === "interest") return (recruitingIndexes.selectedEntries.get(b.id)?.interestScore ?? 0) - (recruitingIndexes.selectedEntries.get(a.id)?.interestScore ?? 0) || a.nationalRank - b.nationalRank;
+      if (sortKey === "gap") {
+        const gapFor = (recruitId: string) => {
+          const entry = recruitingIndexes.selectedEntries.get(recruitId);
+          const leader = recruitingIndexes.entriesByProspect.get(recruitId)?.[0];
+          return leader ? leader.interestScore - (entry?.interestScore ?? 0) : 100;
+        };
+        return gapFor(a.id) - gapFor(b.id) || a.nationalRank - b.nationalRank;
+      }
+      return a.nationalRank - b.nationalRank;
+    })
+    .map((recruit) => recruit.id), [recruits, position, stars, status, search, sortKey, recruitingIndexes]);
+
+  const visibleBoardRows = useMemo(() => filteredRecruitIds.slice(0, visibleRows).flatMap((id) => {
+    const recruit = recruitingIndexes.recruitById.get(id);
+    if (!recruit) return [];
+    const entry = recruitingIndexes.selectedEntries.get(id);
+    const topSchools = recruitingIndexes.entriesByProspect.get(id) ?? [];
+    const yourRankIndex = topSchools.findIndex((candidate) => candidate.schoolId === schoolId);
+    const yourRank = yourRankIndex >= 0 ? yourRankIndex + 1 : 0;
+    const leader = topSchools[0];
+    const interest = entry?.interestScore ?? 0;
+    const gap = leader ? leader.interestScore - interest : 100;
+    return [{ recruit, entry, evaluation: recruitingIndexes.evaluationByRecruit.get(id), topSchools, yourRank, gap, interest, isTarget: recruitingIndexes.targetIds.has(id) }];
+  }), [filteredRecruitIds, recruitingIndexes, schoolId, visibleRows]);
+
+  const selectedRecruit = selectedRecruitId ? recruitingIndexes.recruitById.get(selectedRecruitId) : undefined;
+  const selectedEntry = selectedRecruit ? recruitingIndexes.selectedEntries.get(selectedRecruit.id) : undefined;
+  const selectedEvaluation = selectedRecruit ? recruitingIndexes.evaluationByRecruit.get(selectedRecruit.id) : undefined;
+  const selectedTopSchools = selectedRecruit ? recruitingIndexes.entriesByProspect.get(selectedRecruit.id) ?? [] : [];
+  const selectedBudget = recruitingState.weeklyPointsBySchool?.[schoolId] ?? 0;
+  const usedPoints = recruitingIndexes.usedPoints;
+  const classSummary = recruitingState.classSummaries?.find((summary) => summary.schoolId === schoolId);
+  const openRecruit = (prospectId: string, tab: RecruitingModalTab = "overview") => {
+    setSelectedRecruitId(prospectId);
+    setModalInitialTab(tab);
+  };
+  const targetRows = useMemo(() => [...recruitingIndexes.targetIds].flatMap((id) => {
+    const recruit = recruitingIndexes.recruitById.get(id);
+    if (!recruit) return [];
+    const entry = recruitingIndexes.selectedEntries.get(id);
+    return [{ recruit, entry, lane: entry?.status === "signed" ? "Signed" : entry?.status === "committed" ? "Committed" : entry?.status === "visited" ? "Visits" : entry?.status === "offered" ? "Offered" : entry?.status === "withdrawn" ? "Dropped" : "Watchlist" }];
+  }).sort((a, b) => (b.entry?.interestScore ?? 0) - (a.entry?.interestScore ?? 0) || a.recruit.nationalRank - b.recruit.nationalRank), [recruitingIndexes]);
+
   return (
     <section className="view-stack college-view">
-      <div className="view-header"><div><p className="eyebrow">Recruiting</p><h2>{school.name} Board</h2></div></div>
-      <div className="board-toolbar">
-        <select value={position} onChange={(event) => setPosition(event.target.value as Position | "all")}><option value="all">All Positions</option>{POSITIONS.map((pos) => <option key={pos} value={pos}>{pos}</option>)}</select>
-        <select value={status} onChange={(event) => setStatus(event.target.value as AnnualRecruitingBoardEntry["status"] | "all")}><option value="all">All Statuses</option>{["evaluating", "offered", "visited", "committed", "signed", "decommitted", "withdrawn"].map((value) => <option key={value} value={value}>{value}</option>)}</select>
+      <div className="view-header recruiting-header">
+        <div>
+          <p className="eyebrow">Recruiting</p>
+          <h2>{school.name} Recruiting Desk</h2>
+        </div>
+        <div className="recruiting-metrics">
+          <span><strong>{selectedBudget - usedPoints}</strong> points left</span>
+          <span><strong>{classSummary?.rank ? `#${classSummary.rank}` : "--"}</strong> class rank</span>
+          <span><strong>{classSummary?.blueChips ?? 0}</strong> blue chips</span>
+        </div>
       </div>
-      <section className="table-card">
-        <DataTable>
-          <thead><tr><th>Recruit</th><th>Pos</th><th>Stars</th><th>Interest</th><th>Need</th><th>NIL</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody>
-            {rows.map((entry) => {
-              const recruit = recruitById.get(entry.prospectId);
+      <div className="recruiting-tabs" role="tablist" aria-label="Recruiting tabs">
+        {RECRUITING_TAB_ITEMS.map(([id, label]) => (
+          <button key={id} className={activeRecruitingTab === id ? "selected" : ""} onClick={() => setActiveRecruitingTab(id)}>{label}</button>
+        ))}
+      </div>
+
+      {activeRecruitingTab === "board" && (
+        <>
+          <div className="board-toolbar recruiting-toolbar">
+            <input value={search} onChange={(event) => { setSearch(event.target.value); setVisibleRows(120); }} placeholder="Search recruits" aria-label="Search recruits" />
+            <select value={position} onChange={(event) => { setPosition(event.target.value as Position | "all"); setVisibleRows(120); }}><option value="all">All Positions</option>{POSITIONS.map((pos) => <option key={pos} value={pos}>{pos}</option>)}</select>
+            <select value={stars} onChange={(event) => { setStars(event.target.value as typeof stars); setVisibleRows(120); }}><option value="all">All Stars</option><option value="5">5 stars</option><option value="4">4 stars</option><option value="3">3 stars</option><option value="2">2 stars</option></select>
+            <select value={status} onChange={(event) => { setStatus(event.target.value as AnnualRecruitingBoardEntry["status"] | "all"); setVisibleRows(120); }}><option value="all">All Statuses</option>{RECRUITING_STATUSES.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+            <select value={sortKey} onChange={(event) => { setSortKey(event.target.value as typeof sortKey); setVisibleRows(120); }}><option value="rank">Sort: Rank</option><option value="stars">Sort: Stars</option><option value="interest">Sort: Interest</option><option value="gap">Sort: Gap</option></select>
+          </div>
+          <section className="table-card recruiting-board-card">
+            <DataTable>
+              <thead><tr><th>Stars</th><th>Rank</th><th>Recruit</th><th>Pos</th><th>State</th><th>Interest</th><th>Your Rank</th><th>Gap</th><th>Status</th><th>Pts</th><th>Actions</th></tr></thead>
+              <tbody>
+                {visibleBoardRows.map((row) => (
+                  <tr key={row.recruit.id} className="recruiting-row" onClick={() => openRecruit(row.recruit.id)}>
+                    <td><RecruitStars value={row.recruit.stars} /></td>
+                    <td>#{row.recruit.nationalRank}</td>
+                    <td><strong>{row.recruit.firstName} {row.recruit.lastName}</strong><small>Our grade {row.evaluation ? `${row.evaluation.evaluatedStarsLow}-${row.evaluation.evaluatedStarsHigh} stars` : "unscouted"}</small></td>
+                    <td>{row.recruit.position}</td>
+                    <td>{row.recruit.homeState}</td>
+                    <td><strong>{row.interest || "--"}</strong></td>
+                    <td>{row.yourRank ? `#${row.yourRank}` : "--"}</td>
+                    <td>{row.entry ? row.gap <= 0 ? "Lead" : `-${row.gap}` : "--"}</td>
+                    <td>{row.entry?.status ?? (row.isTarget ? "watchlist" : "untracked")}</td>
+                    <td>{row.entry?.weeklyPoints ?? 0}</td>
+                    <td className="button-cell">
+                      <button onClick={(event) => { event.stopPropagation(); updatePitch(row.recruit.id, { target: true }); }}>Watch</button>
+                      <button onClick={(event) => { event.stopPropagation(); openRecruit(row.recruit.id, "pitch"); }}>Open</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </DataTable>
+            {visibleRows < filteredRecruitIds.length ? <button className="show-more-button" onClick={() => setVisibleRows((current) => current + 120)}>Show More ({filteredRecruitIds.length - visibleRows} remaining)</button> : null}
+          </section>
+        </>
+      )}
+
+      {activeRecruitingTab === "targets" && (
+        <section className="recruiting-pipeline">
+          {RECRUITING_LANES.map((lane) => (
+            <article className="recruiting-lane" key={lane}>
+              <h3>{lane}</h3>
+              {targetRows.filter((row) => row.lane === lane).map((row) => (
+                <button className="recruiting-lane-card" key={row.recruit.id} onClick={() => openRecruit(row.recruit.id, "recruitment")}>
+                  <span><RecruitStars value={row.recruit.stars} /></span>
+                  <strong>{row.recruit.firstName} {row.recruit.lastName}</strong>
+                  <small>{row.recruit.position} | {row.recruit.homeState} | Interest {row.entry?.interestScore ?? "--"}</small>
+                </button>
+              ))}
+            </article>
+          ))}
+        </section>
+      )}
+
+      {activeRecruitingTab === "class" && (
+        <section className="recruiting-class-grid">
+          <div className="metric-grid">
+            <article><span>Class Rank</span><strong>{classSummary?.rank ? `#${classSummary.rank}` : "--"}</strong></article>
+            <article><span>Commits</span><strong>{classSummary?.commits ?? 0}</strong></article>
+            <article><span>Signees</span><strong>{classSummary?.signees ?? 0}</strong></article>
+            <article><span>Avg Stars</span><strong>{classSummary?.averageStars || "--"}</strong></article>
+            <article><span>Blue Chips</span><strong>{classSummary?.blueChips ?? 0}</strong></article>
+          </div>
+          <section className="table-card">
+            <DataTable>
+              <thead><tr><th>Recruit</th><th>Stars</th><th>Pos</th><th>State</th><th>Status</th><th>Interest</th></tr></thead>
+              <tbody>
+                {targetRows.filter((row) => row.entry?.status === "committed" || row.entry?.status === "signed").map((row) => (
+                  <tr key={row.recruit.id} onClick={() => openRecruit(row.recruit.id, "overview")}>
+                    <td><strong>{row.recruit.firstName} {row.recruit.lastName}</strong><small>#{row.recruit.nationalRank}</small></td>
+                    <td><RecruitStars value={row.recruit.stars} /></td>
+                    <td>{row.recruit.position}</td>
+                    <td>{row.recruit.homeState}</td>
+                    <td>{row.entry?.status}</td>
+                    <td>{row.entry?.interestScore}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </DataTable>
+          </section>
+        </section>
+      )}
+
+      {activeRecruitingTab === "scouts" && (
+        <section className="recruiting-scouts-grid">
+          <div className="recruiting-state-list">
+            {recruitingIndexes.recruitStates.slice(0, 40).map((state) => {
+              const count = recruitingIndexes.recruitsByState.get(state)?.length ?? 0;
+              const coverage = recruitingIndexes.scoutCoverageByState.get(state) ?? 0;
+              return <span key={state}><strong>{state}</strong><small>{count} recruits | {coverage || 0}% coverage</small></span>;
+            })}
+          </div>
+          <section className="table-card">
+            <DataTable>
+              <thead><tr><th>Scout</th><th>State</th><th>Position</th><th>Target</th><th>Coverage</th><th>Report</th></tr></thead>
+              <tbody>
+                {recruitingIndexes.scoutAssignments.map((assignment) => (
+                  <tr key={assignment.id}>
+                    <td><strong>{assignment.scoutName}</strong><small>Effectiveness {assignment.effectiveness}</small></td>
+                    <td><select value={assignment.stateFocus} onChange={(event) => updateScout(assignment.id, { stateFocus: event.target.value })}>{recruitingIndexes.recruitStates.map((state) => <option key={state} value={state}>{state}</option>)}</select></td>
+                    <td><select value={assignment.positionFocus} onChange={(event) => updateScout(assignment.id, { positionFocus: event.target.value as Position | "all" })}><option value="all">All</option>{POSITIONS.map((pos) => <option key={pos} value={pos}>{pos}</option>)}</select></td>
+                    <td><select value={assignment.targetProspectId ?? ""} onChange={(event) => updateScout(assignment.id, { targetProspectId: event.target.value || undefined })}><option value="">State coverage</option>{(recruitingIndexes.recruitsByState.get(assignment.stateFocus) ?? []).slice(0, 80).map((recruit) => <option key={recruit.id} value={recruit.id}>{recruit.firstName} {recruit.lastName}</option>)}</select></td>
+                    <td>{assignment.coverage}%</td>
+                    <td>{assignment.lastReport}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </DataTable>
+          </section>
+        </section>
+      )}
+
+      {selectedRecruit ? (
+        <RecruitingRecruitModal
+          recruit={selectedRecruit}
+          entry={selectedEntry}
+          evaluation={selectedEvaluation}
+          topSchools={selectedTopSchools}
+          schoolById={recruitingIndexes.schoolById}
+          schoolId={schoolId}
+          currentWeek={save.currentWeek}
+          initialTab={modalInitialTab}
+          updatePitch={updatePitch}
+          onClose={() => setSelectedRecruitId(undefined)}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function RecruitingRecruitModal({
+  recruit,
+  entry,
+  evaluation,
+  topSchools,
+  schoolById,
+  schoolId,
+  currentWeek,
+  initialTab,
+  updatePitch,
+  onClose
+}: {
+  recruit: AnnualRecruit;
+  entry?: AnnualRecruitingBoardEntry;
+  evaluation?: AnnualRecruitEvaluation;
+  topSchools: AnnualRecruitingBoardEntry[];
+  schoolById: Map<string, CollegeProgram>;
+  schoolId: string;
+  currentWeek: number;
+  initialTab: RecruitingModalTab;
+  updatePitch: (prospectId: string, updates: Parameters<typeof updateRecruitingPitch>[2]) => void;
+  onClose: () => void;
+}) {
+  const [modalTab, setModalTab] = useState<RecruitingModalTab>(initialTab);
+  const [showAllInterested, setShowAllInterested] = useState(false);
+  const [draftWeeklyPoints, setDraftWeeklyPoints] = useState(entry?.weeklyPoints ?? 0);
+  const [draftNilOffer, setDraftNilOffer] = useState(entry?.nilOffer ?? 0);
+
+  useEffect(() => {
+    setModalTab(initialTab);
+    setShowAllInterested(false);
+    setDraftWeeklyPoints(entry?.weeklyPoints ?? 0);
+    setDraftNilOffer(entry?.nilOffer ?? 0);
+  }, [entry?.nilOffer, entry?.weeklyPoints, initialTab, recruit.id]);
+
+  const commitWeeklyPoints = () => {
+    const nextValue = Math.round(draftWeeklyPoints);
+    if (nextValue !== (entry?.weeklyPoints ?? 0)) updatePitch(recruit.id, { weeklyPoints: nextValue, target: true });
+  };
+  const commitNilOffer = () => {
+    const nextValue = Math.round(draftNilOffer);
+    if (nextValue !== (entry?.nilOffer ?? 0)) updatePitch(recruit.id, { nilOffer: nextValue, target: true });
+  };
+
+  return (
+    <div className="modal-backdrop roster-modal-backdrop" onClick={onClose}>
+      <section className="roster-modal recruiting-modal" onClick={(event) => event.stopPropagation()}>
+        <header className="recruiting-modal-header">
+          <div>
+            <p className="eyebrow">Recruit</p>
+            <h2>{recruit.firstName} {recruit.lastName}</h2>
+            <p>{recruit.position} | {recruit.homeState} | #{recruit.nationalRank} national</p>
+          </div>
+          <button onClick={onClose}>Close</button>
+        </header>
+        <div className="recruiting-modal-stars">
+          <span>Consensus <RecruitStars value={recruit.stars} /></span>
+          <span>Our Grade {evaluation ? <RecruitStars value={evaluation.evaluatedStars} title={`${evaluation.evaluatedStarsLow}-${evaluation.evaluatedStarsHigh} stars`} /> : "Unscouted"}</span>
+        </div>
+        <div className="recruiting-tabs modal-tabs" role="tablist" aria-label="Recruit modal tabs">
+          {(["overview", "recruitment", "scouting", "pitch"] as const).map((tab) => <button key={tab} className={modalTab === tab ? "selected" : ""} onClick={() => setModalTab(tab)}>{tab}</button>)}
+        </div>
+        {modalTab === "overview" && (
+          <div className="recruiting-modal-grid">
+            <article><span>Height / Weight</span><strong>{recruit.height}" / {recruit.weight}</strong></article>
+            <article><span>Ranks</span><strong>#{recruit.nationalRank} nat | #{recruit.positionRank} {recruit.position}</strong></article>
+            <article><span>Development</span><strong>{recruit.developmentTrait}</strong></article>
+            <article><span>Personality</span><strong>{recruit.personality}</strong></article>
+            <article><span>OVR Range</span><strong>{evaluation ? evaluation.projectedOverallRange.join("-") : recruit.visibleOverallRange.join("-")}</strong></article>
+            <article><span>POT Range</span><strong>{evaluation ? evaluation.projectedPotentialRange.join("-") : recruit.visiblePotentialRange.join("-")}</strong></article>
+          </div>
+        )}
+        {modalTab === "recruitment" && (
+          <div className="recruiting-interest-list">
+            {(showAllInterested ? topSchools : topSchools.slice(0, 5)).map((interestEntry, index) => {
+              const entrySchool = schoolById.get(interestEntry.schoolId);
               return (
-                <tr key={entry.id}>
-                  <td><strong>{recruit ? `${recruit.firstName} ${recruit.lastName}` : entry.prospectId}</strong><small>{recruit?.homeState} | #{recruit?.nationalRank}</small></td>
-                  <td>{recruit?.position}</td>
-                  <td>{recruit?.stars}</td>
-                  <td>{entry.interestScore}</td>
-                  <td>{entry.positionNeed}</td>
-                  <td>{entry.nilDemand}</td>
-                  <td>{entry.status}</td>
-                  <td className="button-cell">
-                    <button onClick={() => updateRecruit(entry.id, { status: "offered", interestScore: Math.min(100, entry.interestScore + 4) })}>Offer</button>
-                    <button onClick={() => updateRecruit(entry.id, { status: "visited", visitImpact: Math.min(20, entry.visitImpact + 6), interestScore: Math.min(100, entry.interestScore + 7) })}>Visit</button>
-                    <button onClick={() => updateRecruit(entry.id, { promiseType: "early_playing_time", interestScore: Math.min(100, entry.interestScore + 3) })}>Promise</button>
-                    <button onClick={() => setPriority(entry.id, 100)}>Priority</button>
-                    <button onClick={() => updateRecruit(entry.id, { status: "withdrawn" })}>Drop</button>
-                  </td>
-                </tr>
+                <div className={`recruiting-interest-row ${interestEntry.schoolId === schoolId ? "user-school" : ""}`} key={interestEntry.id}>
+                  <strong>#{index + 1} {entrySchool?.name ?? interestEntry.schoolId}</strong>
+                  <div className="interest-meter"><span style={{ width: `${interestEntry.interestScore}%` }} /></div>
+                  <small>{interestEntry.interestScore} interest | {interestEntry.status} | {interestEntry.pipelineType}</small>
+                </div>
               );
             })}
-          </tbody>
-        </DataTable>
+            {topSchools.length > 5 ? <button onClick={() => setShowAllInterested((current) => !current)}>{showAllInterested ? "Show Top 5" : `Display More (${topSchools.length - 5})`}</button> : null}
+          </div>
+        )}
+        {modalTab === "scouting" && (
+          <div className="recruiting-scout-report">
+            <div className="metric-grid">
+              <article><span>Confidence</span><strong>{evaluation?.confidence ?? 0}%</strong></article>
+              <article><span>Progress</span><strong>{evaluation?.progress ?? 0}%</strong></article>
+              <article><span>Grade Range</span><strong>{evaluation ? `${evaluation.evaluatedStarsLow}-${evaluation.evaluatedStarsHigh} stars` : "--"}</strong></article>
+            </div>
+            <h3>Notes</h3>
+            <ul>{(evaluation?.notes ?? ["No team scouting report yet."]).map((note) => <li key={note}>{note}</li>)}</ul>
+            <h3>Risk</h3>
+            <p>{evaluation?.riskFlags.length ? evaluation.riskFlags.join(", ") : "No major flags yet."}</p>
+          </div>
+        )}
+        {modalTab === "pitch" && (
+          <div className="recruiting-pitch-panel">
+            <label>Weekly Points <strong>{draftWeeklyPoints}</strong><input type="range" min={0} max={120} value={draftWeeklyPoints} onChange={(event) => setDraftWeeklyPoints(Number(event.target.value))} onPointerUp={commitWeeklyPoints} onBlur={commitWeeklyPoints} /></label>
+            <div className="recruiting-pitch-actions">
+              <button onClick={() => updatePitch(recruit.id, { scholarshipOffered: true, status: "offered", target: true })}>Offer Scholarship</button>
+              <button onClick={() => updatePitch(recruit.id, { status: "visited", visitScheduledWeek: currentWeek, target: true })}>Schedule Visit</button>
+              <button onClick={() => updatePitch(recruit.id, { promiseType: "early_playing_time", target: true })}>Promise Playing Time</button>
+              <button onClick={() => updatePitch(recruit.id, { removeTarget: true, status: "withdrawn" })}>Remove Target</button>
+            </div>
+            <label>NIL Offer <strong>{draftNilOffer}</strong><input type="range" min={0} max={100} value={draftNilOffer} onChange={(event) => setDraftNilOffer(Number(event.target.value))} onPointerUp={commitNilOffer} onBlur={commitNilOffer} /></label>
+            <p className="muted">Points and NIL save when you release the slider. Weekly recruiting resolves on Advance Day during the weekly tick.</p>
+          </div>
+        )}
       </section>
-    </section>
+    </div>
   );
 }
 
@@ -2282,44 +2818,49 @@ function CollegeDevelopmentView({
 }) {
   const { schoolId, school, activePlayers, morale } = selectedSchoolContext(save);
   const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
-  const [sortBy, setSortBy] = useState<"overall" | "potential" | "class" | "portal">("overall");
+  const [sort, setSort] = useState<SortState<CollegeDevelopmentSortKey>>({ key: "overall", direction: "desc" });
+  const [filtersOpen, setFiltersOpen] = useState(false);
   if (!school) return <CollegeEmptyState title="No development state" />;
   const moraleByPlayerId = new Map(morale.map((entry) => [entry.playerId, entry]));
   const rows = activePlayers
     .filter((player) => positionFilter === "all" || player.position === positionFilter)
     .sort((a, b) => {
-      if (sortBy === "potential") return b.collegePotential - a.collegePotential || b.collegeOverall - a.collegeOverall;
-      if (sortBy === "class") return a.classYear.localeCompare(b.classYear) || b.collegeOverall - a.collegeOverall;
-      if (sortBy === "portal") return (moraleByPlayerId.get(b.id)?.transferRisk ?? 0) - (moraleByPlayerId.get(a.id)?.transferRisk ?? 0);
-      return b.collegeOverall - a.collegeOverall || b.collegePotential - a.collegePotential;
+      const values: Record<CollegeDevelopmentSortKey, [string | number, string | number]> = {
+        name: [`${a.lastName}, ${a.firstName}`, `${b.lastName}, ${b.firstName}`],
+        position: [a.position, b.position],
+        class: [a.classYear, b.classYear],
+        overall: [a.collegeOverall, b.collegeOverall],
+        potential: [a.collegePotential, b.collegePotential],
+        academic: [a.academicEligible === false ? 1 : 0, b.academicEligible === false ? 1 : 0],
+        portal: [moraleByPlayerId.get(a.id)?.transferRisk ?? 0, moraleByPlayerId.get(b.id)?.transferRisk ?? 0]
+      };
+      const primary = sortableValueCompare(values[sort.key][0], values[sort.key][1]) * sortMultiplier(sort.direction);
+      if (primary !== 0) return primary;
+      return `${a.lastName}, ${a.firstName}`.localeCompare(`${b.lastName}, ${b.firstName}`);
     })
     .slice(0, 160);
+  const activeFilterItems: Array<ActiveFilter | undefined> = [
+    positionFilter !== "all" ? { label: positionFilter, clear: () => setPositionFilter("all") } : undefined
+  ];
+  const activeFilters = activeFilterItems.filter(isActiveFilter);
   return (
     <section className="view-stack development-workspace college-view">
       <div className="roster-command-bar development-command-bar">
-        <div className="roster-toolbar-group development-toolbar-grid">
-          <label className="roster-select-field">
-            <span>Position</span>
-            <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
-              <option value="all">All</option>
-              {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
-            </select>
-          </label>
-          <label className="roster-select-field">
-            <span>Sort</span>
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
-              <option value="overall">Overall</option>
-              <option value="potential">Potential</option>
-              <option value="class">Class</option>
-              <option value="portal">Portal Risk</option>
-            </select>
-          </label>
-        </div>
+        <FilterButton count={activeFilters.length} onClick={() => setFiltersOpen(true)} />
+        <span className="read-only-chip">{rows.length} players shown</span>
       </div>
       <section className="table-card development-table-card">
         <DataTable>
           <thead>
-            <tr><th>Player</th><th>Pos</th><th>Class</th><th>OVR</th><th>POT</th><th>Academic</th><th>Portal Risk</th></tr>
+            <tr>
+              <SortableHeader label="Player" sortKey="name" sort={sort} setSort={setSort} defaultDirection="asc" />
+              <SortableHeader label="Pos" sortKey="position" sort={sort} setSort={setSort} defaultDirection="asc" />
+              <SortableHeader label="Class" sortKey="class" sort={sort} setSort={setSort} defaultDirection="asc" />
+              <SortableHeader label="OVR" sortKey="overall" sort={sort} setSort={setSort} />
+              <SortableHeader label="POT" sortKey="potential" sort={sort} setSort={setSort} />
+              <SortableHeader label="Academic" sortKey="academic" sort={sort} setSort={setSort} />
+              <SortableHeader label="Portal Risk" sortKey="portal" sort={sort} setSort={setSort} />
+            </tr>
           </thead>
           <tbody>
             {rows.map((player) => {
@@ -2339,6 +2880,22 @@ function CollegeDevelopmentView({
           </tbody>
         </DataTable>
       </section>
+      {filtersOpen ? (
+        <FilterModal
+          title={`${school.name} Development Filters`}
+          activeFilters={activeFilters}
+          clearAll={() => setPositionFilter("all")}
+          close={() => setFiltersOpen(false)}
+        >
+          <label className="roster-select-field">
+            <span>Position</span>
+            <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
+              <option value="all">All</option>
+              {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
+            </select>
+          </label>
+        </FilterModal>
+      ) : null}
     </section>
   );
 }
@@ -2844,6 +3401,149 @@ function ProspectRatingBreakdown({ prospect, showProgress = true }: { prospect: 
   );
 }
 
+function DossierLine({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="roster-dossier-line">
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DraftProspectDetailModal({ prospect, school, action, activeTab }: { prospect: GameSave["prospects"][number]; school?: CollegeProgram; action: ReactNode; activeTab: DraftProspectModalTab }) {
+  const trend = prospect.productionTrend > 0 ? `+${prospect.productionTrend}` : String(prospect.productionTrend);
+  const ratingGroups = ratingsByGroup()
+    .map(({ group, ratings }) => ({
+      group,
+      ratings: ratings
+        .map((rating) => ({
+          key: rating.key,
+          label: rating.label,
+          value: ratingRangeLabel(prospect.scouted.ratingRanges, rating.key as RatingKey)
+        }))
+        .filter((rating) => rating.value !== "--")
+    }))
+    .filter(({ ratings }) => ratings.length);
+
+  return (
+    <div className="roster-detail-panel roster-detail-panel-single draft-prospect-card">
+      {activeTab === "overview" ? (
+        <>
+          <section className="roster-dossier-card draft-prospect-section">
+            <h4>Snapshot</h4>
+            <div className="roster-dossier-grid roster-overview-grid draft-prospect-metric-grid">
+              <DossierLine label="OVR" value={`${prospect.scouted.low}-${prospect.scouted.high}`} />
+              <DossierLine label="POT" value={`${prospect.scouted.potentialLow}-${prospect.scouted.potentialHigh}`} />
+              <DossierLine label="Dev" value={prospect.development.style} />
+              <DossierLine label="Round" value={`R${prospect.projectedRound}`} />
+              <DossierLine label="Production" value={prospect.production} />
+              <DossierLine label="Trend" value={trend} />
+            </div>
+          </section>
+
+          <section className="roster-dossier-card draft-prospect-section">
+            <h4>Context</h4>
+            <div className="roster-dossier-grid roster-overview-grid draft-prospect-info-grid">
+              <DossierLine label="School" value={school?.name ?? "Unknown"} />
+              <DossierLine label="Conference" value={school?.conference ?? "Unknown"} />
+              <DossierLine label="Region" value={prospect.region} />
+              <DossierLine label="Team Rank" value={`#${prospect.teamRank}`} />
+              <DossierLine label="NFL Rank" value={`#${prospect.consensusRank}`} />
+              <DossierLine label="Progress" value={`${prospect.scouted.progress ?? prospect.scouted.confidence}%`} />
+            </div>
+          </section>
+
+          {prospect.scouted.bodyRanges ? (
+        <section className="roster-dossier-card draft-prospect-section">
+          <h4>Body</h4>
+          <div className="roster-dossier-grid roster-overview-grid draft-prospect-metric-grid compact">
+            <DossierLine label="Height" value={formatHeight(prospect.scouted.bodyRanges.heightInches[0])} />
+            <DossierLine label="Weight" value={`${prospect.scouted.bodyRanges.weightLbs[0]}-${prospect.scouted.bodyRanges.weightLbs[1]}`} />
+            <DossierLine label="Muscle" value={`${prospect.scouted.bodyRanges.musclePct[0]}-${prospect.scouted.bodyRanges.musclePct[1]}%`} />
+            <DossierLine label="Body Fat" value={`${prospect.scouted.bodyRanges.bodyFatPct[0]}-${prospect.scouted.bodyRanges.bodyFatPct[1]}%`} />
+            <DossierLine label="Cond" value={`${prospect.scouted.bodyRanges.conditioning[0]}-${prospect.scouted.bodyRanges.conditioning[1]}`} />
+            <DossierLine label="Flex" value={`${prospect.scouted.bodyRanges.flexibility[0]}-${prospect.scouted.bodyRanges.flexibility[1]}`} />
+          </div>
+        </section>
+          ) : null}
+
+          <section className="roster-dossier-card draft-prospect-section">
+            <h4>Eligible Positions</h4>
+            <div className="draft-position-fit-row">
+              <PositionFitBadges item={prospect} includePrimary max={8} />
+              {prospect.scouted.conversionUpside?.length ? (
+                <div className="draft-conversion-row">
+                  <small>Conversion</small>
+                  <span className="position-fit-badges">
+                    {prospect.scouted.conversionUpside.slice(0, 4).map((option) => (
+                      <span key={option.targetPosition} className="position-fit-badge">{option.targetPosition} {option.fit}</span>
+                    ))}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          </section>
+
+          <div className="draft-modal-actions">
+            {action}
+          </div>
+        </>
+      ) : null}
+
+      {activeTab === "scouting" ? (
+        <>
+          <section className="roster-dossier-card draft-prospect-section">
+            <h4>Scouting Note</h4>
+            <p className="draft-prospect-note">{prospect.scoutReports?.[0] ?? prospect.scouted.note}</p>
+          </section>
+
+          <section className="roster-dossier-card draft-prospect-section">
+            <h4>Production Context</h4>
+            <div className="roster-dossier-grid roster-overview-grid draft-prospect-info-grid">
+              <DossierLine label="Production" value={prospect.production} />
+              <DossierLine label="Trend" value={trend} />
+              <DossierLine label="Progress" value={`${prospect.scouted.progress ?? prospect.scouted.confidence}%`} />
+            </div>
+          </section>
+
+          <section className="roster-dossier-card draft-prospect-section">
+            <h4>Concerns</h4>
+            <div className="concern-pills draft-concern-pills">
+              <ConcernRangePill concernType="medical" label="Medical" range={prospect.scouted.concerns.medical} />
+              <ConcernRangePill concernType="character" label="Character" range={prospect.scouted.concerns.character} />
+              <ConcernRangePill concernType="workEthic" label="Work" range={prospect.scouted.concerns.workEthic} />
+              {!concernSignalForRange("medical", prospect.scouted.concerns.medical) &&
+                !concernSignalForRange("character", prospect.scouted.concerns.character) &&
+                !concernSignalForRange("workEthic", prospect.scouted.concerns.workEthic) ? <span className="draft-empty-note">No major concern flags.</span> : null}
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {activeTab === "ratings" ? (
+        <section className="roster-dossier-card draft-prospect-section">
+          <h4>Ratings</h4>
+          <div className="draft-rating-grid">
+            {ratingGroups.map(({ group, ratings }) => (
+              <div key={group} className="draft-rating-group">
+                <h5>{group}</h5>
+                <div>
+                  {ratings.map((rating) => (
+                    <span key={rating.key} className="draft-rating-row">
+                      <small>{rating.label}</small>
+                      <strong>{rating.value}</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function ConcernRangePill({ concernType, label, range }: { concernType: ProspectConcernKey; label?: string; range: [number, number] }) {
   const signal = concernSignalForRange(concernType, range);
   if (!signal) return null;
@@ -2876,14 +3576,135 @@ function ScoutingProgressBar({ value }: { value: number }) {
   );
 }
 
+type SortDirection = "asc" | "desc";
+type SortState<T extends string> = { key: T; direction: SortDirection };
+
+function sortableValueCompare(a: string | number, b: string | number): number {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function sortMultiplier(direction: SortDirection): number {
+  return direction === "asc" ? 1 : -1;
+}
+
+function toggleSortState<T extends string>(current: SortState<T>, key: T, defaultDirection: SortDirection = "desc"): SortState<T> {
+  if (current.key === key) {
+    return { key, direction: current.direction === "asc" ? "desc" : "asc" };
+  }
+  return { key, direction: defaultDirection };
+}
+
+function playerName(player: Pick<Player, "firstName" | "lastName">): string {
+  return `${player.lastName}, ${player.firstName}`;
+}
+
+function SortableHeader<T extends string>({
+  label,
+  sortKey,
+  sort,
+  setSort,
+  defaultDirection = "desc"
+}: {
+  label: string;
+  sortKey: T;
+  sort: SortState<T>;
+  setSort: (sort: SortState<T>) => void;
+  defaultDirection?: SortDirection;
+}) {
+  const active = sort.key === sortKey;
+  return (
+    <th aria-sort={active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        className={`table-sort-button${active ? " active" : ""}`}
+        onClick={() => setSort(toggleSortState(sort, sortKey, defaultDirection))}
+        title={`Sort by ${label}`}
+      >
+        <span>{label}</span>
+        <span className="table-sort-arrow" aria-hidden="true">{active ? (sort.direction === "asc" ? "↑" : "↓") : ""}</span>
+      </button>
+    </th>
+  );
+}
+
 export type RosterSort = "overall" | "potential" | "age" | "position";
+type RosterSortKey = "name" | "position" | "age" | "overall" | "potential" | "contract" | "ywt" | "experience";
+type PracticeSquadSortKey = "name" | "position" | "age" | "overall" | "potential";
+type DevelopmentSortKey = "name" | "position" | "age" | "overall" | "potential" | "playingTime" | "health";
+type CollegeDevelopmentSortKey = "name" | "position" | "class" | "overall" | "potential" | "academic" | "portal";
+type FreeAgentSortKey = "name" | "position" | "age" | "overall" | "potential" | "ask" | "years" | "interest" | "salary";
+type RosterCompositionMode = "active" | "practice";
+type RosterCompositionGroup = "QB" | "RB" | "WR" | "TE" | "OL" | "EDGE" | "DL" | "LB" | "CB" | "S" | "K" | "P";
 type RosterRangeFilter = "all" | "90+" | "80-89" | "70-79" | "60-69" | "under-60";
 type RosterAgeFilter = "all" | "24-under" | "25-28" | "29-32" | "33-plus";
 type RosterStatusFilter = "all" | "healthy" | "limited" | "injured" | "ir" | "suspended" | "practice";
 type RosterExperienceFilter = "all" | "rookie" | "1-3" | "4-6" | "7-plus";
 type FreeAgentSalaryFilter = "all" | "under-2" | "2-5" | "5-10" | "10-plus";
+type ActiveFilter = { label: string; clear: () => void };
 
 type RosterModalTab = "overview" | "contract" | "ratings" | "stats" | "medical";
+
+function isActiveFilter(item: ActiveFilter | undefined): item is ActiveFilter {
+  return Boolean(item);
+}
+
+const rosterCompositionGroups: RosterCompositionGroup[] = ["QB", "RB", "WR", "TE", "OL", "K", "P", "EDGE", "DL", "LB", "CB", "S"];
+const rosterCompositionSections: Array<{ label: string; groups: RosterCompositionGroup[] }> = [
+  { label: "Offense", groups: ["QB", "RB", "WR", "TE", "OL"] },
+  { label: "Defense", groups: ["EDGE", "DL", "LB", "CB", "S"] }
+];
+const rosterCompositionSpecialists: RosterCompositionGroup[] = ["K", "P"];
+
+const activeRosterCompositionTargets: Record<RosterCompositionGroup, number> = {
+  QB: 3,
+  RB: 4,
+  WR: 6,
+  TE: 3,
+  OL: 9,
+  EDGE: 4,
+  DL: 5,
+  LB: 7,
+  CB: 5,
+  S: 5,
+  K: 1,
+  P: 1
+};
+
+const practiceRosterCompositionTargets: Record<RosterCompositionGroup, number> = {
+  QB: 1,
+  RB: 1,
+  WR: 2,
+  TE: 1,
+  OL: 3,
+  EDGE: 1,
+  DL: 2,
+  LB: 2,
+  CB: 2,
+  S: 1,
+  K: 0,
+  P: 0
+};
+
+function rosterCompositionGroupForPosition(position: Position): RosterCompositionGroup {
+  if (position === "LT" || position === "LG" || position === "C" || position === "RG" || position === "RT") return "OL";
+  if (position === "EDGE") return "EDGE";
+  if (position === "DL") return "DL";
+  return position as RosterCompositionGroup;
+}
+
+function rosterCompositionRows(players: Player[], targets: Record<RosterCompositionGroup, number>) {
+  const counts = new Map<RosterCompositionGroup, number>(rosterCompositionGroups.map((group) => [group, 0]));
+  for (const player of players) {
+    const group = rosterCompositionGroupForPosition(player.position);
+    counts.set(group, (counts.get(group) ?? 0) + 1);
+  }
+  return rosterCompositionGroups.map((group) => {
+    const count = counts.get(group) ?? 0;
+    const target = targets[group];
+    return { group, count, target, underTarget: target > 0 && count < target };
+  });
+}
 
 function rosterRangeMatch(value: number, filter: RosterRangeFilter): boolean {
   if (filter === "all") return true;
@@ -2960,6 +3781,43 @@ export function rosterSortPlayers(players: Player[], sort: RosterSort, practiceS
   });
 }
 
+function compareRosterPlayers(save: GameSave, sort: SortState<RosterSortKey>, practiceSquadLast = false) {
+  return (a: Player, b: Player) => {
+    if (practiceSquadLast) {
+      const statusOrder = Number(isPracticeSquadPlayer(a)) - Number(isPracticeSquadPlayer(b));
+      if (statusOrder !== 0) return statusOrder;
+    }
+    const values: Record<RosterSortKey, [string | number, string | number]> = {
+      name: [playerName(a), playerName(b)],
+      position: [a.position, b.position],
+      age: [a.age, b.age],
+      overall: [a.overall, b.overall],
+      potential: [a.potential, b.potential],
+      contract: [playerCapHit(a, save.seasonYear) || a.salary, playerCapHit(b, save.seasonYear) || b.salary],
+      ywt: [yearsWithTeam(save, a), yearsWithTeam(save, b)],
+      experience: [rosterExperienceYears(a), rosterExperienceYears(b)]
+    };
+    const primary = sortableValueCompare(values[sort.key][0], values[sort.key][1]) * sortMultiplier(sort.direction);
+    if (primary !== 0) return primary;
+    return playerName(a).localeCompare(playerName(b));
+  };
+}
+
+function comparePracticeSquadPlayers(sort: SortState<PracticeSquadSortKey>) {
+  return (a: Player, b: Player) => {
+    const values: Record<PracticeSquadSortKey, [string | number, string | number]> = {
+      name: [playerName(a), playerName(b)],
+      position: [a.position, b.position],
+      age: [a.age, b.age],
+      overall: [a.overall, b.overall],
+      potential: [a.potential, b.potential]
+    };
+    const primary = sortableValueCompare(values[sort.key][0], values[sort.key][1]) * sortMultiplier(sort.direction);
+    if (primary !== 0) return primary;
+    return playerName(a).localeCompare(playerName(b));
+  };
+}
+
 function formatHeight(inches: number): string {
   const feet = Math.floor(inches / 12);
   const remainder = inches % 12;
@@ -3012,29 +3870,76 @@ function remainingContractRows(save: GameSave, player: Player): Array<{ year: nu
 function DevelopmentView({ save }: { save: GameSave }) {
   const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
   const [statusFilter, setStatusFilter] = useState<RosterStatusFilter>("all");
-  const [sortBy, setSortBy] = useState<"overall" | "potential" | "age">("overall");
+  const [sort, setSort] = useState<SortState<DevelopmentSortKey>>({ key: "overall", direction: "desc" });
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const rows = useMemo(() => {
     const players = playersForTeam(save, save.selectedTeamId)
       .filter((player) => positionFilter === "all" || player.position === positionFilter)
       .filter((player) => statusFilter === "all" || rosterStatusMatch(player, statusFilter));
     return players.sort((a, b) => {
-      if (sortBy === "potential") return b.potential - a.potential || b.overall - a.overall;
-      if (sortBy === "age") return a.age - b.age || b.potential - a.potential;
-      return b.overall - a.overall || b.potential - a.potential;
+      const values: Record<DevelopmentSortKey, [string | number, string | number]> = {
+        name: [playerName(a), playerName(b)],
+        position: [a.position, b.position],
+        age: [a.age, b.age],
+        overall: [a.overall, b.overall],
+        potential: [a.potential, b.potential],
+        playingTime: [a.stats.snaps, b.stats.snaps],
+        health: [medicalStatusLabel(a), medicalStatusLabel(b)]
+      };
+      const primary = sortableValueCompare(values[sort.key][0], values[sort.key][1]) * sortMultiplier(sort.direction);
+      if (primary !== 0) return primary;
+      return playerName(a).localeCompare(playerName(b));
     });
-  }, [positionFilter, save, sortBy, statusFilter]);
+  }, [positionFilter, save, sort, statusFilter]);
+  const activeFilterItems: Array<ActiveFilter | undefined> = [
+    positionFilter !== "all" ? { label: positionFilter, clear: () => setPositionFilter("all") } : undefined,
+    statusFilter !== "all" ? { label: statusFilter === "healthy" ? "Healthy only" : statusFilter, clear: () => setStatusFilter("all") } : undefined
+  ];
+  const activeFilters = activeFilterItems.filter(isActiveFilter);
   return (
     <section className="view-stack development-workspace">
       <div className="roster-command-bar development-command-bar">
-        <div className="roster-toolbar-group development-toolbar-grid">
-          <label className="roster-select-field">
-            <span>Sort</span>
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
-              <option value="overall">Overall</option>
-              <option value="potential">Potential</option>
-              <option value="age">Age</option>
-            </select>
-          </label>
+        <FilterButton count={activeFilters.length} onClick={() => setFiltersOpen(true)} />
+        <span className="read-only-chip">{rows.length} players shown</span>
+      </div>
+      <section className="table-card development-table-card">
+        <DataTable>
+          <thead>
+            <tr>
+              <SortableHeader label="Player" sortKey="name" sort={sort} setSort={setSort} defaultDirection="asc" />
+              <SortableHeader label="Pos" sortKey="position" sort={sort} setSort={setSort} defaultDirection="asc" />
+              <SortableHeader label="Age" sortKey="age" sort={sort} setSort={setSort} defaultDirection="asc" />
+              <SortableHeader label="OVR" sortKey="overall" sort={sort} setSort={setSort} />
+              <SortableHeader label="POT" sortKey="potential" sort={sort} setSort={setSort} />
+              <SortableHeader label="Playing Time" sortKey="playingTime" sort={sort} setSort={setSort} />
+              <SortableHeader label="Health" sortKey="health" sort={sort} setSort={setSort} defaultDirection="asc" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((player) => (
+              <tr key={player.id}>
+                <td><strong>{player.firstName} {player.lastName}</strong></td>
+                <td>{player.position}</td>
+                <td>{player.age}</td>
+                <td><strong>{player.overall}</strong></td>
+                <td><strong>{player.potential}</strong></td>
+                <td>{player.stats.snaps ? `${player.stats.snaps.toLocaleString()} snaps` : isPracticeSquadPlayer(player) ? "Practice" : "Needs reps"}</td>
+                <td>{medicalStatusLabel(player)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      </section>
+      {filtersOpen ? (
+        <FilterModal
+          title="Development Filters"
+          activeFilters={activeFilters}
+          clearAll={() => {
+            setPositionFilter("all");
+            setStatusFilter("all");
+          }}
+          close={() => setFiltersOpen(false)}
+        >
           <label className="roster-select-field">
             <span>Position</span>
             <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
@@ -3053,36 +3958,8 @@ function DevelopmentView({ save }: { save: GameSave }) {
               <option value="practice">Practice</option>
             </select>
           </label>
-        </div>
-      </div>
-      <section className="table-card development-table-card">
-        <DataTable>
-          <thead>
-            <tr>
-              <th>Player</th>
-              <th>Pos</th>
-              <th>Age</th>
-              <th>OVR</th>
-              <th>POT</th>
-              <th>Playing Time</th>
-              <th>Health</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((player) => (
-              <tr key={player.id}>
-                <td><strong>{player.firstName} {player.lastName}</strong></td>
-                <td>{player.position}</td>
-                <td>{player.age}</td>
-                <td><strong>{player.overall}</strong></td>
-                <td><strong>{player.potential}</strong></td>
-                <td>{player.stats.snaps ? `${player.stats.snaps.toLocaleString()} snaps` : isPracticeSquadPlayer(player) ? "Practice" : "Needs reps"}</td>
-                <td>{medicalStatusLabel(player)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </DataTable>
-      </section>
+        </FilterModal>
+      ) : null}
     </section>
   );
 }
@@ -3093,6 +3970,113 @@ function RosterFilterChip({ label, onClear }: { label: string; onClear: () => vo
       {label}
       <span aria-hidden="true">x</span>
     </button>
+  );
+}
+
+function FilterButton({ count, onClick, label = "Filter" }: { count: number; onClick: () => void; label?: string }) {
+  return (
+    <button type="button" className="filter-modal-trigger" onClick={onClick}>
+      {label}
+      {count ? <span>{count}</span> : null}
+    </button>
+  );
+}
+
+function FilterModal({
+  title,
+  activeFilters,
+  clearAll,
+  close,
+  children
+}: {
+  title: string;
+  activeFilters: Array<{ label: string; clear: () => void }>;
+  clearAll: () => void;
+  close: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="modal-backdrop roster-modal-backdrop" role="presentation" onMouseDown={close}>
+      <article className="roster-modal filter-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="roster-modal-header">
+          <div>
+            <p className="eyebrow">Filters</p>
+            <h3>{title}</h3>
+          </div>
+        </div>
+        <div className="filter-modal-grid">
+          {children}
+        </div>
+        {activeFilters.length ? (
+          <div className="roster-active-filters filter-modal-active-filters">
+            {activeFilters.map((filter) => (
+              <RosterFilterChip key={filter.label} label={filter.label} onClear={filter.clear} />
+            ))}
+          </div>
+        ) : null}
+        <div className="trade-modal-actions">
+          <button type="button" disabled={!activeFilters.length} onClick={clearAll}>Clear Filters</button>
+          <button type="button" onClick={close}>Done</button>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function RosterCompositionModal({
+  title,
+  players,
+  targets,
+  close
+}: {
+  title: string;
+  players: Player[];
+  targets: Record<RosterCompositionGroup, number>;
+  close: () => void;
+}) {
+  const rows = rosterCompositionRows(players, targets);
+  const rowByGroup = new Map(rows.map((row) => [row.group, row]));
+  const renderCompositionItem = (group: RosterCompositionGroup) => {
+    const row = rowByGroup.get(group)!;
+    return (
+      <span key={row.group} className={`roster-composition-item${row.underTarget ? " composition-under" : ""}`}>
+        <strong>{row.group}</strong>
+        <span className="roster-composition-count">
+          {row.count}<span>/{row.target}</span>
+        </span>
+      </span>
+    );
+  };
+  return (
+    <div className="modal-backdrop roster-modal-backdrop" role="presentation" onMouseDown={close}>
+      <article className="roster-modal roster-composition-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="roster-composition-header">
+          <div>
+            <p className="eyebrow">Roster</p>
+            <h3>{title}</h3>
+          </div>
+          <button type="button" onClick={close}>Close</button>
+        </div>
+        <div className="roster-composition-body" aria-label={`${title} position counts`}>
+          <div className="roster-composition-grid">
+            {rosterCompositionSections.map((section) => (
+              <section key={section.label} className="roster-composition-section" aria-label={section.label}>
+                <span className="roster-composition-section-title">{section.label}</span>
+                <div className="roster-composition-list">
+                  {section.groups.map(renderCompositionItem)}
+                </div>
+              </section>
+            ))}
+          </div>
+          <div className="roster-composition-specialists" aria-label="Specialists">
+            <span className="roster-composition-section-title">Specialists</span>
+            <div className="roster-composition-specialist-list">
+              {rosterCompositionSpecialists.map(renderCompositionItem)}
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
   );
 }
 
@@ -3824,18 +4808,23 @@ function RosterView({
   openTradeForPlayer: (playerId?: string) => void;
 }) {
   const [viewTeamId, setViewTeamId] = useState(save.selectedTeamId);
-  const [sortBy, setSortBy] = useState<RosterSort>("overall");
+  const [sort, setSort] = useState<SortState<RosterSortKey>>({ key: "overall", direction: "desc" });
+  const [squadSort, setSquadSort] = useState<SortState<PracticeSquadSortKey>>({ key: "potential", direction: "desc" });
   const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
   const [overallFilter, setOverallFilter] = useState<RosterRangeFilter>("all");
   const [potentialFilter, setPotentialFilter] = useState<RosterRangeFilter>("all");
   const [ageFilter, setAgeFilter] = useState<RosterAgeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<RosterStatusFilter>("all");
   const [experienceFilter, setExperienceFilter] = useState<RosterExperienceFilter>("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [compositionModal, setCompositionModal] = useState<RosterCompositionMode | null>(null);
   const [activePlayerId, setActivePlayerId] = useState<string>();
   const [activeModalTab, setActiveModalTab] = useState<RosterModalTab>("overview");
+  const activeModalRef = useRef<HTMLElement | null>(null);
   const team = teamById(save, viewTeamId);
   const players = useMemo(() => playersForTeam(save, team.id), [save, team.id]);
-  const squadPlayers = useMemo(() => practiceSquadPlayers(save, team.id).sort((a, b) => b.potential - a.potential || b.overall - a.overall), [save, team.id]);
+  const squadPlayers = useMemo(() => practiceSquadPlayers(save, team.id).sort(comparePracticeSquadPlayers(squadSort)), [save, squadSort, team.id]);
+  const activeRosterPlayers = useMemo(() => players.filter((player) => !isOnIr(player) && !isPracticeSquadPlayer(player)), [players]);
   const filteredPlayers = useMemo(() => {
     const filtered = players.filter((player) => {
       if (positionFilter !== "all" && player.position !== positionFilter) return false;
@@ -3846,18 +4835,23 @@ function RosterView({
       if (!rosterExperienceMatch(player, experienceFilter)) return false;
       return true;
     });
-    return rosterSortPlayers(filtered, sortBy, statusFilter === "all" && (sortBy === "overall" || sortBy === "potential"));
-  }, [ageFilter, experienceFilter, overallFilter, players, positionFilter, potentialFilter, sortBy, statusFilter]);
-  const activeFilters = [
+    return filtered.sort(compareRosterPlayers(save, sort, statusFilter === "all" && (sort.key === "overall" || sort.key === "potential")));
+  }, [ageFilter, experienceFilter, overallFilter, players, positionFilter, potentialFilter, save, sort, statusFilter]);
+  const activeFilterItems: Array<ActiveFilter | undefined> = [
     positionFilter !== "all" ? { label: positionFilter, clear: () => setPositionFilter("all") } : undefined,
     overallFilter !== "all" ? { label: `OVR ${overallFilter}`, clear: () => setOverallFilter("all") } : undefined,
     potentialFilter !== "all" ? { label: `POT ${potentialFilter}`, clear: () => setPotentialFilter("all") } : undefined,
     ageFilter !== "all" ? { label: `Age ${ageFilter}`, clear: () => setAgeFilter("all") } : undefined,
     statusFilter !== "all" ? { label: statusFilter === "healthy" ? "Healthy only" : statusFilter, clear: () => setStatusFilter("all") } : undefined,
     experienceFilter !== "all" ? { label: experienceFilter === "rookie" ? "Rookies" : `${experienceFilter} yrs`, clear: () => setExperienceFilter("all") } : undefined
-  ].filter((item): item is { label: string; clear: () => void } => Boolean(item));
+  ];
+  const activeFilters = activeFilterItems.filter(isActiveFilter);
   const activePlayer = activePlayerId ? players.find((player) => player.id === activePlayerId) : undefined;
   const canManageRoster = viewTeamId === save.selectedTeamId;
+  const openRosterPlayer = (playerId: string) => {
+    setActiveModalTab("overview");
+    setActivePlayerId(playerId);
+  };
 
   useEffect(() => {
     if (activePlayerId && !players.some((player) => player.id === activePlayerId)) {
@@ -3867,27 +4861,37 @@ function RosterView({
 
   useEffect(() => {
     if (activePlayerId) {
-      setActiveModalTab("overview");
+      activeModalRef.current?.focus();
     }
   }, [activePlayerId]);
 
   return (
     <section className="view-stack roster-workspace">
       <div className="view-command-row">
-        <TeamScopePicker save={save} teamId={viewTeamId} setTeamId={setViewTeamId} label="Roster team" />
-        {viewTeamId !== save.selectedTeamId ? <span className="read-only-chip">Read-only roster view</span> : null}
+        <div className="roster-team-filter-group">
+          <TeamScopePicker save={save} teamId={viewTeamId} setTeamId={setViewTeamId} label="Roster team" />
+          <FilterButton count={activeFilters.length} onClick={() => setFiltersOpen(true)} />
+        </div>
+        <div className="roster-command-meta">
+          <button type="button" className="read-only-chip roster-summary-button" onClick={() => setCompositionModal("active")}>Active {rosterSize(save, team.id)}/{MAX_ROSTER_SIZE}</button>
+          <button type="button" className="read-only-chip roster-summary-button" onClick={() => setCompositionModal("practice")}>PS {practiceSquadSize(save, team.id)}/{PRACTICE_SQUAD_SIZE}</button>
+          {viewTeamId !== save.selectedTeamId ? <span className="read-only-chip">Read-only roster view</span> : null}
+        </div>
       </div>
-      <div className="roster-command-bar">
-        <div className="roster-toolbar-group">
-          <label className="roster-select-field">
-            <span>Sort</span>
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as RosterSort)}>
-              <option value="overall">Overall</option>
-              <option value="potential">Potential</option>
-              <option value="age">Age</option>
-              <option value="position">Position</option>
-            </select>
-          </label>
+      {filtersOpen ? (
+        <FilterModal
+          title={`${team.fullName} Roster Filters`}
+          activeFilters={activeFilters}
+          clearAll={() => {
+            setPositionFilter("all");
+            setOverallFilter("all");
+            setPotentialFilter("all");
+            setAgeFilter("all");
+            setStatusFilter("all");
+            setExperienceFilter("all");
+          }}
+          close={() => setFiltersOpen(false)}
+        >
           <label className="roster-select-field">
             <span>Position</span>
             <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
@@ -3951,39 +4955,35 @@ function RosterView({
               <option value="7-plus">7+ years</option>
             </select>
           </label>
-        </div>
-        <div className="roster-toolbar-meta">
-          <span className="read-only-chip">Active {rosterSize(save, team.id)}/{MAX_ROSTER_SIZE}</span>
-          <span className="read-only-chip">PS {practiceSquadSize(save, team.id)}/{PRACTICE_SQUAD_SIZE}</span>
-          <span className="read-only-chip">{filteredPlayers.length} players shown</span>
-          {activeFilters.length ? <button type="button" onClick={() => {
-            setPositionFilter("all");
-            setOverallFilter("all");
-            setPotentialFilter("all");
-            setAgeFilter("all");
-            setStatusFilter("all");
-            setExperienceFilter("all");
-          }}>Clear Filters</button> : null}
-        </div>
-      </div>
-      {activeFilters.length ? (
-        <div className="roster-active-filters">
-          {activeFilters.map((filter) => (
-            <RosterFilterChip key={filter.label} label={filter.label} onClear={filter.clear} />
-          ))}
-        </div>
+        </FilterModal>
+      ) : null}
+      {compositionModal === "active" ? (
+        <RosterCompositionModal
+          title="Active Roster Composition"
+          players={activeRosterPlayers}
+          targets={activeRosterCompositionTargets}
+          close={() => setCompositionModal(null)}
+        />
+      ) : null}
+      {compositionModal === "practice" ? (
+        <RosterCompositionModal
+          title="Practice Squad Composition"
+          players={squadPlayers}
+          targets={practiceRosterCompositionTargets}
+          close={() => setCompositionModal(null)}
+        />
       ) : null}
       <DataTable>
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Pos</th>
-            <th>Age</th>
-            <th>OVR</th>
-            <th>POT</th>
-            <th>Contract</th>
-            <th>YWT</th>
-            <th>EXP</th>
+            <SortableHeader label="Name" sortKey="name" sort={sort} setSort={setSort} defaultDirection="asc" />
+            <SortableHeader label="Pos" sortKey="position" sort={sort} setSort={setSort} defaultDirection="asc" />
+            <SortableHeader label="Age" sortKey="age" sort={sort} setSort={setSort} defaultDirection="asc" />
+            <SortableHeader label="OVR" sortKey="overall" sort={sort} setSort={setSort} />
+            <SortableHeader label="POT" sortKey="potential" sort={sort} setSort={setSort} />
+            <SortableHeader label="Contract" sortKey="contract" sort={sort} setSort={setSort} />
+            <SortableHeader label="YWT" sortKey="ywt" sort={sort} setSort={setSort} />
+            <SortableHeader label="EXP" sortKey="experience" sort={sort} setSort={setSort} />
             <th>Release</th>
             <th>Trade</th>
           </tr>
@@ -3997,11 +4997,11 @@ function RosterView({
               <tr
                 key={player.id}
                 className={`roster-table-row roster-status-${player.status}`}
-                onClick={() => setActivePlayerId(player.id)}
+                onClick={() => openRosterPlayer(player.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    setActivePlayerId(player.id);
+                    openRosterPlayer(player.id);
                   }
                 }}
                 tabIndex={0}
@@ -4078,11 +5078,11 @@ function RosterView({
         <DataTable>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Pos</th>
-              <th>Age</th>
-              <th>OVR</th>
-              <th>POT</th>
+              <SortableHeader label="Name" sortKey="name" sort={squadSort} setSort={setSquadSort} defaultDirection="asc" />
+              <SortableHeader label="Pos" sortKey="position" sort={squadSort} setSort={setSquadSort} defaultDirection="asc" />
+              <SortableHeader label="Age" sortKey="age" sort={squadSort} setSort={setSquadSort} defaultDirection="asc" />
+              <SortableHeader label="OVR" sortKey="overall" sort={squadSort} setSort={setSquadSort} />
+              <SortableHeader label="POT" sortKey="potential" sort={squadSort} setSort={setSquadSort} />
               <th>Elev</th>
               <th>Protect</th>
               <th>Elevate</th>
@@ -4097,7 +5097,7 @@ function RosterView({
               const elevateCheck = canElevatePracticeSquadPlayer(save, player.id, team.id);
               const protectCheck = canProtectPracticeSquadPlayer(save, player.id, team.id);
               return (
-                <tr key={player.id} className="roster-table-row roster-status-practice" onClick={() => setActivePlayerId(player.id)} tabIndex={0}>
+                <tr key={player.id} className="roster-table-row roster-status-practice" onClick={() => openRosterPlayer(player.id)} tabIndex={0}>
                   <td>
                     <div className="roster-table-player">
                       <span className="roster-table-player-main"><strong>{player.firstName} {player.lastName}</strong></span>
@@ -4138,11 +5138,19 @@ function RosterView({
       {activePlayer ? (
         <div className="modal-backdrop roster-modal-backdrop" role="presentation" onMouseDown={() => setActivePlayerId(undefined)}>
           <article
+            ref={activeModalRef}
             className="roster-modal"
             role="dialog"
             aria-modal="true"
             aria-label={`${activePlayer.firstName} ${activePlayer.lastName} player details`}
+            tabIndex={-1}
+            onClick={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setActivePlayerId(undefined);
+              }
+            }}
           >
             <div className="roster-modal-header">
               <div>
@@ -4159,7 +5167,10 @@ function RosterView({
                   <span><small>OVR</small><strong>{activePlayer.overall}</strong></span>
                   <span><small>POT</small><strong>{activePlayer.potential}</strong></span>
                 </div>
-                <button type="button" onClick={() => setActivePlayerId(undefined)}>Close</button>
+                <button type="button" onClick={(event) => {
+                  event.stopPropagation();
+                  setActivePlayerId(undefined);
+                }}>Close</button>
               </div>
             </div>
             <div className="roster-modal-tabs" role="tablist" aria-label="Player detail tabs">
@@ -4176,7 +5187,14 @@ function RosterView({
                   role="tab"
                   aria-selected={activeModalTab === tab}
                   className={activeModalTab === tab ? "selected" : ""}
-                  onClick={() => setActiveModalTab(tab)}
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                    setActiveModalTab(tab);
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setActiveModalTab(tab);
+                  }}
                 >
                   {label}
                 </button>
@@ -5794,6 +6812,59 @@ function TradeNewsPanel({ save, compact = false }: { save: GameSave; compact?: b
 }
 
 type FreeAgentsTab = "available" | "pending" | "recent" | "offers";
+const FREE_AGENT_PAGE_SIZE = 120;
+
+interface FreeAgentMarketRow {
+  player: Player;
+  name: string;
+  school?: CollegeProgram;
+  teamLabel?: string;
+  ask: number;
+  years: number;
+  role: FreeAgentRolePromise;
+  interest: number;
+  existingOffer?: FreeAgentOffer;
+  compLabel: string;
+  statusLabel: string;
+  projectedMarketLabel: string;
+}
+
+function sortFreeAgentRows(rows: FreeAgentMarketRow[], sort: SortState<FreeAgentSortKey>): FreeAgentMarketRow[] {
+  return rows.slice().sort((a, b) => {
+    const values: Record<FreeAgentSortKey, [string | number, string | number]> = {
+      name: [a.name, b.name],
+      position: [a.player.position, b.player.position],
+      age: [a.player.age, b.player.age],
+      overall: [a.player.overall, b.player.overall],
+      potential: [a.player.potential, b.player.potential],
+      ask: [a.ask, b.ask],
+      years: [a.years, b.years],
+      interest: [a.interest, b.interest],
+      salary: [a.player.salary, b.player.salary]
+    };
+    const primary = sortableValueCompare(values[sort.key][0], values[sort.key][1]) * sortMultiplier(sort.direction);
+    if (primary !== 0) return primary;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function ShowMoreRows({
+  visible,
+  total,
+  onShowMore
+}: {
+  visible: number;
+  total: number;
+  onShowMore: () => void;
+}) {
+  if (visible >= total) return null;
+  return (
+    <div className="table-show-more">
+      <span>Showing {visible} of {total}</span>
+      <button type="button" onClick={onShowMore}>Show More</button>
+    </div>
+  );
+}
 
 function FreeAgentsView({
   save,
@@ -5807,22 +6878,35 @@ function FreeAgentsView({
   signPractice: (playerId: string) => void;
 }) {
   const [tab, setTab] = useState<FreeAgentsTab>("available");
-  const [sortBy, setSortBy] = useState<FreeAgentSort>("ask");
+  const [sort, setSort] = useState<SortState<FreeAgentSortKey>>({ key: "ask", direction: "desc" });
   const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
   const [overallFilter, setOverallFilter] = useState<RosterRangeFilter>("all");
   const [potentialFilter, setPotentialFilter] = useState<RosterRangeFilter>("all");
   const [ageFilter, setAgeFilter] = useState<RosterAgeFilter>("all");
   const [salaryFilter, setSalaryFilter] = useState<FreeAgentSalaryFilter>("all");
   const [experienceFilter, setExperienceFilter] = useState<RosterExperienceFilter>("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [visibleRows, setVisibleRows] = useState(FREE_AGENT_PAGE_SIZE);
   const [activePlayerId, setActivePlayerId] = useState<string | undefined>();
   const team = selectedTeam(save);
   const teamRosterSize = rosterSize(save, team.id);
   const teamPracticeSize = practiceSquadSize(save, team.id);
   const budgetRoom = teamCapLedger(save, team.id).capRoom;
-  const needs = rosterNeeds(save, team.id).slice(0, 4);
+  const selectedRosterNeeds = useMemo(() => rosterNeeds(save, team.id), [save, team.id]);
+  const selectedNeedsByPosition = useMemo(() => new Map(selectedRosterNeeds.map((need) => [need.position, need.grade])), [selectedRosterNeeds]);
+  const selectedTeamOverall = useMemo(() => teamOverall(save, team.id), [save, team.id]);
+  const needs = selectedRosterNeeds.slice(0, 4);
   const market = normalizeFreeAgencyMarket(save);
-  const candidates = useMemo(() => {
-    const filtered = freeAgentPlayers(save).filter((player) => {
+  const schoolById = useMemo(() => new Map(save.schools.map((school) => [school.id, school])), [save.schools]);
+  const submittedOfferByPlayerId = useMemo(() => {
+    const offers = new Map<string, FreeAgentOffer>();
+    for (const offer of market.offers) {
+      if (offer.teamId === team.id && offer.status === "submitted") offers.set(offer.playerId, offer);
+    }
+    return offers;
+  }, [market.offers, team.id]);
+  const freeAgentRows = useMemo(() => {
+    const baseRows = freeAgentPlayers(save).filter((player) => {
       if (positionFilter !== "all" && player.position !== positionFilter) return false;
       if (!rosterRangeMatch(player.overall, overallFilter)) return false;
       if (!rosterRangeMatch(player.potential, potentialFilter)) return false;
@@ -5830,36 +6914,87 @@ function FreeAgentsView({
       if (!freeAgentSalaryMatch(player.salary, salaryFilter)) return false;
       if (!rosterExperienceMatch(player, experienceFilter)) return false;
       return true;
+    }).map((player): FreeAgentMarketRow => {
+      const ask = expectedFreeAgentAsk(player);
+      const years = expectedFreeAgentYears(player);
+      const need = selectedNeedsByPosition.get(player.position) ?? 60;
+      const role: FreeAgentRolePromise = need <= player.overall - 4 && player.overall >= 60 ? "starter" : need <= player.overall + 3 ? "rotation" : player.age <= 24 || player.potential >= player.overall + 8 ? "development" : "depth";
+      const moneyScore = Math.min(42, (ask / Math.max(0.5, ask)) * 34);
+      const needScore = Math.max(0, Math.min(12, (player.overall - need + 10) * 0.55));
+      const contenderScore = Math.max(0, Math.min(8, (selectedTeamOverall - 55) * 0.25));
+      const capScore = Math.max(0, Math.min(6, budgetRoom / Math.max(1, ask) * 1.8));
+      const loyaltyPenalty = player.previousTeamId && player.previousTeamId !== team.id ? 0 : 3;
+      const roleScore = role === "starter" ? 15 : role === "rotation" ? 10 : role === "development" ? 7 : 5;
+      const interest = Math.round(Math.max(1, Math.min(99, moneyScore + 8 + roleScore + needScore + contenderScore + capScore + loyaltyPenalty)));
+      const existingOffer = submittedOfferByPlayerId.get(player.id);
+      return {
+        player,
+        name: playerName(player),
+        school: schoolById.get(player.collegeId),
+        ask,
+        years,
+        role,
+        interest,
+        existingOffer,
+        compLabel: player.contract?.rights === "ufa" && player.previousTeamId ? "CFA" : "-",
+        statusLabel: existingOffer ? "Offer pending" : "Available",
+        projectedMarketLabel: ask >= 10 ? "Premium" : ask >= 4 ? "Starter market" : "Depth market"
+      };
     });
-    if (sortBy === "ask") {
-      return filtered.slice().sort((a, b) => expectedFreeAgentAsk(b) - expectedFreeAgentAsk(a) || b.overall - a.overall || a.lastName.localeCompare(b.lastName));
-    }
-    return sortFreeAgents(filtered, sortBy);
-  }, [ageFilter, experienceFilter, overallFilter, positionFilter, potentialFilter, salaryFilter, save, sortBy]);
-  const pendingClass = useMemo(() => projectedPendingFreeAgents(save).filter((player) => {
+    return sortFreeAgentRows(baseRows, sort);
+  }, [ageFilter, budgetRoom, experienceFilter, overallFilter, positionFilter, potentialFilter, salaryFilter, save, schoolById, selectedNeedsByPosition, selectedTeamOverall, sort, submittedOfferByPlayerId, team.id]);
+  const pendingRows = useMemo(() => {
+    const baseRows = projectedPendingFreeAgents(save).filter((player) => {
     if (positionFilter !== "all" && player.position !== positionFilter) return false;
     if (!rosterRangeMatch(player.overall, overallFilter)) return false;
     if (!rosterRangeMatch(player.potential, potentialFilter)) return false;
     if (!rosterAgeMatch(player.age, ageFilter)) return false;
     return true;
-  }), [ageFilter, overallFilter, positionFilter, potentialFilter, save]);
+    }).map((player): FreeAgentMarketRow => {
+      const ask = expectedFreeAgentAsk(player);
+      const years = expectedFreeAgentYears(player);
+      const need = selectedNeedsByPosition.get(player.position) ?? 60;
+      const role: FreeAgentRolePromise = need <= player.overall - 4 && player.overall >= 60 ? "starter" : need <= player.overall + 3 ? "rotation" : player.age <= 24 || player.potential >= player.overall + 8 ? "development" : "depth";
+      return {
+        player,
+        name: playerName(player),
+        school: schoolById.get(player.collegeId),
+        teamLabel: teamById(save, player.teamId).abbreviation,
+        ask,
+        years,
+        role,
+        interest: 0,
+        compLabel: player.overall >= 58 ? "Possible CFA" : "-",
+        statusLabel: player.contract?.rights?.toUpperCase() ?? "UFA",
+        projectedMarketLabel: ask >= 10 ? "Premium" : ask >= 4 ? "Starter market" : "Depth market"
+      };
+    });
+    return sortFreeAgentRows(baseRows, sort);
+  }, [ageFilter, overallFilter, positionFilter, potentialFilter, save, schoolById, selectedNeedsByPosition, sort]);
+  const visibleFreeAgentRows = freeAgentRows.slice(0, visibleRows);
+  const visiblePendingRows = pendingRows.slice(0, visibleRows);
   const submittedOffers = market.offers.filter((offer) => offer.status === "submitted").sort((a, b) => b.expectedAsk - a.expectedAsk || b.interestScore - a.interestScore);
   const activePlayer = activePlayerId ? save.players.find((player) => player.id === activePlayerId) : undefined;
-  const activeFilters = [
+  const activeFilterItems: Array<ActiveFilter | undefined> = [
     positionFilter !== "all" ? { label: positionFilter, clear: () => setPositionFilter("all") } : undefined,
     overallFilter !== "all" ? { label: `OVR ${overallFilter}`, clear: () => setOverallFilter("all") } : undefined,
     potentialFilter !== "all" ? { label: `POT ${potentialFilter}`, clear: () => setPotentialFilter("all") } : undefined,
     ageFilter !== "all" ? { label: `Age ${ageFilter}`, clear: () => setAgeFilter("all") } : undefined,
     salaryFilter !== "all" ? { label: `Salary ${salaryFilter}`, clear: () => setSalaryFilter("all") } : undefined,
     experienceFilter !== "all" ? { label: experienceFilter === "rookie" ? "Rookies" : `${experienceFilter} yrs`, clear: () => setExperienceFilter("all") } : undefined
-  ].filter((item): item is { label: string; clear: () => void } => Boolean(item));
+  ];
+  const activeFilters = activeFilterItems.filter(isActiveFilter);
 
   const tabCounts: Record<FreeAgentsTab, number> = {
-    available: candidates.length,
-    pending: pendingClass.length,
+    available: freeAgentRows.length,
+    pending: pendingRows.length,
     recent: save.freeAgencyLog.length,
     offers: submittedOffers.length
   };
+
+  useEffect(() => {
+    setVisibleRows(FREE_AGENT_PAGE_SIZE);
+  }, [ageFilter, experienceFilter, overallFilter, positionFilter, potentialFilter, salaryFilter, sort, tab]);
 
   return (
     <section className="view-stack roster-workspace free-agency-workspace">
@@ -5894,17 +7029,27 @@ function FreeAgentsView({
 
       <div className="roster-command-bar free-agent-command-bar">
         <div className="roster-toolbar-group">
-          <label className="roster-select-field">
-            <span>Sort</span>
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as FreeAgentSort)}>
-              <option value="ask">Asking Price</option>
-              <option value="overall">Overall</option>
-              <option value="potential">Potential</option>
-              <option value="age">Age</option>
-              <option value="salary">Salary</option>
-              <option value="position">Position</option>
-            </select>
-          </label>
+          <FilterButton count={activeFilters.length} onClick={() => setFiltersOpen(true)} />
+        </div>
+        <div className="roster-toolbar-meta">
+          <span className="read-only-chip">{freeAgentRows.length} available</span>
+        </div>
+      </div>
+
+      {filtersOpen ? (
+        <FilterModal
+          title="Free Agent Filters"
+          activeFilters={activeFilters}
+          clearAll={() => {
+            setPositionFilter("all");
+            setOverallFilter("all");
+            setPotentialFilter("all");
+            setAgeFilter("all");
+            setSalaryFilter("all");
+            setExperienceFilter("all");
+          }}
+          close={() => setFiltersOpen(false)}
+        >
           <label className="roster-select-field">
             <span>Position</span>
             <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
@@ -5966,26 +7111,7 @@ function FreeAgentsView({
               <option value="7-plus">7+ years</option>
             </select>
           </label>
-        </div>
-        <div className="roster-toolbar-meta">
-          <span className="read-only-chip">{candidates.length} available</span>
-          {activeFilters.length ? <button type="button" onClick={() => {
-            setPositionFilter("all");
-            setOverallFilter("all");
-            setPotentialFilter("all");
-            setAgeFilter("all");
-            setSalaryFilter("all");
-            setExperienceFilter("all");
-          }}>Clear Filters</button> : null}
-        </div>
-      </div>
-
-      {activeFilters.length ? (
-        <div className="roster-active-filters">
-          {activeFilters.map((filter) => (
-            <RosterFilterChip key={filter.label} label={filter.label} onClear={filter.clear} />
-          ))}
-        </div>
+        </FilterModal>
       ) : null}
 
       {tab === "available" ? (
@@ -5993,14 +7119,14 @@ function FreeAgentsView({
           <DataTable>
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Pos</th>
-                <th>Age</th>
-                <th>OVR</th>
-                <th>POT</th>
-                <th>Ask</th>
-                <th>Years</th>
-                <th>Interest</th>
+                <SortableHeader label="Name" sortKey="name" sort={sort} setSort={setSort} defaultDirection="asc" />
+                <SortableHeader label="Pos" sortKey="position" sort={sort} setSort={setSort} defaultDirection="asc" />
+                <SortableHeader label="Age" sortKey="age" sort={sort} setSort={setSort} defaultDirection="asc" />
+                <SortableHeader label="OVR" sortKey="overall" sort={sort} setSort={setSort} />
+                <SortableHeader label="POT" sortKey="potential" sort={sort} setSort={setSort} />
+                <SortableHeader label="Ask" sortKey="ask" sort={sort} setSort={setSort} />
+                <SortableHeader label="Years" sortKey="years" sort={sort} setSort={setSort} />
+                <SortableHeader label="Interest" sortKey="interest" sort={sort} setSort={setSort} />
                 <th>Comp</th>
                 <th>Status</th>
                 <th>Offer</th>
@@ -6008,37 +7134,29 @@ function FreeAgentsView({
               </tr>
             </thead>
             <tbody>
-              {candidates.length ? candidates.map((player) => {
-            const school = save.schools.find((candidate) => candidate.id === player.collegeId);
+              {visibleFreeAgentRows.length ? visibleFreeAgentRows.map((row) => {
+            const { player } = row;
             const practiceCheck = canSignFreeAgentToPracticeSquad(save, player.id, team.id);
-            const ask = suggestedApy(player);
-            const interest = freeAgentInterestScore(save, player, team.id, {
-              years: expectedFreeAgentYears(player),
-              apy: ask,
-              security: "standard",
-              role: roleForTeamNeed(save, player, team.id)
-            });
-            const existingOffer = market.offers.find((offer) => offer.playerId === player.id && offer.teamId === team.id && offer.status === "submitted");
             return (
               <tr key={player.id} className="roster-table-row" onClick={() => setActivePlayerId(player.id)} tabIndex={0}>
                 <td>
                   <div className="roster-table-player">
                     <span className="roster-table-player-main"><strong>{player.firstName} {player.lastName}</strong></span>
-                    <span className="roster-table-player-meta"><CollegeLogo school={school} size={22} /> <span>{school?.name ?? "Unknown College"}</span></span>
+                    <span className="roster-table-player-meta"><CollegeLogo school={row.school} size={22} /> <span>{row.school?.name ?? "Unknown College"}</span></span>
                   </div>
                 </td>
                 <td>{player.position}</td>
                 <td>{player.age}</td>
                 <td><strong>{player.overall}</strong></td>
                 <td><strong>{player.potential}</strong></td>
-                <td><strong>${ask.toFixed(1)}M</strong></td>
-                <td>{expectedFreeAgentYears(player)}</td>
-                <td><span className="read-only-chip">{interest}</span></td>
-                <td>{player.contract?.rights === "ufa" && player.previousTeamId ? "CFA" : "-"}</td>
-                <td>{existingOffer ? "Offer pending" : "Available"}</td>
+                <td><strong>${row.ask.toFixed(1)}M</strong></td>
+                <td>{row.years}</td>
+                <td><span className="read-only-chip">{row.interest}</span></td>
+                <td>{row.compLabel}</td>
+                <td>{row.statusLabel}</td>
                 <td onClick={(event) => event.stopPropagation()}>
-                  <button type="button" className="roster-row-action" disabled={Boolean(existingOffer)} onClick={() => setActivePlayerId(player.id)}>
-                    {existingOffer ? "Pending" : "Offer"}
+                  <button type="button" className="roster-row-action" disabled={Boolean(row.existingOffer)} onClick={() => setActivePlayerId(player.id)}>
+                    {row.existingOffer ? "Pending" : "Offer"}
                   </button>
                 </td>
                 <td onClick={(event) => event.stopPropagation()}>
@@ -6057,6 +7175,7 @@ function FreeAgentsView({
           }) : <tr><td colSpan={12}>No free agents match the current filters.</td></tr>}
             </tbody>
           </DataTable>
+          <ShowMoreRows visible={visibleFreeAgentRows.length} total={freeAgentRows.length} onShowMore={() => setVisibleRows((current) => current + FREE_AGENT_PAGE_SIZE)} />
         </section>
       ) : null}
 
@@ -6065,46 +7184,46 @@ function FreeAgentsView({
           <DataTable>
             <thead>
               <tr>
-                <th>Name</th>
+                <SortableHeader label="Name" sortKey="name" sort={sort} setSort={setSort} defaultDirection="asc" />
                 <th>Team</th>
-                <th>Pos</th>
-                <th>Age</th>
-                <th>OVR</th>
-                <th>POT</th>
-                <th>Current APY</th>
-                <th>Expected Ask</th>
+                <SortableHeader label="Pos" sortKey="position" sort={sort} setSort={setSort} defaultDirection="asc" />
+                <SortableHeader label="Age" sortKey="age" sort={sort} setSort={setSort} defaultDirection="asc" />
+                <SortableHeader label="OVR" sortKey="overall" sort={sort} setSort={setSort} />
+                <SortableHeader label="POT" sortKey="potential" sort={sort} setSort={setSort} />
+                <SortableHeader label="Current APY" sortKey="salary" sort={sort} setSort={setSort} />
+                <SortableHeader label="Expected Ask" sortKey="ask" sort={sort} setSort={setSort} />
                 <th>Rights</th>
                 <th>Comp Risk</th>
                 <th>Projected Market</th>
               </tr>
             </thead>
             <tbody>
-              {pendingClass.length ? pendingClass.map((player) => {
-                const school = save.schools.find((candidate) => candidate.id === player.collegeId);
-                const playerTeam = teamById(save, player.teamId);
+              {visiblePendingRows.length ? visiblePendingRows.map((row) => {
+                const { player } = row;
                 return (
                   <tr key={player.id} className="roster-table-row" onClick={() => setActivePlayerId(player.id)} tabIndex={0}>
                     <td>
                       <div className="roster-table-player">
                         <span className="roster-table-player-main"><strong>{player.firstName} {player.lastName}</strong></span>
-                        <span className="roster-table-player-meta"><CollegeLogo school={school} size={22} /> <span>{school?.name ?? "Unknown College"}</span></span>
+                        <span className="roster-table-player-meta"><CollegeLogo school={row.school} size={22} /> <span>{row.school?.name ?? "Unknown College"}</span></span>
                       </div>
                     </td>
-                    <td>{playerTeam.abbreviation}</td>
+                    <td>{row.teamLabel}</td>
                     <td>{player.position}</td>
                     <td>{player.age}</td>
                     <td><strong>{player.overall}</strong></td>
                     <td><strong>{player.potential}</strong></td>
                     <td>${player.salary.toFixed(1)}M</td>
-                    <td><strong>${expectedFreeAgentAsk(player).toFixed(1)}M</strong></td>
-                    <td>{player.contract?.rights?.toUpperCase() ?? "UFA"}</td>
-                    <td>{player.overall >= 58 ? "Possible CFA" : "-"}</td>
-                    <td>{expectedFreeAgentAsk(player) >= 10 ? "Premium" : expectedFreeAgentAsk(player) >= 4 ? "Starter market" : "Depth market"}</td>
+                    <td><strong>${row.ask.toFixed(1)}M</strong></td>
+                    <td>{row.statusLabel}</td>
+                    <td>{row.compLabel}</td>
+                    <td>{row.projectedMarketLabel}</td>
                   </tr>
                 );
               }) : <tr><td colSpan={11}>No projected expiring free agents match the current filters.</td></tr>}
             </tbody>
           </DataTable>
+          <ShowMoreRows visible={visiblePendingRows.length} total={pendingRows.length} onShowMore={() => setVisibleRows((current) => current + FREE_AGENT_PAGE_SIZE)} />
         </section>
       ) : null}
 
@@ -7837,6 +8956,161 @@ function ScoutingRecapSection({
   );
 }
 
+type ScoutingDeskTab = "board" | "assignments" | "recap" | "reports";
+type ScoutingModalPayload =
+  | { type: "prospect"; prospect: Prospect }
+  | { type: "assignment"; assignment: ScoutingAssignment }
+  | { type: "recap"; entry: ScoutingRecapEntry; direction: "riser" | "faller" }
+  | null;
+
+const scoutingDeskTabs: Array<{ id: ScoutingDeskTab; label: string }> = [
+  { id: "board", label: "Board" },
+  { id: "assignments", label: "Assignments" },
+  { id: "recap", label: "Recap" },
+  { id: "reports", label: "Reports" }
+];
+
+function ScoutingModal({
+  payload,
+  save,
+  close,
+  quickFocus,
+  updateBoard
+}: {
+  payload: ScoutingModalPayload;
+  save: GameSave;
+  close: () => void;
+  quickFocus: (prospectId: string) => void;
+  updateBoard: (prospectId: string, updates: Parameters<typeof updateProspectBoard>[2]) => void;
+}) {
+  if (!payload) return null;
+  const schools = new Map(save.schools.map((school) => [school.id, school]));
+  const title = payload.type === "prospect"
+    ? `${payload.prospect.firstName} ${payload.prospect.lastName}`
+    : payload.type === "assignment"
+      ? "Assignment Detail"
+      : `${payload.direction === "riser" ? "Riser" : "Faller"} Detail`;
+
+  return (
+    <div className="modal-backdrop roster-modal-backdrop" role="presentation" onMouseDown={close}>
+      <article className="roster-modal scouting-detail-modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="roster-modal-header">
+          <div>
+            <p className="eyebrow">Scouting</p>
+            <h3>{title}</h3>
+          </div>
+          <button onClick={close}>Close</button>
+        </div>
+        {payload.type === "prospect" ? (
+          <div className="scouting-modal-stack">
+            <div className="scouting-modal-identity">
+              <SchoolCell school={schools.get(payload.prospect.schoolId)} />
+              <div className="detail-chip-row">
+                <span>{payload.prospect.position}</span>
+                <span>Team <strong>#{payload.prospect.teamRank}</strong></span>
+                <span>NFL <strong>#{payload.prospect.consensusRank}</strong></span>
+                <span>Progress <strong>{payload.prospect.scouted.progress ?? payload.prospect.scouted.confidence}%</strong></span>
+              </div>
+            </div>
+            <section className="scouting-modal-section">
+              <h4>Board Read</h4>
+              <p>{payload.prospect.scoutReports?.[0] ?? payload.prospect.scouted.note}</p>
+              <div className="detail-chip-row">
+                <span>OVR <strong>{payload.prospect.scouted.low}-{payload.prospect.scouted.high}</strong></span>
+                <span>POT <strong>{payload.prospect.scouted.potentialLow}-{payload.prospect.scouted.potentialHigh}</strong></span>
+                <span>Value <strong>{payload.prospect.valuePickLabel} {payload.prospect.valuePickScore}</strong></span>
+                <span>Projection <strong>R{payload.prospect.projectedRound}</strong></span>
+              </div>
+            </section>
+            <section className="scouting-modal-section">
+              <h4>Concerns</h4>
+              <div className="concern-mini-stack modal-concern-stack">
+                <ConcernRangePill concernType="medical" label="Medical" range={payload.prospect.scouted.concerns.medical} />
+                <ConcernRangePill concernType="character" label="Character" range={payload.prospect.scouted.concerns.character} />
+                <ConcernRangePill concernType="workEthic" label="Work" range={payload.prospect.scouted.concerns.workEthic} />
+              </div>
+            </section>
+            <ProspectRatingBreakdown prospect={payload.prospect} />
+            <div className="roster-modal-actions">
+              <button onClick={() => updateBoard(payload.prospect.id, { favorite: !payload.prospect.favorite })}>{payload.prospect.favorite ? "Unstar" : "Star"}</button>
+              <button onClick={() => updateBoard(payload.prospect.id, { hidden: !payload.prospect.hidden })}>{payload.prospect.hidden ? "Show" : "Hide"}</button>
+              <button onClick={() => { quickFocus(payload.prospect.id); close(); }}>Quick Focus</button>
+            </div>
+          </div>
+        ) : null}
+        {payload.type === "assignment" ? (() => {
+          const scout = save.staff.find((member) => member.id === payload.assignment.scoutId);
+          const focusOptions = scoutingFocusOptions(save, payload.assignment, scout);
+          const preview = scoutingAssignmentPreview(save, payload.assignment);
+          return (
+            <div className="scouting-modal-stack">
+              <section className="scouting-modal-section">
+                <h4>{scout ? `${scout.firstName} ${scout.lastName}` : "Scout"}</h4>
+                <p>{preview.recommendation}</p>
+                <div className="detail-chip-row">
+                  <span>Type <strong>{assignmentTypeLabel(payload.assignment.type)}</strong></span>
+                  <span>Focus <strong>{focusOptions.find((option) => option.value === payload.assignment.focusId)?.label ?? payload.assignment.focusId}</strong></span>
+                  <span>Fit <strong>{preview.fit}</strong></span>
+                  <span>Targets <strong>{preview.count}</strong></span>
+                  <span>Gain <strong>{preview.minGain}-{preview.maxGain}%</strong></span>
+                </div>
+              </section>
+              {preview.warnings.length ? (
+                <div className="warning-chip-row">{preview.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>
+              ) : null}
+              <section className="scouting-modal-section">
+                <h4>Fit Ratings</h4>
+                <div className="rating-chip-row">
+                  {preview.ratingChips.map((chip) => (
+                    <span className={`rating-chip chip-${fitTone(chip.value)}`} key={`${chip.label}-${chip.value}`}>{chip.label} <strong>{chip.value}</strong></span>
+                  ))}
+                </div>
+              </section>
+              <section className="scouting-modal-section">
+                <h4>Likely Targets</h4>
+                <div className="target-preview-list modal-target-list">
+                  {preview.targets.map((target) => (
+                    <div key={target.id}>
+                      <span>#{target.teamRank} {target.position} {target.name}<small>{target.schoolName} | {target.progress}% | NFL #{target.consensusRank}</small></span>
+                      <em className={`progress-delta delta-${progressTone(target.gainRange[1])}`}>+{target.gainRange[0]}-{target.gainRange[1]}%</em>
+                    </div>
+                  ))}
+                  {!preview.targets.length ? <p>No likely targets for this focus.</p> : null}
+                </div>
+              </section>
+            </div>
+          );
+        })() : null}
+        {payload.type === "recap" ? (
+          <div className="scouting-modal-stack">
+            <section className="scouting-modal-section">
+              <h4>{schools.get(payload.entry.schoolId)?.name ?? "Unknown School"}</h4>
+              <p>{payload.entry.note}</p>
+              <div className="detail-chip-row">
+                <span>Team <strong>#{payload.entry.teamRankBefore} to #{payload.entry.teamRankAfter}</strong></span>
+                <span>NFL <strong>#{payload.entry.consensusRank}</strong></span>
+                <span>Progress <strong>{payload.entry.progressBefore}% to {payload.entry.progressAfter}%</strong></span>
+                <span>Impact <strong>{scoutingRecapImpact(payload.entry, payload.direction)}</strong></span>
+              </div>
+            </section>
+            <section className="scouting-modal-section">
+              <h4>Before / After</h4>
+              <div className="recap-detail-grid">
+                <span>OVR <strong>{scoutingRangeText(payload.entry.overallBefore)}{" -> "}{scoutingRangeText(payload.entry.overallAfter)}</strong></span>
+                <span>POT <strong>{scoutingRangeText(payload.entry.potentialBefore)}{" -> "}{scoutingRangeText(payload.entry.potentialAfter)}</strong></span>
+                <span>Value <strong>{payload.entry.valuePickLabelBefore} {payload.entry.valuePickScoreBefore}{" -> "}{payload.entry.valuePickLabelAfter} {payload.entry.valuePickScoreAfter}</strong></span>
+                {(["medical", "character", "workEthic"] as const).map((key) => (
+                  <span key={key}>{concernShortLabel(key)} <strong>{scoutingRangeText(payload.entry.concernsBefore[key])}{" -> "}{scoutingRangeText(payload.entry.concernsAfter[key])}</strong></span>
+                ))}
+              </div>
+            </section>
+          </div>
+        ) : null}
+      </article>
+    </div>
+  );
+}
+
 function ScoutingView({
   save,
   updateAssignment,
@@ -7852,308 +9126,270 @@ function ScoutingView({
   quickFocus: (prospectId: string) => void;
   updateBoard: (prospectId: string, updates: Parameters<typeof updateProspectBoard>[2]) => void;
 }) {
+  const [activeScoutingTab, setActiveScoutingTab] = useState<ScoutingDeskTab>("board");
   const [query, setQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState<Position | "all">("all");
   const [regionFilter, setRegionFilter] = useState<ScoutingRegion | "all">("all");
   const [sortMode, setSortMode] = useState<ProspectBoardLens>("balanced");
   const [showHidden, setShowHidden] = useState(false);
-  const [expandedProspectId, setExpandedProspectId] = useState<string | undefined>();
-  const [expandedAssignments, setExpandedAssignments] = useState<Set<string>>(new Set());
   const [expandedRecapIds, setExpandedRecapIds] = useState<Set<string>>(new Set());
   const [selectedRecapWeek, setSelectedRecapWeek] = useState<number | "latest">("latest");
-  const schools = new Map(save.schools.map((school) => [school.id, school]));
+  const [visibleBoardRows, setVisibleBoardRows] = useState(120);
+  const [modalPayload, setModalPayload] = useState<ScoutingModalPayload>(null);
+  const schools = useMemo(() => new Map(save.schools.map((school) => [school.id, school])), [save.schools]);
   const plan = ensureScoutingPlan(save);
-  const recaps = [...(plan.recaps ?? [])].sort((a, b) => b.week - a.week);
+  const recaps = useMemo(() => [...(plan.recaps ?? [])].sort((a, b) => b.week - a.week), [plan.recaps]);
   const selectedWeek = selectedRecapWeek === "latest" ? recaps[0]?.week : selectedRecapWeek;
   const selectedRecap = recaps.find((recap) => recap.week === selectedWeek) ?? recaps[0];
-  const assignmentGroups = assignmentTypes
-    .map((type) => ({
-      type,
-      assignments: plan.assignments.filter((assignment) => assignment.type === type)
-    }))
-    .filter((group) => group.assignments.length);
-  const visibleProspects = save.prospects
-    .filter((prospect) => showHidden || !prospect.hidden)
-    .filter((prospect) => matchesPositionLens(prospect, positionFilter))
-    .filter((prospect) => regionFilter === "all" || prospect.region === regionFilter)
-    .filter((prospect) => {
-      const text = `${prospect.firstName} ${prospect.lastName} ${prospect.position} ${schools.get(prospect.schoolId)?.name ?? ""}`.toLowerCase();
-      return !query.trim() || text.includes(query.trim().toLowerCase());
-    })
-    .sort((a, b) => positionFilter === "all" ? compareProspectsForLens(a, b, sortMode) : compareProspectsForPositionLens(a, b, positionFilter, sortMode));
+  const visibleProspects = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return save.prospects
+      .filter((prospect) => showHidden || !prospect.hidden)
+      .filter((prospect) => matchesPositionLens(prospect, positionFilter))
+      .filter((prospect) => regionFilter === "all" || prospect.region === regionFilter)
+      .filter((prospect) => {
+        const text = `${prospect.firstName} ${prospect.lastName} ${prospect.position} ${schools.get(prospect.schoolId)?.name ?? ""}`.toLowerCase();
+        return !normalizedQuery || text.includes(normalizedQuery);
+      })
+      .sort((a, b) => positionFilter === "all" ? compareProspectsForLens(a, b, sortMode) : compareProspectsForPositionLens(a, b, positionFilter, sortMode));
+  }, [positionFilter, query, regionFilter, save.prospects, schools, showHidden, sortMode]);
+  const shownProspects = visibleProspects.slice(0, visibleBoardRows);
+  const hiddenCount = save.prospects.filter((prospect) => prospect.hidden).length;
+  const reportRows = [...(plan.reports ?? [])].slice().sort((a, b) => b.week - a.week).slice(0, 80);
+
+  useEffect(() => {
+    setVisibleBoardRows(120);
+  }, [activeScoutingTab, positionFilter, query, regionFilter, showHidden, sortMode]);
+
+  const tabBadges: Record<ScoutingDeskTab, number | undefined> = {
+    board: visibleProspects.length,
+    assignments: plan.assignments.length,
+    recap: selectedRecap ? selectedRecap.risers.length + selectedRecap.fallers.length : undefined,
+    reports: reportRows.length || undefined
+  };
   const toggleRecapExpanded = (id: string) => setExpandedRecapIds((current) => toggleSetValue(current, id));
+
   return (
-    <section className="view-stack">
+    <section className="view-stack scouting-desk">
       <MetricStrip save={save} />
-      <article className="table-card scouting-recap-card scouting-recap-workspace">
-        <div className="section-heading compact recap-heading">
+      <article className="table-card scouting-desk-shell">
+        <div className="scouting-desk-header">
           <div>
-            <p className="eyebrow">Weekly Results</p>
-            <h3>Scouting Recap</h3>
+            <p className="eyebrow">Scouting Desk</p>
+            <h3>Draft Intelligence</h3>
           </div>
-          <div className="recap-week-controls">
-            <span>{selectedRecap ? `${selectedRecap.risers.length} risers | ${selectedRecap.fallers.length} fallers` : "No recap yet"}</span>
-            <select
-              aria-label="Scouting recap week"
-              disabled={!recaps.length}
-              value={selectedRecap?.week ?? ""}
-              onChange={(event) => setSelectedRecapWeek(Number(event.target.value))}
-            >
-              {recaps.map((recap) => (
-                <option key={recap.id} value={recap.week}>Week {recap.week}</option>
-              ))}
-            </select>
+          <div className="scouting-desk-summary">
+            <span>{visibleProspects.length} prospects</span>
+            <span>{plan.assignments.length} assignments</span>
+            <span>{hiddenCount} hidden</span>
           </div>
         </div>
-        {selectedRecap ? (
-          <div className="scouting-recap-grid">
-            <ScoutingRecapSection
-              direction="riser"
-              entries={selectedRecap.risers}
-              expandedIds={expandedRecapIds}
-              schools={schools}
-              title="Risers"
-              toggleExpanded={toggleRecapExpanded}
-            />
-            <ScoutingRecapSection
-              direction="faller"
-              entries={selectedRecap.fallers}
-              expandedIds={expandedRecapIds}
-              schools={schools}
-              title="Fallers"
-              toggleExpanded={toggleRecapExpanded}
-            />
-          </div>
-        ) : (
-          <p className="recap-empty">Advance a week to generate scouting recap movement.</p>
-        )}
+        <div className="segmented-tabs compact-tabs scouting-desk-tabs" role="tablist" aria-label="Scouting sections">
+          {scoutingDeskTabs.map((tab) => (
+            <button key={tab.id} className={activeScoutingTab === tab.id ? "selected" : ""} onClick={() => setActiveScoutingTab(tab.id)} type="button">
+              {tab.label}{tabBadges[tab.id] !== undefined ? <span>{tabBadges[tab.id]}</span> : null}
+            </button>
+          ))}
+        </div>
       </article>
-      <section className="scout-command scouting-war-room">
-        <article className="table-card scouting-planner-card">
-          <div className="section-heading compact planner-heading">
+
+      {activeScoutingTab === "board" ? (
+        <section className="table-card scouting-board-panel">
+          <div className="scouting-toolbar">
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" />
+            <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
+              <option value="all">All Positions</option>
+              {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
+            </select>
+            <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value as ScoutingRegion | "all")}>
+              <option value="all">All Regions</option>
+              {scoutingRegions.map((region) => <option key={region} value={region}>{region}</option>)}
+            </select>
+            <select value={sortMode} onChange={(event) => setSortMode(event.target.value as ProspectBoardLens)}>
+              <option value="balanced">Balanced</option>
+              <option value="upside">Upside</option>
+              <option value="floor">Floor</option>
+              <option value="consensus">Consensus Rank</option>
+              <option value="value">Value Picks</option>
+              <option value="progress">Progress</option>
+              <option value="position">Position</option>
+              <option value="team">Team Rank</option>
+            </select>
+            <label className="inline-toggle scouting-hidden-toggle">
+              <input type="checkbox" checked={showHidden} onChange={(event) => setShowHidden(event.target.checked)} />
+              Hidden
+            </label>
+          </div>
+          <div className="scouting-board-count"><span>Showing {Math.min(shownProspects.length, visibleProspects.length)} of {visibleProspects.length}</span></div>
+          <DataTable>
+            <thead>
+              <tr>
+                <th>Prospect</th>
+                <th>Pos</th>
+                <th>School</th>
+                <th>Team</th>
+                <th>NFL</th>
+                <th>Value</th>
+                <th>Progress</th>
+                <th>OVR</th>
+                <th>POT</th>
+                <th>Concerns</th>
+                <th>Prod</th>
+                <th>Stock</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shownProspects.map((prospect) => {
+                const school = schools.get(prospect.schoolId);
+                return (
+                  <tr className={prospect.hidden ? "muted-row scouting-board-row" : prospect.favorite ? "favorite-row scouting-board-row" : "scouting-board-row"} key={prospect.id}>
+                    <td>
+                      <button className="scouting-prospect-link" onClick={() => setModalPayload({ type: "prospect", prospect })} type="button">
+                        <strong>{prospect.firstName} {prospect.lastName}</strong>
+                        <small className="prospect-context">{school?.conference} | {prospect.region}</small>
+                      </button>
+                    </td>
+                    <td>{prospect.position}</td>
+                    <td><SchoolCell school={school} /></td>
+                    <td>#{prospect.teamRank}</td>
+                    <td>#{prospect.consensusRank}</td>
+                    <td><ValueBadge prospect={prospect} /></td>
+                    <td><ScoutingProgressBar value={prospect.scouted.progress ?? prospect.scouted.confidence} /></td>
+                    <td>{prospect.scouted.low}-{prospect.scouted.high}</td>
+                    <td>{prospect.scouted.potentialLow}-{prospect.scouted.potentialHigh}</td>
+                    <td>
+                      <div className="concern-mini-stack scouting-concerns-compact">
+                        <ConcernRangePill concernType="medical" label="Med" range={prospect.scouted.concerns.medical} />
+                        <ConcernRangePill concernType="character" label="Char" range={prospect.scouted.concerns.character} />
+                        <ConcernRangePill concernType="workEthic" label="Work" range={prospect.scouted.concerns.workEthic} />
+                      </div>
+                    </td>
+                    <td>{prospect.production}</td>
+                    <td>{prospect.stock > 0 ? `+${prospect.stock}` : prospect.stock}</td>
+                    <td>
+                      <div className="scouting-row-actions">
+                        <button onClick={() => updateBoard(prospect.id, { favorite: !prospect.favorite })}>{prospect.favorite ? "Unstar" : "Star"}</button>
+                        <button onClick={() => updateBoard(prospect.id, { hidden: !prospect.hidden })}>{prospect.hidden ? "Show" : "Hide"}</button>
+                        <button onClick={() => quickFocus(prospect.id)}>Focus</button>
+                        <button onClick={() => setModalPayload({ type: "prospect", prospect })}>Details</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!shownProspects.length ? (
+                <tr><td colSpan={13}>No prospects match these filters.</td></tr>
+              ) : null}
+            </tbody>
+          </DataTable>
+          {visibleProspects.length > shownProspects.length ? (
+            <div className="scouting-show-more"><button onClick={() => setVisibleBoardRows((count) => count + 120)}>Show More</button></div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {activeScoutingTab === "assignments" ? (
+        <section className="table-card scouting-assignment-panel">
+          <div className="section-heading compact planner-heading scouting-panel-heading">
             <div>
               <p className="eyebrow">Assignments</p>
               <h3>Weekly Scouting Plan</h3>
             </div>
             <button className="primary-action" onClick={optimizeScoutingPlan}>Optimize All</button>
           </div>
-          <div className="assignment-card-groups">
-            {assignmentGroups.map((group) => (
-              <div className="assignment-card-group" key={group.type}>
-                <div className="assignment-group-title">
-                  <strong>{assignmentTypeLabel(group.type)}</strong>
-                  <span>{group.assignments.length} scout{group.assignments.length === 1 ? "" : "s"}</span>
+          <div className="scouting-assignment-list">
+            {plan.assignments.map((assignment) => {
+              const scout = save.staff.find((member) => member.id === assignment.scoutId);
+              const focusOptions = scoutingFocusOptions(save, assignment, scout);
+              const preview = scoutingAssignmentPreview(save, assignment);
+              return (
+                <div className={`scout-assignment-row card-fit-${fitTone(preview.fit)} ${assignment.locked ? "is-locked" : ""}`} key={assignment.id}>
+                  <div className="scout-assignment-main">
+                    <strong>{scout ? `${scout.firstName[0]}. ${scout.lastName}` : "Scout"}</strong>
+                    {scout ? <small>{scoutSpecialtyTags(scout).slice(0, 3).join(" | ")}</small> : null}
+                  </div>
+                  <label>
+                    <span>Type</span>
+                    <select value={assignment.type} onChange={(event) => updateAssignment(assignment.id, { type: event.target.value as ScoutingAssignmentType })}>
+                      {assignmentTypes.map((type) => <option key={type} value={type}>{assignmentTypeLabel(type)}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Focus</span>
+                    <select value={assignment.focusId} onChange={(event) => updateAssignment(assignment.id, { focusId: event.target.value })}>
+                      {focusOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}{option.disabled ? " - assigned" : ""}</option>)}
+                    </select>
+                  </label>
+                  <div className="scouting-assignment-metrics">
+                    <span>Targets <strong>{preview.count}</strong></span>
+                    <span>Gain <strong>{preview.minGain}-{preview.maxGain}%</strong></span>
+                    <span className={`fit-${fitTone(preview.fit)}`}>Fit <strong>{preview.fit}</strong></span>
+                  </div>
+                  <div className="scouting-assignment-actions">
+                    <button className={assignment.locked ? "lock-button active" : "lock-button"} onClick={() => toggleAssignmentLock(assignment.id, !assignment.locked)}>{assignment.locked ? "Locked" : "Lock"}</button>
+                    <button onClick={() => setModalPayload({ type: "assignment", assignment })}>Details</button>
+                  </div>
+                  {preview.warnings.length ? <div className="warning-chip-row">{preview.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div> : null}
                 </div>
-                <div className="assignment-card-grid">
-                  {group.assignments.map((assignment) => {
-                    const scout = save.staff.find((member) => member.id === assignment.scoutId);
-                    const focusOptions = scoutingFocusOptions(save, assignment, scout);
-                    const preview = scoutingAssignmentPreview(save, assignment);
-                    const expanded = expandedAssignments.has(assignment.id);
-                    return (
-                      <div className={`scout-assignment-card card-fit-${fitTone(preview.fit)} ${assignment.locked ? "is-locked" : ""}`} key={assignment.id}>
-                        <div className="scout-card-head">
-                          <div>
-                            <strong>{scout ? `${scout.firstName[0]}. ${scout.lastName}` : "Scout"}</strong>
-                            {scout ? (
-                              <div className="scout-chip-row">
-                                {scoutSpecialtyTags(scout).slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}
-                              </div>
-                            ) : null}
-                          </div>
-                          <button
-                            className={assignment.locked ? "lock-button active" : "lock-button"}
-                            onClick={() => toggleAssignmentLock(assignment.id, !assignment.locked)}
-                          >
-                            {assignment.locked ? "Locked" : "Lock"}
-                          </button>
-                        </div>
-                        {preview.warnings.length ? (
-                          <div className="warning-chip-row">
-                            {preview.warnings.map((warning) => <span key={warning}>{warning}</span>)}
-                          </div>
-                        ) : null}
-                        <div className="assignment-controls">
-                          <label>
-                            Type
-                            <select value={assignment.type} onChange={(event) => updateAssignment(assignment.id, { type: event.target.value as ScoutingAssignmentType })}>
-                              {assignmentTypes.map((type) => <option key={type} value={type}>{assignmentTypeLabel(type)}</option>)}
-                            </select>
-                          </label>
-                          <label>
-                            Focus
-                            <select value={assignment.focusId} onChange={(event) => updateAssignment(assignment.id, { focusId: event.target.value })}>
-                              {focusOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}{option.disabled ? " - assigned" : ""}</option>)}
-                            </select>
-                          </label>
-                        </div>
-                        <div className="assignment-impact-grid">
-                          <span>
-                            Targets
-                            <strong>{preview.count}</strong>
-                          </span>
-                          <span>
-                            Gain
-                            <strong>{preview.minGain}-{preview.maxGain}%</strong>
-                          </span>
-                          <span className={`impact-fit fit-${fitTone(preview.fit)}`}>
-                            Fit
-                            <strong>{preview.fit}</strong>
-                          </span>
-                        </div>
-                        <div className="rating-chip-row">
-                          {preview.ratingChips.map((chip) => (
-                            <span className={`rating-chip chip-${fitTone(chip.value)}`} key={`${chip.label}-${chip.value}`}>
-                              {chip.label} <strong>{chip.value}</strong>
-                            </span>
-                          ))}
-                        </div>
-                        <div className="target-preview-list">
-                          {preview.targets.map((target) => (
-                            <div key={target.id}>
-                              <span>
-                                #{target.teamRank} {target.position} {target.name}
-                                <small>{target.schoolName} | {target.progress}%</small>
-                              </span>
-                              <em className={`progress-delta delta-${progressTone(target.gainRange[1])}`}>+{target.gainRange[0]}-{target.gainRange[1]}%</em>
-                            </div>
-                          ))}
-                          {!preview.targets.length ? <p>No likely targets for this focus.</p> : null}
-                        </div>
-                        <button className="text-button" onClick={() => setExpandedAssignments((current) => toggleSetValue(current, assignment.id))}>
-                          {expanded ? "Hide Detail" : "More Detail"}
-                        </button>
-                        {expanded ? (
-                          <div className="assignment-expanded">
-                            <p>{preview.recommendation}</p>
-                            <div className="detail-chip-row">
-                              <span>Type <strong>{assignmentTypeLabel(assignment.type)}</strong></span>
-                              <span>Focus <strong>{focusOptions.find((option) => option.value === assignment.focusId)?.label ?? assignment.focusId}</strong></span>
-                              <span>Scout OVR <strong>{scout ? staffOverall(scout) : 55}</strong></span>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+        </section>
+      ) : null}
+
+      {activeScoutingTab === "recap" ? (
+        <article className="table-card scouting-recap-card scouting-recap-workspace">
+          <div className="section-heading compact recap-heading scouting-panel-heading">
+            <div>
+              <p className="eyebrow">Weekly Results</p>
+              <h3>Scouting Recap</h3>
+            </div>
+            <div className="recap-week-controls">
+              <span>{selectedRecap ? `${selectedRecap.risers.length} risers | ${selectedRecap.fallers.length} fallers` : "No recap yet"}</span>
+              <select aria-label="Scouting recap week" disabled={!recaps.length} value={selectedRecap?.week ?? ""} onChange={(event) => setSelectedRecapWeek(Number(event.target.value))}>
+                {recaps.map((recap) => <option key={recap.id} value={recap.week}>Week {recap.week}</option>)}
+              </select>
+            </div>
+          </div>
+          {selectedRecap ? (
+            <div className="scouting-recap-grid">
+              <ScoutingRecapSection direction="riser" entries={selectedRecap.risers} expandedIds={expandedRecapIds} schools={schools} title="Risers" toggleExpanded={toggleRecapExpanded} />
+              <ScoutingRecapSection direction="faller" entries={selectedRecap.fallers} expandedIds={expandedRecapIds} schools={schools} title="Fallers" toggleExpanded={toggleRecapExpanded} />
+            </div>
+          ) : <p className="recap-empty">Advance a week to generate scouting recap movement.</p>}
         </article>
-      </section>
-      <div className="board-toolbar">
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search prospects" />
-        <select value={positionFilter} onChange={(event) => setPositionFilter(event.target.value as Position | "all")}>
-          <option value="all">All Positions</option>
-          {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
-        </select>
-        <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value as ScoutingRegion | "all")}>
-          <option value="all">All Regions</option>
-          {scoutingRegions.map((region) => <option key={region} value={region}>{region}</option>)}
-        </select>
-        <select value={sortMode} onChange={(event) => setSortMode(event.target.value as ProspectBoardLens)}>
-          <option value="balanced">Balanced</option>
-          <option value="upside">Upside</option>
-          <option value="floor">Floor</option>
-          <option value="consensus">Consensus Rank</option>
-          <option value="value">Value Picks</option>
-          <option value="progress">Progress</option>
-          <option value="position">Position</option>
-          <option value="team">Team Rank</option>
-        </select>
-        <label className="inline-toggle">
-          <input type="checkbox" checked={showHidden} onChange={(event) => setShowHidden(event.target.checked)} />
-          Hidden
-        </label>
-      </div>
-      <DataTable>
-        <thead>
-          <tr>
-            <th>Prospect</th>
-            <th>Pos</th>
-            <th>School</th>
-            <th>Team</th>
-            <th>NFL</th>
-            <th>Value</th>
-            <th>Progress</th>
-            <th>Grade</th>
-            <th>POT</th>
-            <th>Concerns</th>
-            <th>Prod</th>
-            <th>Stock</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {visibleProspects.map((prospect) => {
-            const school = schools.get(prospect.schoolId);
-            const expanded = expandedProspectId === prospect.id;
-            return (
-              <Fragment key={prospect.id}>
-                <tr className={prospect.hidden ? "muted-row" : prospect.favorite ? "favorite-row" : ""} onClick={() => setExpandedProspectId(expanded ? undefined : prospect.id)}>
-                  <td>
-                    <strong>{prospect.firstName} {prospect.lastName}</strong>
-                    <small className="prospect-context">{school?.conference} | {prospect.region}</small>
-                  </td>
-                  <td>{prospect.position}</td>
-                  <td><SchoolCell school={school} /></td>
-                  <td>#{prospect.teamRank}</td>
-                  <td>#{prospect.consensusRank}</td>
-                  <td><ValueBadge prospect={prospect} /></td>
-                  <td><ScoutingProgressBar value={prospect.scouted.progress ?? prospect.scouted.confidence} /></td>
-                  <td>{prospect.scouted.low}-{prospect.scouted.high}</td>
-                  <td>{prospect.scouted.potentialLow}-{prospect.scouted.potentialHigh}</td>
-                  <td>
-                    <div className="concern-mini-stack">
-                      <ConcernRangePill concernType="medical" label="Med" range={prospect.scouted.concerns.medical} />
-                      <ConcernRangePill concernType="character" label="Char" range={prospect.scouted.concerns.character} />
-                      <ConcernRangePill concernType="workEthic" label="Work" range={prospect.scouted.concerns.workEthic} />
-                    </div>
-                  </td>
-                  <td>{prospect.production}</td>
-                  <td>{prospect.stock > 0 ? `+${prospect.stock}` : prospect.stock}</td>
-                  <td>
-                    <div className="button-stack">
-                      <button onClick={(event) => { event.stopPropagation(); updateBoard(prospect.id, { favorite: !prospect.favorite }); }}>
-                        {prospect.favorite ? "Unstar" : "Star"}
-                      </button>
-                      <button onClick={(event) => { event.stopPropagation(); updateBoard(prospect.id, { hidden: !prospect.hidden }); }}>
-                        {prospect.hidden ? "Show" : "Hide"}
-                      </button>
-                      <button onClick={(event) => { event.stopPropagation(); quickFocus(prospect.id); }}>
-                        Quick Focus
-                      </button>
-                      <button onClick={(event) => { event.stopPropagation(); setExpandedProspectId(expanded ? undefined : prospect.id); }}>
-                        {expanded ? "Hide" : "Details"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                {expanded ? (
-                  <tr className="prospect-detail-row">
-                    <td colSpan={13}>
-                      <div className="prospect-detail-panel">
-                        <div>
-                          <h4>Board Read</h4>
-                          <p>{prospect.scoutReports?.[0] ?? prospect.scouted.note}</p>
-                          <div className="detail-chip-row">
-                            <span>Team Grade <strong>{prospect.teamGrade.toFixed(1)}</strong></span>
-                            <span>Consensus <strong>{prospect.consensusGrade.toFixed(1)}</strong></span>
-                            <span>Projection <strong>R{prospect.projectedRound}</strong></span>
-                            <span>Trend <strong>{prospect.productionTrend > 0 ? `+${prospect.productionTrend}` : prospect.productionTrend}</strong></span>
-                          </div>
-                        </div>
-                        <ProspectRatingBreakdown prospect={prospect} />
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </DataTable>
+      ) : null}
+
+      {activeScoutingTab === "reports" ? (
+        <section className="table-card scouting-reports-panel">
+          <div className="section-heading compact scouting-panel-heading">
+            <div>
+              <p className="eyebrow">Reports</p>
+              <h3>Recent Scouting Notes</h3>
+            </div>
+          </div>
+          <div className="scouting-report-list">
+            {reportRows.map((report) => {
+              const primaryProspectId = report.prospectIds[0];
+              const prospect = save.prospects.find((item) => item.id === primaryProspectId);
+              const school = prospect ? schools.get(prospect.schoolId) : undefined;
+              return (
+                <div className="scouting-report-row" key={report.id}>
+                  <div>
+                    <strong>{report.title}</strong>
+                    <small>Week {report.week} | {school?.name ?? report.region} | {report.prospectIds.length} target{report.prospectIds.length === 1 ? "" : "s"}</small>
+                  </div>
+                  <p>{report.body}</p>
+                </div>
+              );
+            })}
+            {!reportRows.length ? <p className="scouting-empty-state">No scouting reports yet. Advance a week after assigning scouts to generate reports.</p> : null}
+          </div>
+        </section>
+      ) : null}
+
+      <ScoutingModal payload={modalPayload} save={save} close={() => setModalPayload(null)} quickFocus={quickFocus} updateBoard={updateBoard} />
     </section>
   );
 }
@@ -9268,6 +10504,7 @@ function CompPicksView({ save }: { save: GameSave }) {
 }
 
 type DraftRoomTab = "board" | "order" | "trades" | "results";
+type DraftProspectModalTab = "overview" | "scouting" | "ratings";
 
 function formatClock(seconds: number): string {
   const safe = Math.max(0, seconds);
@@ -9392,7 +10629,9 @@ function DraftView({
   const [showDrafted, setShowDrafted] = useState(false);
   const [valueFilter, setValueFilter] = useState("all");
   const [roundFilter, setRoundFilter] = useState("all");
-  const [expandedProspectId, setExpandedProspectId] = useState<string>();
+  const [selectedProspectId, setSelectedProspectId] = useState<string>();
+  const [activeProspectModalTab, setActiveProspectModalTab] = useState<DraftProspectModalTab>("overview");
+  const [draftFiltersOpen, setDraftFiltersOpen] = useState(false);
   const [needsOpen, setNeedsOpen] = useState(false);
   const [tradePreview, setTradePreview] = useState<DraftTradeOffer>();
   const [tradePreviewError, setTradePreviewError] = useState<string>();
@@ -9500,6 +10739,22 @@ function DraftView({
   const suggestions = save.phase === "udfa" ? udfaTargetSuggestions(draftSave) : [];
   const inboundInterest = save.phase === "udfa" ? udfaInboundInterest(draftSave) : [];
   const showForcedResults = save.phase === "rookie-results" && Boolean(results);
+  const selectedProspect = selectedProspectId ? prospects.get(selectedProspectId) : undefined;
+  const selectedProspectSchool = selectedProspect ? schools.get(selectedProspect.schoolId) : undefined;
+  const selectedProspectDrafted = selectedProspect ? selectedProspectIds.has(selectedProspect.id) || udfaSignedIds.has(selectedProspect.id) : false;
+
+  useEffect(() => {
+    if (selectedProspectId) setActiveProspectModalTab("overview");
+  }, [selectedProspectId]);
+  const activeDraftFilterCount = [
+    regionFilter !== "all",
+    conferenceFilter !== "all",
+    valueFilter !== "all",
+    roundFilter !== "all",
+    favoritesOnly,
+    showHidden,
+    showDrafted
+  ].filter(Boolean).length;
 
   function openTradePreview(pickId: string) {
     const offer = buildTradeOfferForPick(draftSave, pickId);
@@ -9537,63 +10792,61 @@ function DraftView({
     setUdfaOfferProspectId(undefined);
   }
 
+  function clearDraftFilters() {
+    setRegionFilter("all");
+    setConferenceFilter("all");
+    setValueFilter("all");
+    setRoundFilter("all");
+    setFavoritesOnly(false);
+    setShowHidden(false);
+    setShowDrafted(false);
+  }
+
   return (
     <section className="draft-workspace">
       <article className="draft-command-bar">
-        <div className="draft-command-title">
-          <p className="eyebrow">{save.phase}</p>
-          <h3>Draft Room</h3>
-          <small>
-            {save.phase === "regular"
-              ? "Board is available. Draft actions unlock after the season."
-              : save.phase === "draft-prep"
-                ? "Draft room is ready to open."
-                : save.phase === "udfa"
-                  ? `UDFA wave ${draftSave.udfaState?.wave ?? 1} of ${draftSave.udfaState?.totalWaves ?? 3}. Offer the undrafted board before the class reveal.`
-                  : save.phase === "rookie-results"
-                    ? "Rookie class results are revealed. Review the class before onboarding."
-                : save.phase === "rookie-onboarding"
-                  ? "Draft complete. Rookie onboarding is ready."
-                  : save.phase === "offseason-complete"
-                    ? "Rookie onboarding is complete."
-                    : "Phones are live. Manage the clock, offers, and board."}
-          </small>
-        </div>
-        {currentPick && save.phase === "draft" ? (
-          <div className="draft-clock-compact">
-            <span>On Clock</span>
-            <strong>#{currentPick.overallPick} {currentTeam?.abbreviation}</strong>
-            <em>{isUserPick ? "Your pick" : "CPU"} | {formatClock(draftSave.draftState.clockSeconds)}</em>
-            <div className="clock-bar"><i style={{ width: `${clockPct}%` }} /></div>
-          </div>
-        ) : null}
-        <div className="draft-command-actions">
-          {save.phase === "draft-prep" ? <button onClick={openDraftRoom}>Open Draft</button> : null}
-          {save.phase === "udfa" ? (
-            <>
-              <button type="button" onClick={nextUdfaWave} disabled={Boolean(draftSave.udfaState?.completed)}>Next UDFA Wave</button>
-              <button type="button" onClick={simUdfaWaves} disabled={Boolean(draftSave.udfaState?.completed)}>Sim Waves</button>
-              <button type="button" onClick={revealRookieResults}>Finalize Class</button>
-            </>
-          ) : null}
-          {save.phase === "rookie-results" ? <button onClick={openRookieOnboarding}>Begin Rookie Onboarding</button> : null}
-          {save.phase === "rookie-onboarding" ? <button onClick={onboardRookies}>Run Rookie Onboarding</button> : null}
-          {save.phase === "offseason-complete" ? <button onClick={beginNextSeason}>Start Next Season</button> : null}
-          {save.phase === "draft" ? (
-            <>
-            <button onClick={nextDraftEvent}>Next Event</button>
-            <button onClick={simToUserPick}>Sim To My Pick</button>
-            <button onClick={simRound}>Sim Round</button>
-            <button onClick={simDraft}>Sim Rest</button>
-            <div className="speed-row compact">
-              {([1, 3, 10] as const).map((speed) => (
-                <button key={speed} className={draftSave.draftState.simSpeed === speed ? "active-mini" : ""} onClick={() => setSpeed(speed)}>
-                  {speed}x
-                </button>
-              ))}
+        <div className="draft-command-main">
+          {currentPick && save.phase === "draft" ? (
+            <div className="draft-clock-compact">
+              <span>On Clock</span>
+              <strong>#{currentPick.overallPick} {currentTeam?.abbreviation}</strong>
+              <em>{isUserPick ? "Your pick" : "CPU"} | {formatClock(draftSave.draftState.clockSeconds)}</em>
+              <div className="clock-bar"><i style={{ width: `${clockPct}%` }} /></div>
             </div>
-            </>
           ) : null}
+          <div className="draft-command-actions">
+            <div className="draft-action-group">
+              {save.phase === "draft-prep" ? <button onClick={openDraftRoom}>Open Draft</button> : null}
+              {save.phase === "udfa" ? (
+                <>
+                  <button type="button" onClick={nextUdfaWave} disabled={Boolean(draftSave.udfaState?.completed)}>Next UDFA Wave</button>
+                  <button type="button" onClick={simUdfaWaves} disabled={Boolean(draftSave.udfaState?.completed)}>Sim Waves</button>
+                  <button type="button" onClick={revealRookieResults}>Finalize Class</button>
+                </>
+              ) : null}
+              {save.phase === "rookie-results" ? <button onClick={openRookieOnboarding}>Begin Rookie Onboarding</button> : null}
+              {save.phase === "rookie-onboarding" ? <button onClick={onboardRookies}>Run Rookie Onboarding</button> : null}
+              {save.phase === "offseason-complete" ? <button onClick={beginNextSeason}>Start Next Season</button> : null}
+              {save.phase === "draft" ? (
+                <>
+                  <button onClick={nextDraftEvent}>Next Event</button>
+                  <button onClick={simToUserPick}>Sim To My Pick</button>
+                  <button onClick={simRound}>Sim Round</button>
+                  <button onClick={simDraft}>Sim Rest</button>
+                </>
+              ) : null}
+            </div>
+            {save.phase === "draft" ? (
+              <div className="speed-row compact draft-speed-control" aria-label="Draft speed">
+                <span>Speed</span>
+                {([1, 3, 10] as const).map((speed) => (
+                  <button key={speed} className={draftSave.draftState.simSpeed === speed ? "active-mini" : ""} onClick={() => setSpeed(speed)}>
+                    {speed}x
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className="draft-tabs draft-tabs-compact">
           {([
@@ -9685,14 +10938,6 @@ function DraftView({
                 <option value="all">All Positions</option>
                 {POSITIONS.map((position) => <option key={position} value={position}>{position}</option>)}
               </select>
-              <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value as ScoutingRegion | "all")}>
-                <option value="all">All Regions</option>
-                {scoutingRegions.map((region) => <option key={region} value={region}>{region}</option>)}
-              </select>
-              <select value={conferenceFilter} onChange={(event) => setConferenceFilter(event.target.value)}>
-                <option value="all">All Conferences</option>
-                {conferences.map((conference) => <option key={conference} value={conference}>{conference}</option>)}
-              </select>
               <select value={sortMode} onChange={(event) => setSortMode(event.target.value as ProspectBoardLens)}>
                 <option value="team">Team Rank</option>
                 <option value="balanced">Balanced</option>
@@ -9703,18 +10948,10 @@ function DraftView({
                 <option value="progress">Progress</option>
                 <option value="position">Position</option>
               </select>
-              <select value={valueFilter} onChange={(event) => setValueFilter(event.target.value)}>
-                <option value="all">All Values</option>
-                <option value="15">Value+</option>
-                <option value="40">Major Steals</option>
-              </select>
-              <select value={roundFilter} onChange={(event) => setRoundFilter(event.target.value)}>
-                <option value="all">All Rounds</option>
-                {[1, 2, 3, 4, 5, 6, 7].map((round) => <option key={round} value={round}>Round {round}</option>)}
-              </select>
-              <button type="button" className={favoritesOnly ? "active-mini" : ""} onClick={() => setFavoritesOnly((value) => !value)}>Favorites</button>
-              <button type="button" className={showHidden ? "active-mini" : ""} onClick={() => setShowHidden((value) => !value)}>Hidden</button>
-              <button type="button" className={showDrafted ? "active-mini" : ""} onClick={() => setShowDrafted((value) => !value)}>Drafted</button>
+              <button type="button" className={activeDraftFilterCount ? "active-mini" : ""} onClick={() => setDraftFiltersOpen(true)}>
+                Filters{activeDraftFilterCount ? ` ${activeDraftFilterCount}` : ""}
+              </button>
+              <span className="draft-board-count">{board.length} prospects</span>
             </div>
             <div className="draft-board-header">
               <span>Team</span>
@@ -9724,27 +10961,29 @@ function DraftView({
               <span>College</span>
               <span>OVR</span>
               <span>POT</span>
-              <span>Value</span>
               <span></span>
             </div>
             {board.map((prospect, index) => {
               const drafted = selectedProspectIds.has(prospect.id);
               const school = schools.get(prospect.schoolId);
-              const expanded = expandedProspectId === prospect.id;
               return (
                 <Fragment key={prospect.id}>
                   <div
                     className={`board-row draft-prospect-row ${drafted ? "muted-row" : ""} ${prospect.favorite ? "favorite-row" : ""} ${prospect.hidden ? "hidden-row" : ""}`}
-                    onClick={() => setExpandedProspectId(expanded ? undefined : prospect.id)}
+                    onClick={() => setSelectedProspectId(prospect.id)}
                   >
                     <strong className="draft-rank-cell">#{prospect.teamRank || index + 1}</strong>
                     <strong className="draft-rank-cell neutral">#{prospect.consensusRank}</strong>
-                    <span>{prospect.firstName} {prospect.lastName}</span>
+                    <span className="draft-player-cell">
+                      <strong>{prospect.firstName} {prospect.lastName}</strong>
+                    </span>
                     <em>{prospect.position}</em>
-                    <small className="draft-college-logo"><CollegeLogo school={school} size={28} /></small>
+                    <span className="draft-school-cell">
+                      <CollegeLogo school={school} size={32} />
+                      <small title={school?.name ?? "Unknown"}>{school?.name ?? "Unknown"}</small>
+                    </span>
                     <b>{prospect.scouted.low}-{prospect.scouted.high}</b>
                     <small>{prospect.scouted.potentialLow}-{prospect.scouted.potentialHigh}</small>
-                    <ValueBadge prospect={prospect} />
                     <div className="draft-row-actions">
                       {save.phase === "udfa" ? (
                         <button type="button" onClick={(event) => { event.stopPropagation(); openUdfaOffer(prospect); }} disabled={drafted || udfaSignedIds.has(prospect.id)}>
@@ -9757,27 +10996,6 @@ function DraftView({
                       )}
                     </div>
                   </div>
-                  {expanded ? (
-                    <div className="draft-prospect-detail slim">
-                      <div>
-                        <p>{prospect.scoutReports?.[0] ?? prospect.scouted.note}</p>
-                        <div className="prospect-mini-metrics">
-                          <span>School <strong>{school?.name ?? "Unknown"}</strong></span>
-                          <span>Conference <strong>{school?.conference ?? "Unknown"}</strong></span>
-                          <span>Region <strong>{prospect.region}</strong></span>
-                          <span>Projected <strong>R{prospect.projectedRound}</strong></span>
-                          <span>Production <strong>{prospect.production}</strong></span>
-                          <span>Trend <strong>{prospect.productionTrend > 0 ? `+${prospect.productionTrend}` : prospect.productionTrend}</strong></span>
-                        </div>
-                        <div className="concern-pills">
-                          <ConcernRangePill concernType="medical" label="Medical" range={prospect.scouted.concerns.medical} />
-                          <ConcernRangePill concernType="character" label="Character" range={prospect.scouted.concerns.character} />
-                          <ConcernRangePill concernType="workEthic" label="Work" range={prospect.scouted.concerns.workEthic} />
-                        </div>
-                      </div>
-                      <ProspectRatingBreakdown prospect={prospect} showProgress={false} />
-                    </div>
-                  ) : null}
                 </Fragment>
               );
             })}
@@ -9795,7 +11013,6 @@ function DraftView({
               <span>College</span>
               <span>Team</span>
               <span>NFL</span>
-              <span>Value</span>
               <span></span>
             </div>
             {currentYearPicks.map((pick) => {
@@ -9816,12 +11033,17 @@ function DraftView({
                   </div>
                   {selection && prospect ? (
                     <>
-                      <span>{prospect.firstName} {prospect.lastName}</span>
+                      <span className="draft-player-cell">
+                        <strong>{prospect.firstName} {prospect.lastName}</strong>
+                        <small>Pick #{selection.overallPick}</small>
+                      </span>
                       <em>{prospect.position}</em>
-                      <span className="draft-college-logo"><CollegeLogo school={school} size={26} /></span>
+                      <span className="draft-school-cell">
+                        <CollegeLogo school={school} size={32} />
+                        <small title={school?.name ?? "Unknown"}>{school?.name ?? "Unknown"}</small>
+                      </span>
                       <strong className="draft-rank-cell">#{prospect.teamRank}</strong>
                       <strong className="draft-rank-cell neutral">#{prospect.consensusRank}</strong>
-                      <ValueBadge prospect={prospect} />
                       <span></span>
                     </>
                   ) : (
@@ -9831,7 +11053,6 @@ function DraftView({
                       <span>-</span>
                       <strong>-</strong>
                       <strong>-</strong>
-                      <span>-</span>
                       <button onClick={() => openTradePreview(pick.id)} disabled={save.phase !== "draft" || pick.currentTeamId === save.selectedTeamId || Boolean(pick.usedByProspectId)}>
                         Trade Up
                       </button>
@@ -9867,9 +11088,130 @@ function DraftView({
         {save.phase === "udfa" && !showForcedResults ? (
           <UdfaRecapPanel save={draftSave} openOffer={openUdfaOffer} />
         ) : null}
+      </article>
+        {draftFiltersOpen ? (
+          <div className="modal-backdrop draft-modal-backdrop" onMouseDown={() => setDraftFiltersOpen(false)}>
+            <article className="trade-modal draft-filter-modal" role="dialog" aria-modal="true" aria-label="Draft board filters" onMouseDown={(event) => event.stopPropagation()}>
+              <header className="draft-modal-header">
+                <div>
+                  <p className="eyebrow">Board Filters</p>
+                  <h3>Draft Board Filters</h3>
+                </div>
+                <button type="button" onClick={() => setDraftFiltersOpen(false)}>Close</button>
+              </header>
+              <div className="draft-filter-modal-grid">
+                <label>
+                  Region
+                  <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value as ScoutingRegion | "all")}>
+                    <option value="all">All Regions</option>
+                    {scoutingRegions.map((region) => <option key={region} value={region}>{region}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Conference
+                  <select value={conferenceFilter} onChange={(event) => setConferenceFilter(event.target.value)}>
+                    <option value="all">All Conferences</option>
+                    {conferences.map((conference) => <option key={conference} value={conference}>{conference}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Value
+                  <select value={valueFilter} onChange={(event) => setValueFilter(event.target.value)}>
+                    <option value="all">All Values</option>
+                    <option value="15">Value+</option>
+                    <option value="40">Major Steals</option>
+                  </select>
+                </label>
+                <label>
+                  Round
+                  <select value={roundFilter} onChange={(event) => setRoundFilter(event.target.value)}>
+                    <option value="all">All Rounds</option>
+                    {[1, 2, 3, 4, 5, 6, 7].map((round) => <option key={round} value={round}>Round {round}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="draft-filter-toggles">
+                <button type="button" className={favoritesOnly ? "active-mini" : ""} onClick={() => setFavoritesOnly((value) => !value)}>Favorites</button>
+                <button type="button" className={showHidden ? "active-mini" : ""} onClick={() => setShowHidden((value) => !value)}>Hidden</button>
+                <button type="button" className={showDrafted ? "active-mini" : ""} onClick={() => setShowDrafted((value) => !value)}>Drafted</button>
+              </div>
+              <div className="button-stack wide">
+                <button type="button" onClick={clearDraftFilters} disabled={!activeDraftFilterCount}>Clear Filters</button>
+                <button type="button" onClick={() => setDraftFiltersOpen(false)}>Done</button>
+              </div>
+            </article>
+          </div>
+        ) : null}
+        {selectedProspect ? (
+          <div className="modal-backdrop roster-modal-backdrop draft-modal-backdrop" role="presentation" onMouseDown={() => setSelectedProspectId(undefined)}>
+            <article className="roster-modal draft-prospect-modal" role="dialog" aria-modal="true" aria-label={`${selectedProspect.firstName} ${selectedProspect.lastName} prospect details`} onMouseDown={(event) => event.stopPropagation()}>
+              <header className="roster-modal-header">
+                <div>
+                  <p className="eyebrow">Draft Prospect</p>
+                  <h3>{selectedProspect.firstName} {selectedProspect.lastName}</h3>
+                  <div className="roster-detail-meta">
+                    <span>{selectedProspect.position}</span>
+                    <span>{selectedProspectSchool?.name ?? "Unknown College"}</span>
+                    <span>Team #{selectedProspect.teamRank}</span>
+                    <span>NFL #{selectedProspect.consensusRank}</span>
+                  </div>
+                </div>
+                <div className="roster-modal-actions">
+                  <div className="roster-primary-grades">
+                    <span><small>OVR</small><strong>{selectedProspect.scouted.low}-{selectedProspect.scouted.high}</strong></span>
+                    <span><small>POT</small><strong>{selectedProspect.scouted.potentialLow}-{selectedProspect.scouted.potentialHigh}</strong></span>
+                  </div>
+                  <button type="button" onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedProspectId(undefined);
+                  }}>Close</button>
+                </div>
+              </header>
+              <div className="roster-modal-tabs" role="tablist" aria-label="Draft prospect detail tabs">
+                {([
+                  ["overview", "Overview"],
+                  ["scouting", "Scouting"],
+                  ["ratings", "Ratings"]
+                ] as Array<[DraftProspectModalTab, string]>).map(([tab, label]) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeProspectModalTab === tab}
+                    className={activeProspectModalTab === tab ? "selected" : ""}
+                    onMouseDown={(event) => {
+                      event.stopPropagation();
+                      setActiveProspectModalTab(tab);
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setActiveProspectModalTab(tab);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <DraftProspectDetailModal
+                prospect={selectedProspect}
+                school={selectedProspectSchool}
+                activeTab={activeProspectModalTab}
+                action={save.phase === "udfa" ? (
+                  <button type="button" onClick={() => { openUdfaOffer(selectedProspect); setSelectedProspectId(undefined); }} disabled={selectedProspectDrafted}>
+                    {editableUdfaOfferProspectIds.has(selectedProspect.id) ? "Edit Offer" : "Offer"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => { draftProspect(selectedProspect.id); setSelectedProspectId(undefined); }} disabled={!isUserPick || save.phase !== "draft" || selectedProspectDrafted}>
+                    {selectedProspectDrafted ? "Drafted" : "Draft"}
+                  </button>
+                )}
+              />
+            </article>
+          </div>
+        ) : null}
         {save.phase === "draft" && draftSave.draftState.pendingEvent ? (
-          <div className="modal-backdrop">
-            <article className="trade-modal">
+          <div className="modal-backdrop draft-modal-backdrop" onMouseDown={dismissEvent}>
+            <article className="trade-modal" role="dialog" aria-modal="true" aria-label="Draft event" onMouseDown={(event) => event.stopPropagation()}>
               {pendingOffer ? (
                 <>
                   <p className="eyebrow">Trade offer</p>
@@ -9909,8 +11251,8 @@ function DraftView({
           </div>
         ) : null}
         {tradePreview || tradePreviewError ? (
-          <div className="modal-backdrop">
-            <article className="trade-modal trade-preview-modal">
+          <div className="modal-backdrop draft-modal-backdrop" onMouseDown={closeTradePreview}>
+            <article className="trade-modal trade-preview-modal" role="dialog" aria-modal="true" aria-label="Draft trade preview" onMouseDown={(event) => event.stopPropagation()}>
               <p className="eyebrow">Trade preview</p>
               {tradePreview ? (
                 <>
@@ -9942,8 +11284,8 @@ function DraftView({
           </div>
         ) : null}
         {ufaOfferProspect ? (
-          <div className="modal-backdrop">
-            <article className="trade-modal udfa-offer-modal">
+          <div className="modal-backdrop draft-modal-backdrop" onMouseDown={() => setUdfaOfferProspectId(undefined)}>
+            <article className="trade-modal udfa-offer-modal" role="dialog" aria-modal="true" aria-label="UDFA offer" onMouseDown={(event) => event.stopPropagation()}>
               <p className="eyebrow">UDFA offer</p>
               <div className="udfa-offer-heading">
                 <div>
@@ -9998,7 +11340,6 @@ function DraftView({
             </article>
           </div>
         ) : null}
-      </article>
     </section>
   );
 }

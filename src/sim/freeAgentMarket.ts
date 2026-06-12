@@ -8,7 +8,7 @@ import type {
   Player,
   Position
 } from "../types";
-import { contractOfferForPlayer, suggestedApy, teamCapLedger } from "./cap";
+import { contractOfferForPlayer, projectCompPicks, recalculateBudgets, suggestedApy, teamCapLedger } from "./cap";
 import { canSignFreeAgentWithContract, FREE_AGENT_TEAM_ID, freeAgentPlayers, makeFreeAgencyMove, signFreeAgentWithContract } from "./freeAgents";
 import { activeRosterSize } from "./ir";
 import { isPracticeSquadPlayer } from "./practiceSquad";
@@ -229,6 +229,7 @@ export function resolveFreeAgencyWave(save: GameSave, options: { includeCpuOffer
 
   let offers = market.offers.slice();
   const decisions: FreeAgencyDecisionLog[] = [];
+  let signedAny = false;
   for (const [playerId, playerOffers] of byPlayer) {
     const player = next.players.find((candidate) => candidate.id === playerId && candidate.teamId === FREE_AGENT_TEAM_ID);
     if (!player) {
@@ -248,7 +249,8 @@ export function resolveFreeAgencyWave(save: GameSave, options: { includeCpuOffer
     const beforeTeamId = player.previousTeamId;
     next = signFreeAgentWithContract(next, player.id, winner.teamId, contract, {
       source: winner.source,
-      details: `${winner.years} yr, $${winner.apy.toFixed(1)}M APY, ${winner.role}`
+      details: `${winner.years} yr, $${winner.apy.toFixed(1)}M APY, ${winner.role}`,
+      deferPostSignRefresh: true
     });
     const signed = next.players.find((candidate) => candidate.id === player.id);
     if (!signed || signed.teamId === FREE_AGENT_TEAM_ID) {
@@ -256,6 +258,7 @@ export function resolveFreeAgencyWave(save: GameSave, options: { includeCpuOffer
       decisions.push(decisionFor(next, player, undefined, "declined", "Winning team could not fit the contract."));
       continue;
     }
+    signedAny = true;
     offers = offers.map((offer) => {
       if (offer.playerId !== playerId || offer.status !== "submitted") return offer;
       return {
@@ -269,7 +272,7 @@ export function resolveFreeAgencyWave(save: GameSave, options: { includeCpuOffer
     decisions.push(decisionFor(next, signed, winner, "accepted", `${signed.firstName} ${signed.lastName} signed with ${winner.teamId.toUpperCase()}${beforeTeamId ? ` after leaving ${beforeTeamId.toUpperCase()}` : ""}.`));
   }
 
-  return {
+  const resolvedSave = {
     ...next,
     freeAgencyMarket: {
       ...normalizeFreeAgencyMarket(next),
@@ -278,6 +281,7 @@ export function resolveFreeAgencyWave(save: GameSave, options: { includeCpuOffer
       decisions: [...decisions, ...market.decisions].slice(0, 80)
     }
   };
+  return signedAny ? recalculateBudgets(projectCompPicks(resolvedSave)) : resolvedSave;
 }
 
 function decisionFor(

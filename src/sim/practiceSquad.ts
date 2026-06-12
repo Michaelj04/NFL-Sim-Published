@@ -344,6 +344,12 @@ export function releasePracticeSquadPlayer(save: GameSave, playerId: string, tea
 }
 
 export function processPracticeSquadWeek(save: GameSave): GameSave {
+  const hasExpiredElevations = save.players.some((player) => (
+    isPracticeSquadPlayer(player) &&
+    player.practiceSquadElevatedWeek !== undefined &&
+    player.practiceSquadElevatedWeek < save.currentWeek
+  ));
+  if (!hasExpiredElevations) return save;
   const players = save.players.map((player) => {
     if (!isPracticeSquadPlayer(player)) return player;
     if (player.practiceSquadElevatedWeek && player.practiceSquadElevatedWeek < save.currentWeek) {

@@ -750,11 +750,12 @@ export function toggleUserTradeBlock(save: GameSave, playerId: string): GameSave
   return { ...save, tradeState: { ...tradeState, tradeBlock } };
 }
 
-export function generateTradeBlock(save: GameSave): TradeBlockEntry[] {
+function generateTradeBlockForTeams(save: GameSave, teamIds?: Set<string>): TradeBlockEntry[] {
   const tradeState = normalizeTradeState(save);
-  const userEntries = tradeState.tradeBlock.filter((entry) => entry.userMarked);
+  const userEntries = tradeState.tradeBlock.filter((entry) => entry.userMarked && (!teamIds || teamIds.has(entry.teamId)));
   const cpuEntries = save.players
     .filter((player) => player.teamId !== "FA" && !isPracticeSquadPlayer(player))
+    .filter((player) => !teamIds || teamIds.has(player.teamId))
     .map((player): TradeBlockEntry | undefined => {
       const availability = availabilityForPlayer({ ...save, tradeState } as GameSave, player);
       if (availability !== "available" && availability !== "actively-shopping") return undefined;
@@ -776,6 +777,10 @@ export function generateTradeBlock(save: GameSave): TradeBlockEntry[] {
   });
 }
 
+export function generateTradeBlock(save: GameSave): TradeBlockEntry[] {
+  return generateTradeBlockForTeams(save);
+}
+
 function bestPickPackage(save: GameSave, teamId: string, targetTeamId: string, targetValue: number): TradeAsset[] {
   const assets: TradeAsset[] = [];
   const picks = save.draftPicks
@@ -790,11 +795,11 @@ function bestPickPackage(save: GameSave, teamId: string, targetTeamId: string, t
   return assets;
 }
 
-export function generateIncomingTradeOffers(save: GameSave): TradeOffer[] {
+export function generateIncomingTradeOffers(save: GameSave, tradeBlockOverride?: TradeBlockEntry[]): TradeOffer[] {
   const tradeState = normalizeTradeState(save);
   if (!isTradeWindowOpen(save)) return [];
   const rng = createRng(`${save.seed}:incoming-trades:${save.seasonYear}:${save.currentWeek}:${save.currentDate}`);
-  const userBlock = generateTradeBlock({ ...save, tradeState }).filter((entry) => entry.teamId === save.selectedTeamId);
+  const userBlock = (tradeBlockOverride ?? generateTradeBlock({ ...save, tradeState })).filter((entry) => entry.teamId === save.selectedTeamId);
   const offers: TradeOffer[] = [];
   for (const entry of rng.shuffle(userBlock).slice(0, 2)) {
     const player = save.players.find((candidate) => candidate.id === entry.playerId);
@@ -821,14 +826,17 @@ export function generateIncomingTradeOffers(save: GameSave): TradeOffer[] {
 
 export function refreshTradeActivity(save: GameSave): GameSave {
   const tradeState = normalizeTradeState(save);
-  const tradeBlock = generateTradeBlock({ ...save, tradeState });
   const shouldGenerate = isTradeWindowOpen(save) && tradeState.lastCpuOfferWeek !== save.currentWeek;
-  const incoming = shouldGenerate ? generateIncomingTradeOffers({ ...save, tradeState: { ...tradeState, tradeBlock } }) : [];
+  if (!shouldGenerate) {
+    return save.tradeState ? save : { ...save, tradeState };
+  }
+  const incomingBlock = generateTradeBlockForTeams({ ...save, tradeState }, new Set([save.selectedTeamId]));
+  const incoming = generateIncomingTradeOffers({ ...save, tradeState: { ...tradeState, tradeBlock: incomingBlock } }, incomingBlock);
   return {
     ...save,
     tradeState: {
       ...tradeState,
-      tradeBlock,
+      tradeBlock: tradeState.tradeBlock.length ? tradeState.tradeBlock : incomingBlock,
       offers: [...incoming, ...tradeState.offers].slice(0, 80),
       lastCpuOfferWeek: shouldGenerate ? save.currentWeek : tradeState.lastCpuOfferWeek
     }

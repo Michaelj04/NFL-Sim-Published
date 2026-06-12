@@ -1549,12 +1549,75 @@ export interface AnnualRecruitingBoardEntry {
   debugFactors: string[];
   pipelineType: "primary" | "secondary" | "national";
   status: "evaluating" | "offered" | "visited" | "committed" | "decommitted" | "signed" | "withdrawn";
+  weeklyPoints?: number;
+  scholarshipOffered?: boolean;
+  nilOffer?: number;
+  visitScheduledWeek?: number;
+  committedWeek?: number;
+  signedWeek?: number;
+  lastInterestDelta?: number;
+}
+
+export interface AnnualRecruitEvaluation {
+  id: string;
+  schoolId: string;
+  prospectId: string;
+  evaluatedStars: 2 | 3 | 4 | 5;
+  evaluatedStarsLow: 2 | 3 | 4 | 5;
+  evaluatedStarsHigh: 2 | 3 | 4 | 5;
+  confidence: number;
+  progress: number;
+  projectedOverallRange: [number, number];
+  projectedPotentialRange: [number, number];
+  notes: string[];
+  riskFlags: string[];
+  lastUpdatedWeek?: number;
+}
+
+export interface AnnualRecruitingScoutAssignment {
+  id: string;
+  schoolId: string;
+  scoutName: string;
+  stateFocus: string;
+  positionFocus: Position | "all";
+  targetProspectId?: string;
+  effectiveness: number;
+  coverage: number;
+  lastReport?: string;
+}
+
+export interface AnnualRecruitingHistoryEntry {
+  id: string;
+  week: number;
+  prospectId: string;
+  schoolId: string;
+  type: "interest" | "commit" | "sign" | "decommit" | "scout";
+  summary: string;
+}
+
+export interface AnnualRecruitingClassSummary {
+  schoolId: string;
+  rank: number;
+  commits: number;
+  signees: number;
+  averageStars: number;
+  blueChips: number;
+  points: number;
+  positionCounts: Partial<Record<Position, number>>;
 }
 
 export interface AnnualRecruitingState {
   seasonYear: number;
   currentPhase: string;
   board: AnnualRecruitingBoardEntry[];
+  evaluations?: AnnualRecruitEvaluation[];
+  scoutAssignments?: AnnualRecruitingScoutAssignment[];
+  weeklyPointsBySchool?: Record<string, number>;
+  targetIdsBySchool?: Record<string, string[]>;
+  removedTargetIdsBySchool?: Record<string, string[]>;
+  history?: AnnualRecruitingHistoryEntry[];
+  classSummaries?: AnnualRecruitingClassSummary[];
+  lastResolvedWeek?: number;
   runtimeCsvs: string[];
   usesYearZeroBundles: false;
 }
