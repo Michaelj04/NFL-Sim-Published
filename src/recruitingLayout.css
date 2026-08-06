@@ -1,0 +1,48 @@
+/* Recruiting currently exposes only the Big Board. */
+body:has(.recruiting-header) {
+  overflow: hidden;
+}
+
+.app-shell:has(.recruiting-header) {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace:has(> .college-view > .recruiting-header) {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace:has(> .college-view > .recruiting-header) > .college-view {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.workspace:has(> .college-view > .recruiting-header) > .college-view > .recruiting-tabs {
+  display: none !important;
+  pointer-events: none;
+}
+
+.workspace:has(> .college-view > .recruiting-header) .recruiting-board-card {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.workspace:has(> .college-view > .recruiting-header) .recruiting-board-card > .table-card {
+  overflow: visible !important;
+}
+
+.workspace:has(> .college-view > .recruiting-header) .recruiting-board-card thead th {
+  background: #ffffff;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
